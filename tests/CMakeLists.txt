@@ -131,6 +131,7 @@ inline constexpr const char* BSEAL_BINARY_PATH = R\"bseal_path($<TARGET_FILE:bse
 
 add_executable(bseal_integration_gtests
         integration/TestBlackBoxCli.cpp
+        integration/TestCliRegression.cpp
 )
 
 add_dependencies(bseal_integration_gtests bseal)
