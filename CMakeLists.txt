@@ -20,6 +20,7 @@ include(ProjectWarnings)
 include(Sanitizers)
 
 add_library(bseal_core
+    src/app/BsealApp.cpp
     src/cli/Args.cpp
     src/crypto/AesGcmBackend.cpp
     src/crypto/Kdf.cpp
