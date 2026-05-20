@@ -231,6 +231,7 @@ namespace bseal::app {
             ArchiveOpenContext context{};
             context.suite = options.suite;
             context.kdf_params = bseal::crypto::preset_params(options.kdf_preset);
+            bseal::crypto::validate_kdf_params(context.kdf_params);
             context.kdf_salt = random_array<32>();
             context.archive_id = random_array<16>();
             context.chunk_plain_size = options.chunk_size;
@@ -317,7 +318,8 @@ namespace bseal::app {
             context.kdf_params.memory_kib = header.argon2_memory_kib;
             context.kdf_params.iterations = header.argon2_iterations;
             context.kdf_params.parallelism = header.argon2_parallelism;
-            context.kdf_params.output_bytes = 32;
+            context.kdf_params.output_bytes = bseal::crypto::kArgon2OutputBytesDefault;
+            bseal::crypto::validate_kdf_params(context.kdf_params);
 
             context.kdf_salt = header.kdf_salt;
             context.archive_id = header.archive_id;

@@ -164,21 +164,54 @@ derive_argon2_salt(const std::array<Byte, 32>& kdf_salt,
     return salt;
 }
 
-std::size_t memory_kib_to_bytes(std::uint32_t memory_kib) {
-    constexpr std::size_t max = std::numeric_limits<std::size_t>::max();
-
-    if (memory_kib == 0) {
-        throw InvalidArgument("Argon2id memory_kib must not be zero");
+void require_u32_range( std::uint32_t value, std::uint32_t min_value, std::uint32_t max_value,
+        const char* name
+    ) {
+    if (value < min_value || value > max_value) {
+        throw InvalidArgument(std::string(name) + " is outside the allowed range");
     }
+}
 
-    if (static_cast<std::size_t>(memory_kib) > max / 1024u) {
-        throw InvalidArgument("Argon2id memory_kib is too large");
+std::size_t memory_kib_to_bytes(std::uint32_t memory_kib) {
+    constexpr auto max_size = std::numeric_limits<std::size_t>::max();
+
+    if (static_cast<std::size_t>(memory_kib) > max_size / 1024u) {
+        throw InvalidArgument("Argon2id memory_kib is too large for this platform");
     }
 
     return static_cast<std::size_t>(memory_kib) * 1024u;
 }
-
 } // namespace
+
+void validate_kdf_params(const KdfParams& params) {
+    require_u32_range(
+        params.memory_kib,
+        kArgon2MemoryKiBMin,
+        kArgon2MemoryKiBMax,
+        "Argon2id memory_kib"
+    );
+
+    require_u32_range(
+        params.iterations,
+        kArgon2IterationsMin,
+        kArgon2IterationsMax,
+        "Argon2id iterations"
+    );
+
+    require_u32_range(
+        params.parallelism,
+        kArgon2ParallelismMin,
+        kArgon2ParallelismMax,
+        "Argon2id parallelism"
+    );
+
+    require_u32_range(
+        params.output_bytes,
+        kArgon2OutputBytesMin,
+        kArgon2OutputBytesMax,
+        "KDF output_bytes"
+    );
+}
 
 std::vector<KeyfileDigest>
 hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
@@ -285,19 +318,17 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
         throw InvalidArgument("passphrase must not be empty");
     }
 
+    validate_kdf_params(input.params);
+
     const auto keyfile_digests = hash_keyfiles_blake3(input.keyfiles);
     auto keyfile_mix = mix_keyfile_digests(keyfile_digests);
 
     const auto argon2_salt = derive_argon2_salt(input.salt, input.archive_id);
 
     SecureBuffer pass_key(input.params.output_bytes);
-    if (pass_key.size() < 32) {
-        throw InvalidArgument("KDF output_bytes must be at least 32");
-    }
 
     const std::size_t memlimit = memory_kib_to_bytes(input.params.memory_kib);
-    const unsigned long long opslimit =
-        static_cast<unsigned long long>(std::max<std::uint32_t>(input.params.iterations, 1));
+    const unsigned long long opslimit = static_cast<unsigned long long>(input.params.iterations);
 
     // libsodium crypto_pwhash() does not expose Argon2 parallelism directly. The parameter remains
     // in the archive header for compatibility with implementations that use libargon2 directly.
@@ -348,11 +379,11 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
 KdfParams preset_params(KdfPreset preset) {
     switch (preset) {
         case KdfPreset::Fast:
-            return KdfParams{preset, 256u * 1024u, 3, 4, 32};
+            return KdfParams{preset, 256u * 1024u, 3, 4, kArgon2OutputBytesDefault};
         case KdfPreset::Strong:
-            return KdfParams{preset, 1024u * 1024u, 3, 4, 32};
+            return KdfParams{preset, 1024u * 1024u, 3, 4, kArgon2OutputBytesDefault};
         case KdfPreset::Paranoid:
-            return KdfParams{preset, 2u * 1024u * 1024u, 4, 8, 32};
+            return KdfParams{preset, 2u * 1024u * 1024u, 4, 8, kArgon2OutputBytesDefault};
         case KdfPreset::Custom:
             return KdfParams{};
     }
