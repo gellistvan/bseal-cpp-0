@@ -119,11 +119,9 @@ TEST(EncryptPipeline, CreatesRandomBinShardsFromDirectoryTree) {
 
     create_sample_tree(input_root.path());
 
-    TestAeadBackend* backend = nullptr;
-    run_test_encryption(input_root.path(), sealed_root.path(), &backend);
+    const auto result = run_test_encryption(input_root.path(), sealed_root.path());
 
     const auto bin_files = list_bin_files(sealed_root.path());
-
     ASSERT_FALSE(bin_files.empty());
 
     for (const auto& file : bin_files) {
@@ -131,9 +129,7 @@ TEST(EncryptPipeline, CreatesRandomBinShardsFromDirectoryTree) {
         EXPECT_GT(std::filesystem::file_size(file), 0u);
     }
 
-    ASSERT_NE(backend, nullptr);
-
-    auto encrypted_indices = backend->encrypted_indices();
+    auto encrypted_indices = result.encrypted_indices;
     ASSERT_FALSE(encrypted_indices.empty());
 
     std::sort(encrypted_indices.begin(), encrypted_indices.end());
@@ -150,14 +146,12 @@ TEST(EncryptPipeline, EmitsOneChunkForEmptyInputTreeWhenConfigured) {
     std::filesystem::create_directories(input_root.path());
 
     TestAeadBackend* backend = nullptr;
-    run_test_encryption(input_root.path(), sealed_root.path(), &backend);
+    const auto result = run_test_encryption(input_root.path(), sealed_root.path());
 
     const auto bin_files = list_bin_files(sealed_root.path());
     ASSERT_FALSE(bin_files.empty());
 
-    ASSERT_NE(backend, nullptr);
-
-    const auto encrypted_indices = backend->encrypted_indices();
+    const auto& encrypted_indices = result.encrypted_indices;
     EXPECT_FALSE(encrypted_indices.empty());
     EXPECT_EQ(encrypted_indices.front(), 0u);
 }

@@ -422,9 +422,42 @@ inline void create_sample_tree(const std::filesystem::path& root) {
                       repeated_pattern("unicode payload\n", 32));
 }
 
-inline void run_test_encryption(const std::filesystem::path& input_dir,
-                                const std::filesystem::path& sealed_dir,
-                                TestAeadBackend** backend_out = nullptr) {
+inline void corrupt_first_bin_file_byte(const std::filesystem::path& sealed_dir) {
+    const auto files = list_bin_files(sealed_dir);
+
+    if (files.empty()) {
+        throw std::runtime_error("no .bin files found to corrupt");
+    }
+
+    std::fstream stream(files.front(), std::ios::in | std::ios::out | std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error("failed to open .bin file for corruption");
+    }
+
+    char byte = 0;
+    stream.read(&byte, 1);
+    if (!stream) {
+        throw std::runtime_error("failed to read first byte for corruption");
+    }
+
+    byte = static_cast<char>(byte ^ 0x01);
+
+    stream.seekp(0);
+    stream.write(&byte, 1);
+}
+
+    struct EncryptionRunResult {
+    std::vector<std::uint64_t> encrypted_indices;
+};
+
+struct DecryptionRunResult {
+    std::vector<std::uint64_t> decrypted_indices;
+};
+
+inline EncryptionRunResult run_test_encryption(
+    const std::filesystem::path& input_dir,
+    const std::filesystem::path& sealed_dir)
+{
     std::filesystem::create_directories(sealed_dir);
 
     auto backend = std::make_unique<TestAeadBackend>();
@@ -455,14 +488,16 @@ inline void run_test_encryption(const std::filesystem::path& input_dir,
 
     pipeline.run();
 
-    if (backend_out != nullptr) {
-        *backend_out = backend_raw;
-    }
+    // backend_raw is still valid here because pipeline is still alive.
+    return EncryptionRunResult{
+        .encrypted_indices = backend_raw->encrypted_indices(),
+    };
 }
 
-inline void run_test_decryption(const std::filesystem::path& sealed_dir,
-                                const std::filesystem::path& output_dir,
-                                TestAeadBackend** backend_out = nullptr) {
+inline DecryptionRunResult run_test_decryption(
+    const std::filesystem::path& sealed_dir,
+    const std::filesystem::path& output_dir)
+{
     std::filesystem::create_directories(output_dir);
 
     auto backend = std::make_unique<TestAeadBackend>();
@@ -490,33 +525,10 @@ inline void run_test_decryption(const std::filesystem::path& sealed_dir,
 
     pipeline.run();
 
-    if (backend_out != nullptr) {
-        *backend_out = backend_raw;
-    }
-}
-
-inline void corrupt_first_bin_file_byte(const std::filesystem::path& sealed_dir) {
-    const auto files = list_bin_files(sealed_dir);
-
-    if (files.empty()) {
-        throw std::runtime_error("no .bin files found to corrupt");
-    }
-
-    std::fstream stream(files.front(), std::ios::in | std::ios::out | std::ios::binary);
-    if (!stream) {
-        throw std::runtime_error("failed to open .bin file for corruption");
-    }
-
-    char byte = 0;
-    stream.read(&byte, 1);
-    if (!stream) {
-        throw std::runtime_error("failed to read first byte for corruption");
-    }
-
-    byte = static_cast<char>(byte ^ 0x01);
-
-    stream.seekp(0);
-    stream.write(&byte, 1);
+    // backend_raw is still valid here because pipeline is still alive.
+    return DecryptionRunResult{
+        .decrypted_indices = backend_raw->decrypted_indices(),
+    };
 }
 
 } // namespace bseal::pipeline::test

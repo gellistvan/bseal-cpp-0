@@ -110,23 +110,24 @@ TEST(DecryptPipeline, RoundTripsEncryptedDirectoryTree) {
 
     run_test_encryption(input_root.path(), sealed_root.path());
 
-    TestAeadBackend* decrypt_backend = nullptr;
-    run_test_decryption(sealed_root.path(), output_root.path(), &decrypt_backend);
+    const auto decrypt_result =
+        run_test_decryption(sealed_root.path(), output_root.path());
 
-    EXPECT_EQ(collect_regular_files(output_root.path()),
-              collect_regular_files(input_root.path()));
+    EXPECT_EQ(
+        collect_regular_files(output_root.path()),
+        collect_regular_files(input_root.path()));
 
     const auto input_dirs = collect_directories(input_root.path());
     const auto output_dirs = collect_directories(output_root.path());
 
     for (const auto& dir : input_dirs) {
-        EXPECT_NE(std::find(output_dirs.begin(), output_dirs.end(), dir), output_dirs.end())
+        EXPECT_NE(
+            std::find(output_dirs.begin(), output_dirs.end(), dir),
+            output_dirs.end())
             << "missing restored directory: " << dir;
     }
 
-    ASSERT_NE(decrypt_backend, nullptr);
-
-    auto decrypted_indices = decrypt_backend->decrypted_indices();
+    auto decrypted_indices = decrypt_result.decrypted_indices;
     ASSERT_FALSE(decrypted_indices.empty());
 
     std::sort(decrypted_indices.begin(), decrypted_indices.end());
