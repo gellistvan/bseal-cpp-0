@@ -200,27 +200,6 @@ namespace bseal::app {
             return out;
         }
 
-        std::array<Byte, 32>
-        compute_public_header_hash(const bseal::archive::PublicHeaderV1 &header) {
-            /*
-            This function intentionally delegates to the implemented archive/crypto layer.
-
-            Expected production behavior:
-            - serialize the finalized immutable public header with explicit little-endian encoding;
-            - hash it with the project’s chosen public hash, preferably BLAKE3 or SHA-256;
-            - return exactly 32 bytes;
-            - the same function must be used for encryption and decryption.
-
-            If your implementation exposes this as archive::hash_public_header(header),
-            replace this body with that call.
-
-            The fallback below uses header.header_mac only as a compatibility bridge for projects
-            where PublicHeaderV1 already stores the finalized 32-byte header binding value.
-            Do not use an all-zero or ad-hoc value in a real archive format.
-            */
-            return header.header_mac;
-        }
-
         bseal::archive::PublicHeaderV1 make_encrypt_public_header(
             const bseal::cli::EncryptOptions &options, const std::array<Byte, 16> &archive_id,
             const std::array<Byte, 32> &kdf_salt, const bseal::crypto::KdfParams &kdf_params) {
@@ -236,15 +215,14 @@ namespace bseal::app {
             header.chunk_plain_size = static_cast<std::uint32_t>(options.chunk_size);
             header.shard_payload_size = options.shard_size;
 
-            /*
-            The finalized implementation should compute and store a real header binding value here,
-            for example:
-
-            header.header_mac = archive::compute_public_header_hash_without_mac(header);
-
-            The pipeline only needs a stable 32-byte public_header_hash. This code assumes the
-            implemented RecordFormat/Sharding layer finalizes header.header_mac consistently.
-            */
+            // header_mac is a keyed MAC and is intentionally not computed here.
+            // It must never be used as public_header_hash.
+            //
+            // public_header_hash is computed separately with
+            // archive::compute_public_header_hash(header), which canonicalizes the public
+            // header and zeroes header_mac before hashing.
+            //
+            // Real header_mac generation/verification is a later task.
             return header;
         }
 
@@ -258,7 +236,7 @@ namespace bseal::app {
 
             auto header = make_encrypt_public_header(options, context.archive_id, context.kdf_salt,
                                                      context.kdf_params);
-            context.public_header_hash = compute_public_header_hash(header);
+            context.public_header_hash = bseal::archive::compute_public_header_hash(header);
             return context;
         }
 
@@ -325,7 +303,7 @@ namespace bseal::app {
             context.kdf_params.output_bytes = 32;
             context.kdf_salt = header.kdf_salt;
             context.archive_id = header.archive_id;
-            context.public_header_hash = compute_public_header_hash(header);
+            context.public_header_hash = bseal::archive::compute_public_header_hash(header);
             context.chunk_plain_size = header.chunk_plain_size;
             return context;
         }

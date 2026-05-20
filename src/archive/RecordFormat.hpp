@@ -49,7 +49,15 @@ struct ArchiveRecord {
 };
 
 // Public header format is explicit little-endian. Never serialize this struct with raw memory dumps.
+//
+// This serializes the public header in the same explicit little-endian format
+// used on disk, except header_mac is always serialized as 32 zero bytes.
+// header_mac is a keyed authenticator and must not be used as, or influence,
+// the unkeyed public_header_hash.
+// Never serialize this struct with raw memory dumps.
 Bytes serialize_public_header(const PublicHeaderV1& header);
+Bytes serialize_public_header_for_hash(const PublicHeaderV1& header);
+std::array<Byte, 32> compute_public_header_hash(const PublicHeaderV1& header);
 PublicHeaderV1 parse_public_header(ConstByteSpan bytes);
 
 // Plaintext archive record format, before outer AEAD chunking:

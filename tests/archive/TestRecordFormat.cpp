@@ -14,6 +14,32 @@ using namespace bseal;
 using namespace bseal::archive;
 using namespace bseal::archive::test;
 
+namespace {
+
+    PublicHeaderV1 make_public_header_hash_test_header()
+    {
+        PublicHeaderV1 header{};
+
+        header.version = 1;
+        header.suite_id = 1;
+        header.shard_index = 7;
+        header.header_len = static_cast<std::uint32_t>(kPublicHeaderV1SerializedSize);
+
+        std::iota(header.archive_id.begin(), header.archive_id.end(), Byte{1});
+        std::iota(header.kdf_salt.begin(), header.kdf_salt.end(), Byte{33});
+        std::iota(header.header_mac.begin(), header.header_mac.end(), Byte{129});
+
+        header.argon2_memory_kib = 1024 * 1024;
+        header.argon2_iterations = 3;
+        header.argon2_parallelism = 4;
+        header.chunk_plain_size = 16 * 1024 * 1024;
+        header.shard_payload_size = 4ull * 1024ull * 1024ull;
+
+        return header;
+    }
+
+} // namespace
+
 TEST(TestRecordFormat, PublicHeaderRoundTrips) {
     PublicHeaderV1 header;
     header.version = 1;
@@ -146,4 +172,84 @@ TEST(TestRecordFormat, ParseRecordRequiresExactlyOneRecord) {
     EXPECT_TRUE(throws_invalid_argument([&] {
         parse_record(ConstByteSpan{combined.data(), combined.size()});
     }));
+}
+
+TEST(TestRecordFormat, PublicHeaderHashIsStableForSameHeader)
+{
+    const auto header = make_public_header_hash_test_header();
+
+    const auto first = compute_public_header_hash(header);
+    const auto second = compute_public_header_hash(header);
+
+    EXPECT_EQ(first, second);
+}
+
+TEST(TestRecordFormat, PublicHeaderHashChangesWhenArchiveIdChanges)
+{
+    auto first_header = make_public_header_hash_test_header();
+    auto second_header = first_header;
+
+    second_header.archive_id[0] ^= Byte{0x80};
+
+    EXPECT_NE(
+        compute_public_header_hash(first_header),
+        compute_public_header_hash(second_header)
+    );
+}
+
+TEST(TestRecordFormat, PublicHeaderHashChangesWhenKdfSaltChanges)
+{
+    auto first_header = make_public_header_hash_test_header();
+    auto second_header = first_header;
+
+    second_header.kdf_salt[0] ^= Byte{0x40};
+
+    EXPECT_NE(
+        compute_public_header_hash(first_header),
+        compute_public_header_hash(second_header)
+    );
+}
+
+TEST(TestRecordFormat, PublicHeaderHashChangesWhenChunkSizeChanges)
+{
+    auto first_header = make_public_header_hash_test_header();
+    auto second_header = first_header;
+
+    second_header.chunk_plain_size *= 2;
+
+    EXPECT_NE(
+        compute_public_header_hash(first_header),
+        compute_public_header_hash(second_header)
+    );
+}
+
+TEST(TestRecordFormat, PublicHeaderHashIgnoresHeaderMac)
+{
+    auto first_header = make_public_header_hash_test_header();
+    auto second_header = first_header;
+
+    second_header.header_mac.fill(Byte{0x5a});
+
+    EXPECT_EQ(
+        compute_public_header_hash(first_header),
+        compute_public_header_hash(second_header)
+    );
+}
+
+TEST(TestRecordFormat, PublicHeaderHashSerializationZeroesHeaderMac)
+{
+    auto header = make_public_header_hash_test_header();
+
+    auto expected = header;
+    expected.header_mac.fill(Byte{0});
+
+    EXPECT_EQ(
+        serialize_public_header_for_hash(header),
+        serialize_public_header(expected)
+    );
+
+    EXPECT_NE(
+        serialize_public_header_for_hash(header),
+        serialize_public_header(header)
+    );
 }
