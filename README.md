@@ -2,7 +2,9 @@
 
 BSEAL is an experimental C++20 command-line tool for sealing a directory into randomized `*.bin` shard files and restoring it later with the same passphrase and keyfile set.
 
-The project has moved beyond the original skeleton: the CLI, application layer, archive record stream, AEAD chunk pipeline, KDF/key schedule, shard I/O, and black-box round-trip tests are now wired together. It is still **not production-ready cryptography**. Treat the repository as a hardening/refactoring project until the container format, header authentication, shard discovery, padding semantics, and compatibility policy have been reviewed and stabilized.
+The project has moved beyond the original skeleton: the CLI, application layer, archive record stream, AEAD chunk pipeline, KDF/key schedule, keyed public-header authentication, shard I/O, and black-box round-trip tests are now wired together.
+
+It is still **not production-ready cryptography**. Treat the repository as a hardening/refactoring project until the container format, shard discovery rules, padding semantics, compatibility policy, and overall design have been reviewed and stabilized.
 
 ## Current status
 
@@ -13,17 +15,22 @@ Implemented today:
 * XChaCha20-Poly1305 and AES-256-GCM backends exist behind a common AEAD interface.
 * Passphrases and ordered keyfiles feed an Argon2id-based KDF and a domain-separated key schedule.
 * Public KDF parameters are bounded before Argon2id so decrypt does not blindly trust attacker-controlled header costs.
+* The public archive header now has a real keyed MAC.
+  * The MAC uses the expanded `header_authentication_key`.
+  * It does not reuse the chunk encryption key.
+  * It does not treat `public_header_hash` as a MAC.
+  * Decrypt verifies the header MAC before decrypting any chunk.
+* Public header metadata such as suite id, archive id, KDF salt, chunk size, shard size, and shard index is authenticated through canonical public-header serialization.
 * Archive records cover archive begin/end, directories, regular files, file bytes, file end markers, symlinks in the record format, and random padding records.
 * Chunk encryption binds the immutable public-header hash and chunk index into AEAD associated data.
 * Shards use explicit framing for shard headers and chunk records.
-* Tests include unit-style coverage plus black-box CLI regression tests for round trips, wrong passphrases, wrong keyfiles, corruption, missing shards, duplicate shards, empty directories, multiple shards, and overwrite behavior.
+* Tests include unit-style coverage plus black-box CLI regression tests for round trips, wrong passphrases, wrong keyfiles, corruption, missing shards, duplicate shards, empty directories, multiple shards, overwrite behavior, public-header MAC verification, and public-header tampering.
 
 Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
 * The archive/container format is not stable and has no compatibility guarantee.
-* Header authentication is still incomplete; the code binds a public-header hash into chunk AEAD, but the final keyed public-header MAC design still needs one canonical implementation.
-* Shard discovery and validation are improving, but the format should be treated as pre-release.
+* Shard discovery and validation are improving, but the format should still be treated as pre-release.
 * Padding options are parsed, but exact padding semantics still need to be finalized and tested end to end.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 * Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
@@ -51,6 +58,7 @@ For local development with sanitizers:
 cmake -S . -B build-sani \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBSEAL_ENABLE_SANITIZERS=ON
+
 cmake --build build-sani -j
 ctest --test-dir build-sani --output-on-failure
 ```
@@ -98,7 +106,9 @@ bseal decrypt \
   --passphrase-prompt
 ```
 
-If `--passphrase-prompt` is omitted, BSEAL reads one passphrase line from standard input. With `--passphrase-prompt`, it asks twice and rejects mismatches.
+If `--passphrase-prompt` is omitted, BSEAL reads one passphrase line from standard input.
+
+With `--passphrase-prompt`, it asks twice and rejects mismatches.
 
 ## Supported options
 
@@ -126,17 +136,22 @@ Current exit codes:
 
 * `0`: success, including help
 * `1`: invalid arguments, I/O failures, format errors, and other non-authentication errors
-* `3`: authentication failure or corrupt archive detected by AEAD verification
+* `3`: authentication failure, wrong passphrase/keyfile, invalid header MAC, or corrupt archive detected by AEAD verification
 
 ## Security model, in brief
 
-BSEAL aims to hide original file names, directory names, file contents, file sizes, and archive metadata inside authenticated encrypted records. The visible outside shape still leaks at least the number of shard files and total ciphertext size unless padding is used.
+BSEAL aims to hide original file names, directory names, file contents, file sizes, and archive metadata inside authenticated encrypted records.
+
+The visible outside shape still leaks at least the number of shard files and total ciphertext size unless padding is used.
 
 The current design uses:
 
 * Argon2id through libsodium for passphrase hardening.
 * Ordered keyfile hashing and mixing.
 * HKDF-SHA-256 through OpenSSL for key expansion.
+* Domain-separated expanded keys for distinct purposes.
+* A keyed public-header MAC using `header_authentication_key`.
+* Early header MAC verification during decrypt, before any chunk is decrypted.
 * Per-chunk AEAD encryption.
 * Deterministic chunk nonce derivation from domain-separated key material and global chunk index.
 * Public-header hashing as associated data for encrypted chunks.
@@ -145,27 +160,48 @@ The current design uses:
 
 Important warning: this is a work in progress. Do not use it yet to protect real secrets, long-term backups, production credentials, or irreplaceable data.
 
+## Header authentication
+
+Each shard contains a public header. Some public fields must remain visible so the decrypt path can discover the archive, validate bounded KDF parameters, derive keys, and select the correct algorithms.
+
+Those fields are now authenticated with a real keyed MAC:
+
+1. Encrypt creates a public header with `header_mac` empty or zeroed.
+2. Encrypt derives the normal expanded key schedule.
+3. Encrypt computes `header_mac` from canonical public-header serialization using `header_authentication_key`.
+4. Encrypt writes the finalized public header.
+5. Decrypt parses the public header.
+6. Decrypt validates public KDF parameters before running the KDF.
+7. Decrypt derives the expanded keys.
+8. Decrypt recomputes the public-header MAC.
+9. Decrypt compares the stored and recomputed MAC in constant time.
+10. Decrypt fails before reading or decrypting chunk records if the header MAC is invalid.
+
+This gives early detection for wrong passphrases, wrong keyfiles, and public-header tampering. It also prevents unauthenticated changes to fields such as suite id, archive id, KDF salt, chunk size, shard size, and shard index.
+
+`public_header_hash` is still useful as a stable public-header binding value for chunk AEAD associated data, but it is not a MAC and must not be treated as one.
+
 ## Project layout
 
 ```text
 src/
-  main.cpp       Thin CLI entry point: parse args, call app functions, map errors to exit codes
-  app/           Application-level encrypt/decrypt orchestration
-  cli/           CLI parsing and command model
-  crypto/        AEAD backends, KDF, key schedule, secure buffers
-  archive/       Internal archive record format, metadata, safe path handling, extraction
-  io/            Async helpers, shard framing, shard reader/writer, buffer pool
-  pipeline/      Chunk encryption/decryption orchestration and work queues
-  platform/      CPU feature detection, secure random, memory locking
-  common/        Shared errors, byte aliases, size parsing
+  main.cpp      Thin CLI entry point: parse args, call app functions, map errors to exit codes
+  app/          Application-level encrypt/decrypt orchestration
+  cli/          CLI parsing and command model
+  crypto/       AEAD backends, KDF, key schedule, secure buffers
+  archive/      Internal archive record format, metadata, safe path handling, extraction
+  io/           Async helpers, shard framing, shard reader/writer, buffer pool
+  pipeline/     Chunk encryption/decryption orchestration and work queues
+  platform/     CPU feature detection, secure random, memory locking
+  common/       Shared errors, byte aliases, size parsing
 
 tests/
-  platform/      Platform utility tests
-  io/            Buffer, async I/O, and shard tests
-  archive/       Record format, metadata, archive reader/writer, path safety tests
-  crypto/        AEAD, KDF, key schedule, secure buffer tests
-  pipeline/      Work queue and encrypt/decrypt pipeline tests
-  integration/   Black-box CLI regression tests
+  platform/     Platform utility tests
+  io/           Buffer, async I/O, shard reader/writer, and shard validation tests
+  archive/      Record format, metadata, archive reader/writer, header MAC, path safety tests
+  crypto/       AEAD, KDF, key schedule, secure buffer tests
+  pipeline/     Work queue and encrypt/decrypt pipeline tests
+  integration/  Black-box CLI regression tests
 ```
 
 ## Development notes
@@ -175,25 +211,27 @@ The most important rule is that every byte from an archive must be treated as at
 When changing crypto/container code:
 
 1. Keep public parameters bounded before allocating attacker-controlled sizes or invoking expensive primitives.
-2. Authenticate encrypted chunks before releasing plaintext to the archive parser.
-3. Keep nonce derivation deterministic and globally unique per archive key.
-4. Do not serialize native structs directly; use explicit little-endian framing.
-5. Keep archive paths relative and reject traversal, absolute paths, Windows drive paths, UNC paths, and symlink escapes.
-6. Prefer black-box tests for user-visible behavior and unit tests for parser/crypto invariants.
+2. Authenticate the public header with `header_authentication_key` before decrypting chunks.
+3. Authenticate encrypted chunks before releasing plaintext to the archive parser.
+4. Keep nonce derivation deterministic and globally unique per archive key.
+5. Do not serialize native structs directly; use explicit little-endian framing.
+6. Keep archive paths relative and reject traversal, absolute paths, Windows drive paths, UNC paths, and symlink escapes.
+7. Prefer black-box tests for user-visible behavior and unit tests for parser/crypto invariants.
 
 ## High-value next work
 
-1. Finish keyed public-header authentication and remove compatibility/fallback paths.
-2. Make shard discovery fully header-driven and authenticated.
-3. Finalize and test exact padding behavior for `none`, `chunk`, `power2`, and `fixed-size=N`.
-4. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, and mismatched archive IDs.
-5. Decide the compatibility policy for archive format version 1.
-6. Add benchmarks after correctness and format-hardening work settles.
+1. Make shard discovery fully header-driven and authenticated across all multi-shard edge cases.
+2. Finalize and test exact padding behavior for `none`, `chunk`, `power2`, and `fixed-size=N`.
+3. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
+4. Decide the compatibility policy for archive format version 1.
+5. Add benchmarks after correctness and format-hardening work settles.
+6. Prepare the codebase for external cryptographic review.
 
 ## Related docs
 
 * [`IMPLEMENTATION_GUIDE.md`](IMPLEMENTATION_GUIDE.md) records design rules, intended implementation order, and testing requirements.
 * [`SECURITY_NOTES.md`](SECURITY_NOTES.md) records security assumptions and known hazards.
+* [`docs/FORMAT.md`](docs/FORMAT.md) describes the archive/container format.
 
 ## License
 
