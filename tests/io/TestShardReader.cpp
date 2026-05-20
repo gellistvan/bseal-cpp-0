@@ -378,3 +378,138 @@ TEST(TestShardReader, RejectsMissingChunkIndex) {
 
     std::filesystem::remove_all(dir);
 }
+
+TEST(TestShardReader, AcceptsExplicitValidationMatchingShardMetadata) {
+    const auto dir = make_temp_dir("bseal_shard_reader_validation_ok");
+
+    auto c0 = fake_ciphertext(0x10, 8);
+
+    bseal::io::ShardWriter writer(make_writer_options(dir, 512));
+    writer.write_chunk_record(0, 8, bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    bseal::io::ShardReaderValidation validation{};
+    validation.suite_id = shards[0].suite_id;
+    validation.archive_id = shards[0].archive_id;
+    validation.chunk_plain_size = shards[0].chunk_plain_size;
+    validation.public_header_hash = shards[0].public_header_hash;
+
+    bseal::io::ShardReader reader(std::move(shards), validation);
+
+    auto r0 = reader.read_next_chunk_record();
+    ASSERT_TRUE(r0.has_value());
+    EXPECT_EQ(r0->chunk_index, 0u);
+    EXPECT_EQ(r0->plaintext_size, 8u);
+    EXPECT_EQ(r0->ciphertext, c0);
+
+    EXPECT_FALSE(reader.read_next_chunk_record().has_value());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardReader, RejectsExplicitValidationSuiteIdMismatch) {
+    const auto dir = make_temp_dir("bseal_shard_reader_validation_bad_suite");
+
+    auto c0 = fake_ciphertext(0x10, 8);
+
+    bseal::io::ShardWriter writer(make_writer_options(dir, 512));
+    writer.write_chunk_record(0, 8, bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    bseal::io::ShardReaderValidation validation{};
+    validation.suite_id = static_cast<std::uint16_t>(shards[0].suite_id + 1u);
+
+    EXPECT_THROW(
+        {
+            bseal::io::ShardReader reader(std::move(shards), validation);
+        },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardReader, RejectsExplicitValidationArchiveIdMismatch) {
+    const auto dir = make_temp_dir("bseal_shard_reader_validation_bad_archive_id");
+
+    auto c0 = fake_ciphertext(0x10, 8);
+
+    bseal::io::ShardWriter writer(make_writer_options(dir, 512));
+    writer.write_chunk_record(0, 8, bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    auto wrong_archive_id = shards[0].archive_id;
+    wrong_archive_id[0] = static_cast<bseal::Byte>(
+        static_cast<unsigned>(wrong_archive_id[0]) ^ 0x01u);
+
+    bseal::io::ShardReaderValidation validation{};
+    validation.archive_id = wrong_archive_id;
+
+    EXPECT_THROW(
+        {
+            bseal::io::ShardReader reader(std::move(shards), validation);
+        },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardReader, RejectsExplicitValidationChunkPlainSizeMismatch) {
+    const auto dir = make_temp_dir("bseal_shard_reader_validation_bad_chunk_size");
+
+    auto c0 = fake_ciphertext(0x10, 8);
+
+    bseal::io::ShardWriter writer(make_writer_options(dir, 512));
+    writer.write_chunk_record(0, 8, bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    bseal::io::ShardReaderValidation validation{};
+    validation.chunk_plain_size = shards[0].chunk_plain_size + 1u;
+
+    EXPECT_THROW(
+        {
+            bseal::io::ShardReader reader(std::move(shards), validation);
+        },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardReader, RejectsExplicitValidationPublicHeaderHashMismatch) {
+    const auto dir = make_temp_dir("bseal_shard_reader_validation_bad_header_hash");
+
+    auto c0 = fake_ciphertext(0x10, 8);
+
+    bseal::io::ShardWriter writer(make_writer_options(dir, 512));
+    writer.write_chunk_record(0, 8, bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    auto wrong_public_header_hash = shards[0].public_header_hash;
+    wrong_public_header_hash[0] = static_cast<bseal::Byte>(
+        static_cast<unsigned>(wrong_public_header_hash[0]) ^ 0x01u);
+
+    bseal::io::ShardReaderValidation validation{};
+    validation.public_header_hash = wrong_public_header_hash;
+
+    EXPECT_THROW(
+        {
+            bseal::io::ShardReader reader(std::move(shards), validation);
+        },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}

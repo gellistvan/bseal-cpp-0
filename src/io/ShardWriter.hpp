@@ -25,6 +25,8 @@ struct ShardWriterOptions {
     // Existing public header prefix. This keeps the current app skeleton able
     // to read KDF/suite/archive metadata before opening the framed records.
     archive::PublicHeaderV1 public_header{};
+    std::array<Byte, 32> header_authentication_key{};
+    bool has_header_authentication_key{false};
 };
 
 struct ShardWritePosition {

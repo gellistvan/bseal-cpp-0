@@ -30,6 +30,7 @@ add_library(bseal_core
     src/archive/ArchiveReader.cpp
     src/archive/ArchiveWriter.cpp
     src/archive/PathSanitizer.cpp
+    src/archive/PublicHeaderAuth.cpp
     src/archive/RecordFormat.cpp
     src/io/AsyncReader.cpp
     src/io/AsyncWriter.cpp

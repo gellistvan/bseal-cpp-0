@@ -42,6 +42,7 @@ bseal_set_project_warnings(bseal_io_gtests)
 bseal_enable_sanitizers_if_requested(bseal_io_gtests)
 
 add_executable(bseal_archive_gtests
+        archive/TestPublicHeaderAuth.cpp
         archive/TestArchiveReader.cpp
         archive/TestArchiveWriter.cpp
         archive/TestMetadata.cpp
@@ -99,7 +100,7 @@ if (GTest_FOUND)
     )
 
     gtest_discover_tests(bseal_pipeline_gtests
-            TEST_PREFIX platform.
+            TEST_PREFIX pipeline.
             DISCOVERY_TIMEOUT 30
     )
 else()

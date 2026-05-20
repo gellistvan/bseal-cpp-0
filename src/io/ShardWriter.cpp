@@ -1,5 +1,5 @@
+#include "archive/PublicHeaderAuth.hpp"
 #include "io/ShardWriter.hpp"
-
 #include "io/ShardFrame.hpp"
 
 #include "common/Errors.hpp"
@@ -127,6 +127,16 @@ void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
 
         auto public_header = options_.public_header;
         public_header.shard_index = current_shard_index_;
+        public_header.header_len = static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
+        public_header.header_mac.fill(Byte{0});
+
+        if (options_.has_header_authentication_key) {
+            public_header = archive::finalize_public_header(
+                public_header,
+                ConstByteSpan{
+                    options_.header_authentication_key.data(),
+                    options_.header_authentication_key.size()});
+        }
 
         const auto public_bytes = archive::serialize_public_header(public_header);
         write_raw(ConstByteSpan{public_bytes.data(), public_bytes.size()});

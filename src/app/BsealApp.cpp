@@ -2,6 +2,7 @@
 
 #include "archive/ArchiveReader.hpp"
 #include "archive/ArchiveWriter.hpp"
+#include "archive/PublicHeaderAuth.hpp"
 #include "archive/RecordFormat.hpp"
 #include "common/Errors.hpp"
 #include "common/Types.hpp"
@@ -29,13 +30,8 @@
 #include <string_view>
 #include <vector>
 
-#if defined(_WIN32)
-#define NOMINMAX
-#include <windows.h>
-#else
 #include <termios.h>
 #include <unistd.h>
-#endif
 
 namespace bseal::app {
     namespace {
@@ -333,6 +329,31 @@ namespace bseal::app {
             return context;
         }
 
+        std::array<Byte, 32> copy_header_authentication_key( const bseal::crypto::ExpandedKeys& keys)
+        {
+            if (keys.header_authentication_key.size() != 32) {
+                throw bseal::InvalidArgument(
+                    "expanded header authentication key must be 32 bytes");
+            }
+
+            std::array<Byte, 32> out{};
+            std::copy_n(keys.header_authentication_key.data(), out.size(), out.begin());
+            return out;
+        }
+
+        void verify_all_shard_header_macs(
+            const std::vector<bseal::io::ShardInfo>& shards,
+            ConstByteSpan header_authentication_key)
+        {
+            for (const auto& shard : shards) {
+                if (!bseal::archive::verify_header_mac(
+                        shard.public_header,
+                        header_authentication_key)) {
+                    throw bseal::AuthenticationFailed();
+                        }
+            }
+        }
+
         bseal::crypto::ExpandedKeys
         derive_expanded_keys(const ArchiveOpenContext &context, std::string passphrase,
                              const std::vector<std::filesystem::path> &keyfiles) {
@@ -357,6 +378,7 @@ namespace bseal::app {
         auto context = make_encrypt_context(options);
         auto passphrase = obtain_passphrase(options.passphrase_prompt);
         auto keys = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
+        const auto header_authentication_key = copy_header_authentication_key(keys);
 
         bseal::archive::ArchiveWriter archive_writer(bseal::archive::ArchiveWriterOptions{
             options.input,
@@ -376,6 +398,8 @@ namespace bseal::app {
         shard_options.chunk_plain_size = context.chunk_plain_size;
         shard_options.public_header_hash = context.public_header_hash;
         shard_options.public_header = context.public_header;
+        shard_options.header_authentication_key = header_authentication_key;
+        shard_options.has_header_authentication_key = true;
 
         bseal::io::ShardWriter shard_writer(std::move(shard_options));
 
@@ -414,6 +438,7 @@ namespace bseal::app {
 
         auto passphrase = obtain_passphrase(options.passphrase_prompt);
         auto keys = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
+        verify_all_shard_header_macs( shards, keys.header_authentication_key.as_span());
 
         bseal::io::ShardReaderValidation validation{};
         validation.suite_id = suite_to_header_id(context.suite);

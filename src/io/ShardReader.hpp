@@ -8,14 +8,13 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
-#include <unordered_set>
+#include <set>
 #include <vector>
 
 namespace bseal::io {
 
     struct ShardInfo {
         std::filesystem::path path;
-
         archive::PublicHeaderV1 public_header{};
 
         std::uint16_t suite_id{0};
@@ -26,7 +25,6 @@ namespace bseal::io {
         std::uint64_t chunk_count{0};
         std::uint64_t total_chunk_count{0};
         std::array<Byte, 32> public_header_hash{};
-
         std::uint64_t file_size{0};
     };
 
@@ -45,17 +43,12 @@ namespace bseal::io {
 
     class ShardReader {
     public:
+        ShardReader(std::vector<ShardInfo> shards, ShardReaderValidation validation = {});
+
         static std::vector<ShardInfo> discover(const std::filesystem::path& input_dir);
 
-        explicit ShardReader(
-            std::vector<ShardInfo> shards,
-            ShardReaderValidation validation = {});
-
-        std::optional<ChunkRecord> read_next_chunk_record();
-
-        // Compatibility wrapper for older callers. New code must use
-        // read_next_chunk_record() so it receives the authenticated chunk index.
-        std::optional<Bytes> read_next_cipher_chunk();
+        [[nodiscard]] std::optional<ChunkRecord> read_next_chunk_record();
+        [[nodiscard]] std::optional<Bytes> read_next_cipher_chunk();
 
     private:
         void validate_shards();
@@ -63,14 +56,14 @@ namespace bseal::io {
         void close_current_shard_and_check_trailing_garbage();
 
         std::vector<ShardInfo> shards_;
-        ShardReaderValidation validation_;
+        ShardReaderValidation validation_{};
 
         std::size_t current_shard_pos_{0};
         std::uint64_t current_record_in_shard_{0};
-        std::ifstream current_stream_;
-
         std::uint64_t expected_total_chunk_count_{0};
-        std::unordered_set<std::uint64_t> seen_chunk_indices_;
+
+        std::ifstream current_stream_;
+        std::set<std::uint64_t> seen_chunk_indices_;
     };
 
 } // namespace bseal::io
