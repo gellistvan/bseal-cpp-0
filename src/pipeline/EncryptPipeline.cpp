@@ -18,11 +18,13 @@ namespace {
 
 struct PlainChunk {
     std::uint64_t index{0};
+    std::uint64_t logical_size{0};
     Bytes bytes;
 };
 
 struct CipherChunk {
     std::uint64_t index{0};
+    std::uint64_t logical_plaintext_size{0};
     Bytes bytes;
 };
 
@@ -140,8 +142,12 @@ void append_record_to_fixed_chunks(const Bytes& record,
         offset += to_copy;
 
         if (current_chunk.size() == fixed_chunk_size) {
-            if (!encrypt_queue.push(PlainChunk{next_chunk_index++, std::move(current_chunk)})) {
-                return;
+            PlainChunk plain_chunk{.index = next_chunk_index++,
+                .logical_size = static_cast<std::uint64_t>(current_chunk.size()),
+                .bytes = std::move(current_chunk)};
+
+            if (!encrypt_queue.push(plain_chunk)) {
+                        return;
             }
 
             current_chunk = Bytes{};
@@ -173,10 +179,16 @@ void producer_main(archive::ArchiveWriter& archive_writer,
         }
 
         if (!failure_state.failed()) {
-            if (!current_chunk.empty() ||
-                (next_chunk_index == 0 && options.emit_final_chunk_when_empty)) {
+            if (!current_chunk.empty() || (next_chunk_index == 0 && options.emit_final_chunk_when_empty)) {
+                const auto logical_size = static_cast<std::uint64_t>(current_chunk.size());
+
                 current_chunk.resize(chunk_size, Byte{0});
-                encrypt_queue.push(PlainChunk{next_chunk_index++, std::move(current_chunk)});
+
+                encrypt_queue.push(PlainChunk{
+                    .index = next_chunk_index++,
+                    .logical_size = logical_size,
+                    .bytes = std::move(current_chunk),
+                });
             }
         }
 
@@ -210,6 +222,8 @@ void encryption_worker_main(const EncryptPipelineOptions& options,
 
             const auto aad = make_aad(options, job->index);
 
+            const auto plaintext_size = static_cast<std::uint64_t>(job->bytes.size());
+
             auto ciphertext = backend.encrypt_chunk(crypto::EncryptChunkRequest{
                 crypto::AeadKeyView{keys.chunk_encryption_key.as_span()},
                 crypto::AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
@@ -219,7 +233,11 @@ void encryption_worker_main(const EncryptPipelineOptions& options,
 
             wipe_bytes(job->bytes);
 
-            if (!write_queue.push(CipherChunk{job->index, std::move(ciphertext)})) {
+            if (!write_queue.push(CipherChunk{
+                    .index = job->index,
+                    .logical_plaintext_size = job->logical_size,
+                    .bytes = std::move(ciphertext),
+                })) {
                 break;
             }
         }
@@ -230,15 +248,16 @@ void encryption_worker_main(const EncryptPipelineOptions& options,
     }
 }
 
-void ordered_writer_main(io::ShardWriter& shard_writer,
-                         WorkQueue<CipherChunk>& write_queue,
-                         FailureState& failure_state) {
-    std::map<std::uint64_t, Bytes> pending;
+    void ordered_writer_main(io::ShardWriter& shard_writer,
+                             WorkQueue<CipherChunk>& write_queue,
+                             FailureState& failure_state) {
+    std::map<std::uint64_t, CipherChunk> pending;
     std::uint64_t next_expected_index = 0;
 
     try {
         while (true) {
             auto item = write_queue.pop();
+
             if (!item) {
                 break;
             }
@@ -247,18 +266,25 @@ void ordered_writer_main(io::ShardWriter& shard_writer,
                 throw Error("encrypt pipeline received a stale encrypted chunk");
             }
 
-            const auto [it, inserted] = pending.emplace(item->index, std::move(item->bytes));
+            const auto [it, inserted] = pending.emplace(item->index, std::move(*item));
             if (!inserted) {
                 throw Error("encrypt pipeline received a duplicate encrypted chunk");
             }
 
             while (true) {
                 auto ready = pending.find(next_expected_index);
+
                 if (ready == pending.end()) {
                     break;
                 }
 
-                shard_writer.write(ConstByteSpan{ready->second.data(), ready->second.size()});
+                auto& chunk = ready->second;
+
+                shard_writer.write_chunk_record(
+                    chunk.index,
+                    chunk.logical_plaintext_size,
+                    ConstByteSpan{chunk.bytes.data(), chunk.bytes.size()});
+
                 pending.erase(ready);
                 ++next_expected_index;
             }

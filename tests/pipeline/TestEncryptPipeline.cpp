@@ -26,12 +26,7 @@ TEST(EncryptPipeline, ThrowsWhenBackendIsNull) {
             false,
         });
 
-    io::ShardWriter shard_writer(
-        io::ShardWriterOptions{
-            sealed_root.path(),
-            1024ull * 1024ull,
-            ".bin",
-        });
+    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path()));
 
     EncryptPipeline pipeline(
         make_encrypt_options(128),
@@ -61,12 +56,7 @@ TEST(EncryptPipeline, ThrowsWhenChunkSizeIsZero) {
             false,
         });
 
-    io::ShardWriter shard_writer(
-        io::ShardWriterOptions{
-            sealed_root.path(),
-            1024ull * 1024ull,
-            ".bin",
-        });
+    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path(), 128));
 
     EncryptPipeline pipeline(
         options,
@@ -96,12 +86,7 @@ TEST(EncryptPipeline, ThrowsWhenChunkKeySizeDoesNotMatchBackend) {
             false,
         });
 
-    io::ShardWriter shard_writer(
-        io::ShardWriterOptions{
-            sealed_root.path(),
-            1024ull * 1024ull,
-            ".bin",
-        });
+    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path()));
 
     EncryptPipeline pipeline(
         make_encrypt_options(128),
@@ -173,12 +158,7 @@ TEST(EncryptPipeline, PropagatesWorkerFailureAndDoesNotHang) {
             false,
         });
 
-    io::ShardWriter shard_writer(
-        io::ShardWriterOptions{
-            sealed_root.path(),
-            1024ull * 1024ull,
-            ".bin",
-        });
+    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path()));
 
     EncryptPipeline pipeline(
         make_encrypt_options(128),

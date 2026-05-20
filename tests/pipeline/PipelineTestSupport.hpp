@@ -7,6 +7,7 @@
 #include "crypto/CryptoBackend.hpp"
 #include "crypto/KeySchedule.hpp"
 #include "crypto/SecureBuffer.hpp"
+#include "io/ShardFrame.hpp"
 #include "io/ShardReader.hpp"
 #include "io/ShardWriter.hpp"
 #include "pipeline/DecryptPipeline.hpp"
@@ -167,6 +168,61 @@ inline std::array<Byte, 32> test_public_header_hash() {
     return out;
 }
 
+
+    inline constexpr std::uint64_t kTestShardPayloadSize = 1024ull * 1024ull;
+
+    inline bseal::archive::PublicHeaderV1 make_test_public_header(
+        std::uint64_t chunk_plain_size = 128,
+        std::uint64_t shard_payload_size = kTestShardPayloadSize) {
+        bseal::archive::PublicHeaderV1 header{};
+
+        header.suite_id = 1;
+        header.archive_id = test_archive_id();
+        header.shard_index = 0;
+        header.header_len =
+            static_cast<std::uint32_t>(bseal::archive::kPublicHeaderV1SerializedSize);
+
+        header.chunk_plain_size = static_cast<std::uint32_t>(chunk_plain_size);
+        header.shard_payload_size = shard_payload_size;
+
+        // The pipeline tests do not exercise real KDF behavior, but keep the
+        // public header deterministic and non-weird.
+        header.argon2_memory_kib = 0;
+        header.argon2_iterations = 0;
+        header.argon2_parallelism = 0;
+
+        return header;
+    }
+
+    inline std::array<bseal::Byte, 32> make_test_public_header_hash(
+        std::uint64_t chunk_plain_size = 128,
+        std::uint64_t shard_payload_size = kTestShardPayloadSize) {
+        return bseal::archive::compute_public_header_hash(
+            make_test_public_header(chunk_plain_size, shard_payload_size));
+    }
+
+    inline bseal::io::ShardWriterOptions make_test_shard_writer_options(
+        const std::filesystem::path& sealed_dir,
+        std::uint64_t chunk_plain_size = 128,
+        std::uint64_t shard_payload_size = kTestShardPayloadSize) {
+        const auto public_header =
+            make_test_public_header(chunk_plain_size, shard_payload_size);
+
+        bseal::io::ShardWriterOptions options{};
+        options.output_dir = sealed_dir;
+        options.max_shard_payload_size = shard_payload_size;
+        options.filename_extension = ".bin";
+
+        options.suite_id = public_header.suite_id;
+        options.archive_id = public_header.archive_id;
+        options.chunk_plain_size = chunk_plain_size;
+        options.public_header = public_header;
+        options.public_header_hash =
+            bseal::archive::compute_public_header_hash(public_header);
+
+        return options;
+    }
+
 inline crypto::ExpandedKeys make_test_keys() {
     crypto::ExpandedKeys keys;
 
@@ -196,24 +252,28 @@ inline crypto::ExpandedKeys make_test_keys() {
 
 inline EncryptPipelineOptions make_encrypt_options(std::uint64_t chunk_size = 128) {
     EncryptPipelineOptions options;
+
     options.chunk_plain_size = chunk_size;
     options.worker_count = 4;
     options.queue_depth = 8;
     options.archive_id = test_archive_id();
-    options.public_header_hash = test_public_header_hash();
+    options.public_header_hash = make_test_public_header_hash(chunk_size);
     options.aad_shard_index = 0;
     options.emit_final_chunk_when_empty = true;
+
     return options;
 }
 
 inline DecryptPipelineOptions make_decrypt_options(std::uint64_t chunk_size = 128) {
     DecryptPipelineOptions options;
+
     options.chunk_plain_size = chunk_size;
     options.worker_count = 4;
     options.queue_depth = 8;
     options.archive_id = test_archive_id();
-    options.public_header_hash = test_public_header_hash();
+    options.public_header_hash = make_test_public_header_hash(chunk_size);
     options.aad_shard_index = 0;
+
     return options;
 }
 
@@ -422,31 +482,49 @@ inline void create_sample_tree(const std::filesystem::path& root) {
                       repeated_pattern("unicode payload\n", 32));
 }
 
-inline void corrupt_first_bin_file_byte(const std::filesystem::path& sealed_dir) {
-    const auto files = list_bin_files(sealed_dir);
+    inline void corrupt_first_ciphertext_byte(const std::filesystem::path& sealed_dir) {
+    auto shards = io::ShardReader::discover(sealed_dir);
 
-    if (files.empty()) {
-        throw std::runtime_error("no .bin files found to corrupt");
+    auto it = std::find_if(
+        shards.begin(),
+        shards.end(),
+        [](const io::ShardInfo& shard) {
+            return shard.chunk_count > 0;
+        });
+
+    if (it == shards.end()) {
+        throw std::runtime_error("no chunk records found to corrupt");
     }
 
-    std::fstream stream(files.front(), std::ios::in | std::ios::out | std::ios::binary);
+    const auto ciphertext_offset =
+        static_cast<std::uint64_t>(archive::kPublicHeaderV1SerializedSize)
+        + static_cast<std::uint64_t>(io::kShardFileV1HeaderSize)
+        + static_cast<std::uint64_t>(io::kChunkRecordV1HeaderSize);
+
+    std::fstream stream(it->path, std::ios::in | std::ios::out | std::ios::binary);
     if (!stream) {
-        throw std::runtime_error("failed to open .bin file for corruption");
+        throw std::runtime_error("failed to open shard file for ciphertext corruption");
     }
+
+    stream.seekg(static_cast<std::streamoff>(ciphertext_offset), std::ios::beg);
 
     char byte = 0;
     stream.read(&byte, 1);
     if (!stream) {
-        throw std::runtime_error("failed to read first byte for corruption");
+        throw std::runtime_error("failed to read ciphertext byte for corruption");
     }
 
     byte = static_cast<char>(byte ^ 0x01);
 
-    stream.seekp(0);
+    stream.seekp(static_cast<std::streamoff>(ciphertext_offset), std::ios::beg);
     stream.write(&byte, 1);
+
+    if (!stream) {
+        throw std::runtime_error("failed to write corrupted ciphertext byte");
+    }
 }
 
-    struct EncryptionRunResult {
+struct EncryptionRunResult {
     std::vector<std::uint64_t> encrypted_indices;
 };
 
@@ -472,12 +550,7 @@ inline EncryptionRunResult run_test_encryption(
             false,
         });
 
-    io::ShardWriter shard_writer(
-        io::ShardWriterOptions{
-            sealed_dir,
-            1024ull * 1024ull,
-            ".bin",
-        });
+    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_dir, 128));
 
     EncryptPipeline pipeline(
         make_encrypt_options(128),
@@ -492,6 +565,43 @@ inline EncryptionRunResult run_test_encryption(
     return EncryptionRunResult{
         .encrypted_indices = backend_raw->encrypted_indices(),
     };
+}
+
+inline io::ShardReader make_valid_test_shard_reader( const std::filesystem::path& input_dir,
+                        const std::filesystem::path& sealed_dir, std::uint64_t chunk_size = 128) {
+    std::filesystem::create_directories(input_dir);
+    std::filesystem::create_directories(sealed_dir);
+
+    write_binary_file(input_dir / "dummy.txt", "dummy");
+
+    auto backend = std::make_unique<TestAeadBackend>();
+
+    archive::ArchiveWriter archive_writer(
+        archive::ArchiveWriterOptions{
+            input_dir,
+            chunk_size,
+            true,
+            true,
+            false,
+        });
+
+    io::ShardWriter shard_writer(
+        make_test_shard_writer_options(
+            sealed_dir,
+            chunk_size,
+            kTestShardPayloadSize));
+
+    EncryptPipeline pipeline(
+        make_encrypt_options(chunk_size),
+        std::move(backend),
+        make_test_keys(),
+        std::move(archive_writer),
+        std::move(shard_writer));
+
+    pipeline.run();
+
+    auto discovered_shards = io::ShardReader::discover(sealed_dir);
+    return io::ShardReader(std::move(discovered_shards));
 }
 
 inline DecryptionRunResult run_test_decryption(

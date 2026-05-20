@@ -47,6 +47,7 @@ namespace bseal::app {
         struct ArchiveOpenContext {
             bseal::crypto::CipherSuite suite{bseal::crypto::CipherSuite::XChaCha20Poly1305};
             bseal::crypto::KdfParams kdf_params{};
+            bseal::archive::PublicHeaderV1 public_header{};
             std::array<Byte, 32> kdf_salt{};
             std::array<Byte, 16> archive_id{};
             std::array<Byte, 32> public_header_hash{};
@@ -237,6 +238,7 @@ namespace bseal::app {
             auto header = make_encrypt_public_header(options, context.archive_id, context.kdf_salt,
                                                      context.kdf_params);
             context.public_header_hash = bseal::archive::compute_public_header_hash(header);
+            context.public_header = header;
             return context;
         }
 
@@ -291,20 +293,41 @@ namespace bseal::app {
             return bseal::archive::parse_public_header(ConstByteSpan{prefix.data(), prefix.size()});
         }
 
-        ArchiveOpenContext make_decrypt_context(const bseal::cli::DecryptOptions &options) {
-            const auto header = read_first_public_header(options.input);
+        ArchiveOpenContext make_decrypt_context_from_shards(
+            const std::vector<bseal::io::ShardInfo>& shards) {
+            auto first = std::find_if(
+                shards.begin(),
+                shards.end(),
+                [](const bseal::io::ShardInfo& shard) {
+                    return shard.shard_index == 0;
+                });
+
+            if (first == shards.end()) {
+                throw bseal::InvalidArgument(
+                    "missing shard_index 0; cannot open archive public header");
+            }
+
+            const auto& header = first->public_header;
 
             ArchiveOpenContext context{};
+            context.public_header = header;
             context.suite = suite_from_header_id(header.suite_id);
+
             context.kdf_params.preset = bseal::crypto::KdfPreset::Custom;
             context.kdf_params.memory_kib = header.argon2_memory_kib;
             context.kdf_params.iterations = header.argon2_iterations;
             context.kdf_params.parallelism = header.argon2_parallelism;
             context.kdf_params.output_bytes = 32;
+
             context.kdf_salt = header.kdf_salt;
             context.archive_id = header.archive_id;
-            context.public_header_hash = bseal::archive::compute_public_header_hash(header);
             context.chunk_plain_size = header.chunk_plain_size;
+            context.public_header_hash = bseal::archive::compute_public_header_hash(header);
+
+            if (first->public_header_hash != context.public_header_hash) {
+                throw bseal::InvalidArgument("public_header_hash mismatch in shard_index 0");
+            }
+
             return context;
         }
 
@@ -341,11 +364,18 @@ namespace bseal::app {
             false,
         });
 
-        bseal::io::ShardWriter shard_writer(bseal::io::ShardWriterOptions{
-            options.output,
-            options.shard_size,
-            ".bin",
-        });
+        bseal::io::ShardWriterOptions shard_options{};
+        shard_options.output_dir = options.output;
+        shard_options.max_shard_payload_size = options.shard_size;
+        shard_options.filename_extension = ".bin";
+
+        shard_options.suite_id = suite_to_header_id(context.suite);
+        shard_options.archive_id = context.archive_id;
+        shard_options.chunk_plain_size = context.chunk_plain_size;
+        shard_options.public_header_hash = context.public_header_hash;
+        shard_options.public_header = context.public_header;
+
+        bseal::io::ShardWriter shard_writer(std::move(shard_options));
 
         bseal::pipeline::EncryptPipelineOptions pipeline_options;
         pipeline_options.chunk_plain_size = options.chunk_size;
@@ -377,12 +407,19 @@ namespace bseal::app {
 
         std::filesystem::create_directories(options.output);
 
-        auto context = make_decrypt_context(options);
+        auto shards = bseal::io::ShardReader::discover(options.input);
+        auto context = make_decrypt_context_from_shards(shards);
+
         auto passphrase = obtain_passphrase(options.passphrase_prompt);
         auto keys = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
 
-        auto shards = bseal::io::ShardReader::discover(options.input);
-        bseal::io::ShardReader shard_reader(std::move(shards));
+        bseal::io::ShardReaderValidation validation{};
+        validation.suite_id = suite_to_header_id(context.suite);
+        validation.archive_id = context.archive_id;
+        validation.chunk_plain_size = context.chunk_plain_size;
+        validation.public_header_hash = context.public_header_hash;
+
+        bseal::io::ShardReader shard_reader(std::move(shards), validation);
         bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{
             options.output,
             options.overwrite,

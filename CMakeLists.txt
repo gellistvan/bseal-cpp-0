@@ -34,6 +34,7 @@ add_library(bseal_core
     src/io/AsyncReader.cpp
     src/io/AsyncWriter.cpp
     src/io/BufferPool.cpp
+    src/io/ShardFrame.cpp
     src/io/ShardReader.cpp
     src/io/ShardWriter.cpp
     src/pipeline/DecryptPipeline.cpp

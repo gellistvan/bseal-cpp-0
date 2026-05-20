@@ -1,59 +1,90 @@
 #pragma once
 
+#include "archive/RecordFormat.hpp"
 #include "common/Types.hpp"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace bseal::io {
 
-    struct ShardWriterOptions {
-        std::filesystem::path output_dir;
-        std::uint64_t max_shard_payload_size{4ull * 1024ull * 1024ull * 1024ull};
-        std::string filename_extension{".bin"};
-    };
+struct ShardWriterOptions {
+    std::filesystem::path output_dir;
+    std::uint64_t max_shard_payload_size{0};
+    std::string filename_extension{".bin"};
 
-    struct ShardWritePosition {
+    std::uint16_t suite_id{0};
+    std::array<Byte, 16> archive_id{};
+    std::uint64_t chunk_plain_size{0};
+    std::array<Byte, 32> public_header_hash{};
+
+    // Existing public header prefix. This keeps the current app skeleton able
+    // to read KDF/suite/archive metadata before opening the framed records.
+    archive::PublicHeaderV1 public_header{};
+};
+
+struct ShardWritePosition {
+    std::uint32_t shard_index{0};
+    std::uint64_t record_offset{0};
+    std::uint64_t chunk_index{0};
+};
+
+class ShardWriter {
+public:
+    explicit ShardWriter(ShardWriterOptions options);
+    ~ShardWriter();
+
+    ShardWriter(const ShardWriter&) = delete;
+    ShardWriter& operator=(const ShardWriter&) = delete;
+
+    ShardWriter(ShardWriter&&) noexcept = default;
+    ShardWriter& operator=(ShardWriter&&) noexcept = default;
+
+    ShardWritePosition write_chunk_record(
+        std::uint64_t chunk_index,
+        std::uint64_t plaintext_size,
+        ConstByteSpan ciphertext);
+
+    // Compatibility wrapper for old unit tests. New production code must call
+    // write_chunk_record() so chunk_index/plaintext_size are explicit.
+    ShardWritePosition write(ConstByteSpan bytes);
+
+    void finish();
+
+private:
+    struct FinalizedShard {
+        std::filesystem::path path;
         std::uint32_t shard_index{0};
-        std::uint64_t offset{0};
+        std::uint64_t first_chunk_index{0};
+        std::uint64_t chunk_count{0};
     };
 
-    class ShardWriter {
-    public:
-        explicit ShardWriter(ShardWriterOptions options);
-        ~ShardWriter();
+    void validate_and_normalize_options();
+    void open_next_shard(std::uint64_t first_chunk_index);
+    void close_current_shard(std::uint64_t total_chunk_count);
+    void rewrite_current_frame_header(std::uint64_t total_chunk_count);
+    void rewrite_finalized_frame_header(const FinalizedShard& shard, std::uint64_t total_chunk_count);
+    void write_raw(ConstByteSpan bytes);
 
-        ShardWriter(const ShardWriter&) = delete;
-        ShardWriter& operator=(const ShardWriter&) = delete;
+    ShardWriterOptions options_;
 
-        ShardWriter(ShardWriter&& other) noexcept;
-        ShardWriter& operator=(ShardWriter&& other) noexcept;
+    std::ofstream current_stream_;
+    std::filesystem::path current_path_;
+    std::uint32_t current_shard_index_{0};
+    std::uint32_t next_shard_index_{0};
+    std::uint64_t current_payload_offset_{0};
+    std::uint64_t current_first_chunk_index_{0};
+    std::uint64_t current_chunk_count_{0};
 
-        // Writes bytes into randomized .bin shards.
-        //
-        // Returns the position of the first written byte. A single write may cross a shard boundary.
-        //
-        // Important production note:
-        // The pipeline should write each shard public header before encrypted payload bytes.
-        // This low-level class only manages shard file splitting and random filenames.
-        [[nodiscard]] ShardWritePosition write(ConstByteSpan bytes);
+    std::uint64_t next_expected_chunk_index_{0};
+    std::uint64_t next_legacy_chunk_index_{0};
 
-        void finish();
-
-    private:
-        void open_next_shard();
-        void close_current_shard();
-
-        ShardWriterOptions options_;
-
-        std::ofstream current_stream_;
-        std::filesystem::path current_path_;
-
-        std::uint32_t next_shard_index_{0};
-        std::uint32_t current_shard_index_{0};
-        std::uint64_t current_payload_offset_{0};
-    };
+    std::vector<FinalizedShard> finalized_shards_;
+    bool finished_{false};
+};
 
 } // namespace bseal::io
