@@ -1,6 +1,7 @@
 #include "pipeline/EncryptPipeline.hpp"
 
 #include "common/Errors.hpp"
+#include "io/ShardFrame.hpp"
 #include "pipeline/WorkQueue.hpp"
 
 #include <algorithm>
@@ -9,23 +10,26 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <thread>
-#include <utility>
 #include <vector>
 
 namespace bseal::pipeline {
+
 namespace {
 
 struct PlainChunk {
     std::uint64_t index{0};
-    std::uint64_t logical_size{0};
+    io::ChunkFrameHeaderV1 frame_header{};
+    Bytes frame_header_bytes;
     Bytes bytes;
 };
 
 struct CipherChunk {
     std::uint64_t index{0};
-    std::uint64_t logical_plaintext_size{0};
-    Bytes bytes;
+    io::ChunkFrameHeaderV1 frame_header{};
+    Bytes frame_header_bytes;
+    Bytes ciphertext_and_tag;
 };
 
 std::uint32_t resolve_worker_count(std::uint32_t requested) {
@@ -41,7 +45,6 @@ std::size_t resolve_queue_depth(std::size_t requested, std::uint32_t worker_coun
     if (requested != 0) {
         return requested;
     }
-
     return std::max<std::size_t>(2, static_cast<std::size_t>(worker_count) * 2);
 }
 
@@ -49,12 +52,18 @@ std::size_t checked_chunk_size(std::uint64_t chunk_plain_size) {
     if (chunk_plain_size == 0) {
         throw InvalidArgument("chunk_plain_size must be greater than zero");
     }
-
     if (chunk_plain_size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
         throw InvalidArgument("chunk_plain_size does not fit into size_t on this platform");
     }
-
     return static_cast<std::size_t>(chunk_plain_size);
+}
+
+std::uint16_t checked_tag_size(const crypto::CryptoBackend& backend) {
+    if (backend.tag_size() == 0 ||
+        backend.tag_size() > static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max())) {
+        throw InvalidArgument("AEAD tag size does not fit ChunkFrameHeaderV1");
+    }
+    return static_cast<std::uint16_t>(backend.tag_size());
 }
 
 void wipe_bytes(Bytes& bytes) noexcept {
@@ -88,7 +97,6 @@ public:
             std::lock_guard lock(mutex_);
             exception = first_exception_;
         }
-
         if (exception) {
             std::rethrow_exception(exception);
         }
@@ -96,76 +104,128 @@ public:
 
 private:
     std::atomic_bool failed_{false};
-
     mutable std::mutex mutex_;
     std::exception_ptr first_exception_;
 };
 
-crypto::ChunkAad make_aad(const EncryptPipelineOptions& options, std::uint64_t chunk_index) {
+crypto::ChunkAad make_aad(
+    const EncryptPipelineOptions& options,
+    ConstByteSpan frame_header_bytes) {
     return crypto::ChunkAad{
         ConstByteSpan{options.public_header_hash.data(), options.public_header_hash.size()},
-        options.aad_shard_index,
-        chunk_index,
-        0,
+        frame_header_bytes,
     };
 }
 
-void validate_encrypt_pipeline_inputs(const EncryptPipelineOptions& options,
-                                      const crypto::CryptoBackend& backend,
-                                      const crypto::ExpandedKeys& keys) {
+void validate_encrypt_pipeline_inputs(
+    const EncryptPipelineOptions& options,
+    const crypto::CryptoBackend& backend,
+    const crypto::ExpandedKeys& keys) {
     checked_chunk_size(options.chunk_plain_size);
+    checked_tag_size(backend);
 
     if (keys.chunk_encryption_key.size() != backend.key_size()) {
         throw InvalidArgument("chunk encryption key size does not match selected AEAD backend");
     }
-
     if (keys.nonce_derivation_key.empty()) {
         throw InvalidArgument("nonce derivation key must not be empty");
     }
 }
 
-void append_record_to_fixed_chunks(const Bytes& record,
-                                   std::size_t fixed_chunk_size,
-                                   Bytes& current_chunk,
-                                   std::uint64_t& next_chunk_index,
-                                   WorkQueue<PlainChunk>& encrypt_queue) {
-    std::size_t offset = 0;
+bool enqueue_planned_chunk(
+    io::ShardWriter& shard_writer,
+    WorkQueue<PlainChunk>& encrypt_queue,
+    std::uint64_t chunk_index,
+    Bytes bytes,
+    bool final_chunk,
+    std::uint16_t tag_size) {
+    const auto plaintext_len = static_cast<std::uint64_t>(bytes.size());
 
+    auto planned = shard_writer.plan_chunk_frame(
+        chunk_index,
+        plaintext_len,
+        plaintext_len, // v1: ciphertext_len excludes tag and equals plaintext_len.
+        tag_size,
+        final_chunk);
+
+    return encrypt_queue.push(PlainChunk{
+        .index = chunk_index,
+        .frame_header = planned.header,
+        .frame_header_bytes = std::move(planned.header_bytes),
+        .bytes = std::move(bytes),
+    });
+}
+
+bool append_record_bytes_to_chunks(
+    const Bytes& record,
+    std::size_t chunk_size,
+    Bytes& current_chunk,
+    std::optional<Bytes>& pending_full_chunk,
+    std::uint64_t& next_chunk_index,
+    io::ShardWriter& shard_writer,
+    WorkQueue<PlainChunk>& encrypt_queue,
+    std::uint16_t tag_size) {
+    auto flush_pending_as_non_final = [&]() -> bool {
+        if (!pending_full_chunk) {
+            return true;
+        }
+
+        auto bytes = std::move(*pending_full_chunk);
+        pending_full_chunk.reset();
+
+        return enqueue_planned_chunk(
+            shard_writer,
+            encrypt_queue,
+            next_chunk_index++,
+            std::move(bytes),
+            false,
+            tag_size);
+    };
+
+    std::size_t offset = 0;
     while (offset < record.size()) {
         const auto remaining_record_bytes = record.size() - offset;
-        const auto remaining_chunk_space = fixed_chunk_size - current_chunk.size();
+        const auto remaining_chunk_space = chunk_size - current_chunk.size();
         const auto to_copy = std::min(remaining_record_bytes, remaining_chunk_space);
 
-        current_chunk.insert(current_chunk.end(), record.begin() + static_cast<std::ptrdiff_t>(offset),
-                             record.begin() + static_cast<std::ptrdiff_t>(offset + to_copy));
+        current_chunk.insert(
+            current_chunk.end(),
+            record.begin() + static_cast<std::ptrdiff_t>(offset),
+            record.begin() + static_cast<std::ptrdiff_t>(offset + to_copy));
 
         offset += to_copy;
 
-        if (current_chunk.size() == fixed_chunk_size) {
-            PlainChunk plain_chunk{.index = next_chunk_index++,
-                .logical_size = static_cast<std::uint64_t>(current_chunk.size()),
-                .bytes = std::move(current_chunk)};
-
-            if (!encrypt_queue.push(plain_chunk)) {
-                        return;
+        if (current_chunk.size() == chunk_size) {
+            if (!flush_pending_as_non_final()) {
+                return false;
             }
 
+            pending_full_chunk = std::move(current_chunk);
             current_chunk = Bytes{};
-            current_chunk.reserve(fixed_chunk_size);
+            current_chunk.reserve(chunk_size);
         }
     }
+
+    return true;
 }
 
-void producer_main(archive::ArchiveWriter& archive_writer,
-                   const EncryptPipelineOptions& options,
-                   WorkQueue<PlainChunk>& encrypt_queue,
-                   FailureState& failure_state) {
+void producer_main(
+    archive::ArchiveWriter& archive_writer,
+    io::ShardWriter& shard_writer,
+    const EncryptPipelineOptions& options,
+    std::uint16_t tag_size,
+    WorkQueue<PlainChunk>& encrypt_queue,
+    FailureState& failure_state) {
     try {
         const auto chunk_size = checked_chunk_size(options.chunk_plain_size);
 
         Bytes current_chunk;
         current_chunk.reserve(chunk_size);
 
+        // We keep one full chunk back so we can mark it FINAL_CHUNK if it turns
+        // out to be the last chunk. This handles exact-multiple-of-chunk-size
+        // archives without inventing an extra empty frame.
+        std::optional<Bytes> pending_full_chunk;
         std::uint64_t next_chunk_index = 0;
 
         while (!failure_state.failed()) {
@@ -174,21 +234,64 @@ void producer_main(archive::ArchiveWriter& archive_writer,
                 break;
             }
 
-            append_record_to_fixed_chunks(*record, chunk_size, current_chunk, next_chunk_index,
-                                          encrypt_queue);
+            if (!append_record_bytes_to_chunks(
+                    *record,
+                    chunk_size,
+                    current_chunk,
+                    pending_full_chunk,
+                    next_chunk_index,
+                    shard_writer,
+                    encrypt_queue,
+                    tag_size)) {
+                encrypt_queue.close();
+                return;
+            }
         }
 
         if (!failure_state.failed()) {
-            if (!current_chunk.empty() || (next_chunk_index == 0 && options.emit_final_chunk_when_empty)) {
-                const auto logical_size = static_cast<std::uint64_t>(current_chunk.size());
+            if (!current_chunk.empty()) {
+                if (pending_full_chunk) {
+                    auto bytes = std::move(*pending_full_chunk);
+                    pending_full_chunk.reset();
 
-                current_chunk.resize(chunk_size, Byte{0});
+                    if (!enqueue_planned_chunk(
+                            shard_writer,
+                            encrypt_queue,
+                            next_chunk_index++,
+                            std::move(bytes),
+                            false,
+                            tag_size)) {
+                        encrypt_queue.close();
+                        return;
+                    }
+                }
 
-                encrypt_queue.push(PlainChunk{
-                    .index = next_chunk_index++,
-                    .logical_size = logical_size,
-                    .bytes = std::move(current_chunk),
-                });
+                enqueue_planned_chunk(
+                    shard_writer,
+                    encrypt_queue,
+                    next_chunk_index++,
+                    std::move(current_chunk),
+                    true,
+                    tag_size);
+            } else if (pending_full_chunk) {
+                auto bytes = std::move(*pending_full_chunk);
+                pending_full_chunk.reset();
+
+                enqueue_planned_chunk(
+                    shard_writer,
+                    encrypt_queue,
+                    next_chunk_index++,
+                    std::move(bytes),
+                    true,
+                    tag_size);
+            } else if (options.emit_final_chunk_when_empty) {
+                enqueue_planned_chunk(
+                    shard_writer,
+                    encrypt_queue,
+                    next_chunk_index++,
+                    Bytes{},
+                    true,
+                    tag_size);
             }
         }
 
@@ -199,12 +302,13 @@ void producer_main(archive::ArchiveWriter& archive_writer,
     }
 }
 
-void encryption_worker_main(const EncryptPipelineOptions& options,
-                            crypto::CryptoBackend& backend,
-                            crypto::ExpandedKeys& keys,
-                            WorkQueue<PlainChunk>& encrypt_queue,
-                            WorkQueue<CipherChunk>& write_queue,
-                            FailureState& failure_state) {
+void encryption_worker_main(
+    const EncryptPipelineOptions& options,
+    crypto::CryptoBackend& backend,
+    crypto::ExpandedKeys& keys,
+    WorkQueue<PlainChunk>& encrypt_queue,
+    WorkQueue<CipherChunk>& write_queue,
+    FailureState& failure_state) {
     try {
         const crypto::NonceContext nonce_context{
             backend.suite(),
@@ -217,12 +321,14 @@ void encryption_worker_main(const EncryptPipelineOptions& options,
                 break;
             }
 
-            auto nonce = crypto::derive_chunk_nonce(keys.nonce_derivation_key.as_span(),
-                                                    nonce_context, job->index);
+            auto nonce = crypto::derive_chunk_nonce(
+                keys.nonce_derivation_key.as_span(),
+                nonce_context,
+                job->index);
 
-            const auto aad = make_aad(options, job->index);
-
-            const auto plaintext_size = static_cast<std::uint64_t>(job->bytes.size());
+            const auto aad = make_aad(
+                options,
+                ConstByteSpan{job->frame_header_bytes.data(), job->frame_header_bytes.size()});
 
             auto ciphertext = backend.encrypt_chunk(crypto::EncryptChunkRequest{
                 crypto::AeadKeyView{keys.chunk_encryption_key.as_span()},
@@ -231,12 +337,19 @@ void encryption_worker_main(const EncryptPipelineOptions& options,
                 aad,
             });
 
+            const auto expected_ciphertext_and_tag_size =
+                job->frame_header.ciphertext_len + static_cast<std::uint64_t>(job->frame_header.tag_len);
+            if (ciphertext.size() != expected_ciphertext_and_tag_size) {
+                throw Error("AEAD backend returned ciphertext length inconsistent with ChunkFrameHeaderV1");
+            }
+
             wipe_bytes(job->bytes);
 
             if (!write_queue.push(CipherChunk{
                     .index = job->index,
-                    .logical_plaintext_size = job->logical_size,
-                    .bytes = std::move(ciphertext),
+                    .frame_header = job->frame_header,
+                    .frame_header_bytes = std::move(job->frame_header_bytes),
+                    .ciphertext_and_tag = std::move(ciphertext),
                 })) {
                 break;
             }
@@ -248,16 +361,16 @@ void encryption_worker_main(const EncryptPipelineOptions& options,
     }
 }
 
-    void ordered_writer_main(io::ShardWriter& shard_writer,
-                             WorkQueue<CipherChunk>& write_queue,
-                             FailureState& failure_state) {
+void ordered_writer_main(
+    io::ShardWriter& shard_writer,
+    WorkQueue<CipherChunk>& write_queue,
+    FailureState& failure_state) {
     std::map<std::uint64_t, CipherChunk> pending;
     std::uint64_t next_expected_index = 0;
 
     try {
         while (true) {
             auto item = write_queue.pop();
-
             if (!item) {
                 break;
             }
@@ -273,17 +386,15 @@ void encryption_worker_main(const EncryptPipelineOptions& options,
 
             while (true) {
                 auto ready = pending.find(next_expected_index);
-
                 if (ready == pending.end()) {
                     break;
                 }
 
                 auto& chunk = ready->second;
-
-                shard_writer.write_chunk_record(
-                    chunk.index,
-                    chunk.logical_plaintext_size,
-                    ConstByteSpan{chunk.bytes.data(), chunk.bytes.size()});
+                shard_writer.write_chunk_frame(
+                    chunk.frame_header,
+                    ConstByteSpan{chunk.frame_header_bytes.data(), chunk.frame_header_bytes.size()},
+                    ConstByteSpan{chunk.ciphertext_and_tag.data(), chunk.ciphertext_and_tag.size()});
 
                 pending.erase(ready);
                 ++next_expected_index;
@@ -305,16 +416,19 @@ void encryption_worker_main(const EncryptPipelineOptions& options,
 
 } // namespace
 
-EncryptPipeline::EncryptPipeline(EncryptPipelineOptions options,
-                                 std::unique_ptr<crypto::CryptoBackend> backend,
-                                 crypto::ExpandedKeys keys,
-                                 archive::ArchiveWriter archive_writer,
-                                 io::ShardWriter shard_writer)
-    : options_(options),
-      backend_(std::move(backend)),
-      keys_(std::move(keys)),
-      archive_writer_(std::move(archive_writer)),
-      shard_writer_(std::move(shard_writer)) {}
+    EncryptPipeline::EncryptPipeline(
+        EncryptPipelineOptions options,
+        std::unique_ptr<crypto::CryptoBackend> backend,
+        crypto::ExpandedKeys keys,
+        archive::ArchiveWriter archive_writer,
+        io::ShardWriter shard_writer)
+        : options_(std::move(options)),
+          backend_(std::move(backend)),
+          keys_(std::move(keys)),
+          archive_writer_(std::move(archive_writer)),
+          shard_writer_(std::move(shard_writer)) {
+    options_.public_header_hash = shard_writer_.public_header_hash();
+}
 
 void EncryptPipeline::run() {
     if (!backend_) {
@@ -323,25 +437,35 @@ void EncryptPipeline::run() {
 
     validate_encrypt_pipeline_inputs(options_, *backend_, keys_);
 
+    const auto tag_size = checked_tag_size(*backend_);
     const auto worker_count = resolve_worker_count(options_.worker_count);
     const auto queue_depth = resolve_queue_depth(options_.queue_depth, worker_count);
 
     WorkQueue<PlainChunk> encrypt_queue(queue_depth);
     WorkQueue<CipherChunk> write_queue(queue_depth);
-
     FailureState failure_state;
 
     std::thread producer([&] {
-        producer_main(archive_writer_, options_, encrypt_queue, failure_state);
+        producer_main(
+            archive_writer_,
+            shard_writer_,
+            options_,
+            tag_size,
+            encrypt_queue,
+            failure_state);
     });
 
     std::vector<std::thread> workers;
     workers.reserve(worker_count);
-
     for (std::uint32_t i = 0; i < worker_count; ++i) {
         workers.emplace_back([&] {
-            encryption_worker_main(options_, *backend_, keys_, encrypt_queue, write_queue,
-                                   failure_state);
+            encryption_worker_main(
+                options_,
+                *backend_,
+                keys_,
+                encrypt_queue,
+                write_queue,
+                failure_state);
         });
     }
 
@@ -351,7 +475,6 @@ void EncryptPipeline::run() {
                 worker.join();
             }
         }
-
         write_queue.close();
     });
 
@@ -360,7 +483,6 @@ void EncryptPipeline::run() {
     if (producer.joinable()) {
         producer.join();
     }
-
     if (worker_joiner.joinable()) {
         worker_joiner.join();
     }

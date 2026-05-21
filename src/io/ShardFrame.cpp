@@ -290,44 +290,94 @@ ShardFileV1Header parse_shard_file_v1_header(ConstByteSpan bytes) {
     return parse_shard_header_v1(bytes);
 }
 
-Bytes serialize_chunk_record_v1_header(const ChunkRecordV1Header& header) {
-    Bytes out;
-    out.reserve(kChunkRecordV1HeaderSize);
 
-    append_bytes(out, ConstByteSpan{kChunkRecordV1Magic.data(), kChunkRecordV1Magic.size()});
-    append_u64_le(out, header.chunk_index);
-    append_u64_le(out, header.plaintext_size);
-    append_u64_le(out, header.ciphertext_size);
+void validate_chunk_frame_header_v1(const ChunkFrameHeaderV1& header) {
+    if ((header.frame_flags & ~kChunkFrameKnownFlags) != 0) {
+        throw InvalidArgument("unsupported chunk frame flags");
+    }
+    if (header.tag_len == 0) {
+        throw InvalidArgument("invalid chunk frame tag length");
+    }
+    if (header.ciphertext_len > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw InvalidArgument("chunk frame ciphertext length too large for this platform");
+    }
+    if (header.tag_len > static_cast<std::uint16_t>(std::numeric_limits<std::size_t>::max())) {
+        throw InvalidArgument("chunk frame tag length too large for this platform");
+    }
+}
+
+Bytes serialize_chunk_frame_header_v1(const ChunkFrameHeaderV1& header) {
+    validate_chunk_frame_header_v1(header);
+
+    Bytes out;
+    out.reserve(kChunkFrameHeaderV1Size);
+
+    append_bytes(out, ConstByteSpan{kChunkFrameV1Magic.data(), kChunkFrameV1Magic.size()});
+    append_u16_le(out, kChunkFrameHeaderV1Size);
+    append_u16_le(out, header.frame_flags);
+    append_u32_le(out, header.shard_index);
+    append_u64_le(out, header.global_chunk_index);
+    append_u32_le(out, header.plaintext_len);
+    append_u64_le(out, header.ciphertext_len);
+    append_u16_le(out, header.tag_len);
+    append_u16_le(out, 0); // reserved0
+    append_u32_le(out, 0); // reserved1
 
     return out;
 }
 
-ChunkRecordV1Header parse_chunk_record_v1_header(ConstByteSpan bytes) {
-    if (bytes.size() < kChunkRecordV1HeaderSize) {
-        throw InvalidArgument("truncated chunk record");
+ChunkFrameHeaderV1 parse_chunk_frame_header_v1(ConstByteSpan bytes) {
+    if (bytes.size() < kChunkFrameHeaderV1Size) {
+        throw InvalidArgument("truncated frame header");
     }
 
-    Reader reader(bytes.first(kChunkRecordV1HeaderSize), "truncated chunk record");
+    Reader reader(bytes.first(kChunkFrameHeaderV1Size), "truncated frame header");
 
-    auto magic = reader.read_bytes(kChunkRecordV1Magic.size());
-    if (!std::equal(magic.begin(), magic.end(), kChunkRecordV1Magic.begin(), kChunkRecordV1Magic.end())) {
-        throw InvalidArgument("wrong chunk record magic");
+    const auto magic = reader.read_bytes(kChunkFrameV1Magic.size());
+    if (!std::equal(magic.begin(), magic.end(), kChunkFrameV1Magic.begin(), kChunkFrameV1Magic.end())) {
+        throw InvalidArgument("wrong chunk frame magic");
     }
 
-    ChunkRecordV1Header header;
-    header.chunk_index = reader.read_u64_le();
-    header.plaintext_size = reader.read_u64_le();
-    header.ciphertext_size = reader.read_u64_le();
-
-    constexpr std::uint64_t kAeadTagBytes = 16;
-    if (header.ciphertext_size < kAeadTagBytes) {
-        throw InvalidArgument("invalid ciphertext size");
-    }
-    if (header.ciphertext_size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        throw InvalidArgument("ciphertext size too large for this platform");
+    const auto frame_header_len = reader.read_u16_le();
+    if (frame_header_len != kChunkFrameHeaderV1Size) {
+        throw InvalidArgument("unsupported chunk frame header length");
     }
 
+    ChunkFrameHeaderV1 header;
+    header.frame_flags = reader.read_u16_le();
+    header.shard_index = reader.read_u32_le();
+    header.global_chunk_index = reader.read_u64_le();
+    header.plaintext_len = reader.read_u32_le();
+    header.ciphertext_len = reader.read_u64_le();
+    header.tag_len = reader.read_u16_le();
+
+    const auto reserved0 = reader.read_u16_le();
+    if (reserved0 != 0) {
+        throw InvalidArgument("non-zero chunk frame reserved0");
+    }
+
+    const auto reserved1 = reader.read_bytes(4);
+    if (!std::all_of(reserved1.begin(), reserved1.end(), [](Byte b) { return b == Byte{0}; })) {
+        throw InvalidArgument("non-zero chunk frame reserved1");
+    }
+
+    validate_chunk_frame_header_v1(header);
     return header;
 }
 
+std::uint64_t chunk_frame_v1_encoded_size(const ChunkFrameHeaderV1& header) {
+    validate_chunk_frame_header_v1(header);
+
+    const auto body_len = header.ciphertext_len + static_cast<std::uint64_t>(header.tag_len);
+    if (body_len < header.ciphertext_len) {
+        throw InvalidArgument("chunk frame body length overflow");
+    }
+
+    const auto encoded_len = static_cast<std::uint64_t>(kChunkFrameHeaderV1Size) + body_len;
+    if (encoded_len < body_len) {
+        throw InvalidArgument("chunk frame encoded length overflow");
+    }
+
+    return encoded_len;
+}
 } // namespace bseal::io

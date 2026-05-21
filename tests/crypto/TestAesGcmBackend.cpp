@@ -51,11 +51,11 @@ Bytes make_bytes(std::size_t count, Byte seed) {
 
 ChunkAad make_aad() {
     static Bytes header_hash = make_bytes(32, 0x40);
+    static Bytes frame_header = make_bytes(40, 0x50);
+
     return ChunkAad{
         ConstByteSpan{header_hash.data(), header_hash.size()},
-        7,
-        42,
-        0xA5A5u
+        ConstByteSpan{frame_header.data(), frame_header.size()},
     };
 }
 
@@ -201,8 +201,12 @@ TEST(AesGcmBackend, WrongAadFailsAuthentication) {
         aad
     });
 
-    ChunkAad wrong_aad = aad;
-    wrong_aad.global_chunk_index += 1;
+    Bytes wrong_frame_header = make_bytes(40, 0x51);
+
+    ChunkAad wrong_aad{
+        aad.public_header_hash,
+        ConstByteSpan{wrong_frame_header.data(), wrong_frame_header.size()},
+    };
 
     EXPECT_TRUE((throws_exception<AuthenticationFailed>([&] {
         backend.decrypt_chunk(DecryptChunkRequest{

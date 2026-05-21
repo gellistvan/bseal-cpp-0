@@ -49,11 +49,11 @@ Bytes make_bytes(std::size_t count, Byte seed) {
 
 ChunkAad make_aad() {
     static Bytes header_hash = make_bytes(32, 0x80);
+    static Bytes frame_header = make_bytes(40, 0x90);
+
     return ChunkAad{
         ConstByteSpan{header_hash.data(), header_hash.size()},
-        3,
-        987654,
-        0x5A5Au
+        ConstByteSpan{frame_header.data(), frame_header.size()},
     };
 }
 
@@ -195,8 +195,12 @@ TEST(XChaCha20Poly1305Backend, WrongAadFailsAuthentication) {
         aad
     });
 
-    ChunkAad wrong_aad = aad;
-    wrong_aad.shard_index += 1;
+    Bytes wrong_frame_header = make_bytes(40, 0x91);
+
+    ChunkAad wrong_aad{
+        aad.public_header_hash,
+        ConstByteSpan{wrong_frame_header.data(), wrong_frame_header.size()},
+    };
 
     EXPECT_TRUE((throws_exception<AuthenticationFailed>([&] {
         backend.decrypt_chunk(DecryptChunkRequest{

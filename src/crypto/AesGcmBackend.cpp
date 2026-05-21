@@ -40,19 +40,6 @@ void append_le64(Bytes& out, std::uint64_t value) {
     }
 }
 
-Bytes serialize_aad(const ChunkAad& aad) {
-    Bytes out;
-    out.reserve(4 + aad.public_header_hash.size() + 4 + 8 + 4);
-
-    append_le32(out, static_cast<std::uint32_t>(aad.public_header_hash.size()));
-    out.insert(out.end(), aad.public_header_hash.begin(), aad.public_header_hash.end());
-    append_le32(out, aad.shard_index);
-    append_le64(out, aad.global_chunk_index);
-    append_le32(out, aad.flags);
-
-    return out;
-}
-
 void validate_request(const AeadKeyView& key,
                       const AeadNonceView& nonce,
                       std::size_t expected_key_size,
@@ -90,7 +77,7 @@ std::size_t AesGcmBackend::tag_size() const noexcept {
 Bytes AesGcmBackend::encrypt_chunk(const EncryptChunkRequest& request) {
     validate_request(request.key, request.nonce, key_size(), nonce_size());
 
-    const Bytes aad = serialize_aad(request.aad);
+    const Bytes aad = serialize_chunk_aad_v1(request.aad);
 
     auto ctx = make_cipher_ctx();
 
@@ -177,7 +164,7 @@ Bytes AesGcmBackend::decrypt_chunk(const DecryptChunkRequest& request) {
     const Byte* ciphertext = request.ciphertext_and_tag.data();
     const Byte* tag = request.ciphertext_and_tag.data() + ciphertext_size;
 
-    const Bytes aad = serialize_aad(request.aad);
+    const Bytes aad = serialize_chunk_aad_v1(request.aad);
 
     auto ctx = make_cipher_ctx();
 
