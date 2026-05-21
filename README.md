@@ -23,14 +23,17 @@ Implemented today:
 * Public header metadata such as suite id, archive id, KDF salt, chunk size, shard size, and shard index is authenticated through canonical public-header serialization.
 * Archive records cover archive begin/end, directories, regular files, file bytes, file end markers, symlinks in the record format, and random padding records.
 * Chunk encryption binds the immutable public-header hash and chunk index into AEAD associated data.
-* Shards use explicit framing for shard headers and chunk records.
+* Shards use explicit per-shard headers and chunk records. Decrypt scans `*.bin`
+  files, parses shard headers from file contents, rejects malformed garbage
+  `.bin` files, duplicate or missing shard indexes, archive ID mismatches, and
+  unsupported shard magic/version values.
+* Shard discovery is now header-driven and authenticated, but the archive/container format should still be treated as pre-release until the implementation fully converges with `docs/FORMAT.md`.
 * Tests include unit-style coverage plus black-box CLI regression tests for round trips, wrong passphrases, wrong keyfiles, corruption, missing shards, duplicate shards, empty directories, multiple shards, overwrite behavior, public-header MAC verification, and public-header tampering.
 
 Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
 * The archive/container format is not stable and has no compatibility guarantee.
-* Shard discovery and validation are improving, but the format should still be treated as pre-release.
 * Padding options are parsed, but exact padding semantics still need to be finalized and tested end to end.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 * Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
@@ -155,6 +158,9 @@ The current design uses:
 * Per-chunk AEAD encryption.
 * Deterministic chunk nonce derivation from domain-separated key material and global chunk index.
 * Public-header hashing as associated data for encrypted chunks.
+* Authenticated per-shard headers bind each shard to an archive ID, shard index,
+    shard count, chunk range, public-header hash, and payload offset/length, so
+    randomized filenames do not influence decrypt ordering.
 * Safe path validation during archive record parsing and extraction.
 * Temporary extraction state that is promoted only after the archive stream finishes.
 
@@ -220,12 +226,11 @@ When changing crypto/container code:
 
 ## High-value next work
 
-1. Make shard discovery fully header-driven and authenticated across all multi-shard edge cases.
-2. Finalize and test exact padding behavior for `none`, `chunk`, `power2`, and `fixed-size=N`.
-3. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
-4. Decide the compatibility policy for archive format version 1.
-5. Add benchmarks after correctness and format-hardening work settles.
-6. Prepare the codebase for external cryptographic review.
+1. Finalize and test exact padding behavior for `none`, `chunk`, `power2`, and `fixed-size=N`.
+2. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
+3. Decide the compatibility policy for archive format version 1.
+4. Add benchmarks after correctness and format-hardening work settles.
+5. Prepare the codebase for external cryptographic review.
 
 ## Related docs
 

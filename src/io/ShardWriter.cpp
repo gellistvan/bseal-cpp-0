@@ -41,12 +41,50 @@ std::uint64_t checked_record_size(std::size_t ciphertext_size) {
     return static_cast<std::uint64_t>(kChunkRecordV1HeaderSize + ciphertext_size);
 }
 
+ShardHeaderV1 make_shard_header(
+        const ShardWriterOptions& options,
+        std::uint32_t shard_index,
+        std::uint32_t shard_count,
+        bool final_shard,
+        std::uint64_t first_chunk_index,
+        std::uint64_t chunk_count,
+        std::uint64_t total_chunk_count,
+        std::uint64_t payload_len) {
+    ShardHeaderV1 header;
+    header.suite_id = options.suite_id;
+    header.archive_id = options.archive_id;
+    header.shard_index = shard_index;
+    header.shard_count = shard_count;
+    header.flags = final_shard ? kShardHeaderV1FlagFinalShard : 0;
+    header.chunk_plain_size = options.chunk_plain_size;
+    header.first_chunk_index = first_chunk_index;
+    header.chunk_count = chunk_count;
+    header.total_chunk_count = total_chunk_count;
+    header.shard_payload_len = payload_len;
+    header.shard_payload_offset =
+        archive::kPublicHeaderV1SerializedSize + kShardHeaderV1Size;
+    header.public_header_hash = options.public_header_hash;
+
+    if (shard_count != 0 && total_chunk_count != kUnknownTotalChunkCount) {
+        const auto public_bytes = archive::serialize_public_header(options.public_header);
+        header.header_mac = compute_shard_header_mac(
+            ConstByteSpan{options.header_authentication_key.data(), options.header_authentication_key.size()},
+            ConstByteSpan{public_bytes.data(), public_bytes.size()},
+            header);
+    }
+
+    return header;
+}
 } // namespace
 
 ShardWriter::ShardWriter(ShardWriterOptions options)
     : options_(std::move(options)) {
     validate_and_normalize_options();
     std::filesystem::create_directories(options_.output_dir);
+    if (all_zero(ConstByteSpan{options_.header_authentication_key.data(),
+                           options_.header_authentication_key.size()})) {
+        throw InvalidArgument("ShardWriter header_authentication_key is missing");
+    }
 }
 
 ShardWriter::~ShardWriter() {
@@ -92,15 +130,15 @@ void ShardWriter::validate_and_normalize_options() {
         throw InvalidArgument("ShardWriter archive_id is missing");
     }
 
-    options_.public_header.magic = std::array<char, 8>{ 'B', 'S', 'E', 'A', 'L', '0', '1', '\0' };
+    options_.public_header.magic = std::array<char, 8>{'B', 'S', 'E', 'A', 'L', '0', '1', '\0'};
     options_.public_header.version = 1;
     options_.public_header.suite_id = options_.suite_id;
     options_.public_header.archive_id = options_.archive_id;
-    options_.public_header.header_len =
-        static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
-    options_.public_header.chunk_plain_size =
-        static_cast<std::uint32_t>(options_.chunk_plain_size);
+    options_.public_header.shard_index = 0; // shard order now lives only in ShardHeaderV1
+    options_.public_header.header_len = static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
+    options_.public_header.chunk_plain_size = static_cast<std::uint32_t>(options_.chunk_plain_size);
     options_.public_header.shard_payload_size = options_.max_shard_payload_size;
+    options_.public_header_hash = archive::compute_public_header_hash(options_.public_header);
 }
 
 void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
@@ -138,10 +176,10 @@ void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
                     options_.header_authentication_key.size()});
         }
 
-        const auto public_bytes = archive::serialize_public_header(public_header);
+        const auto public_bytes = archive::serialize_public_header(options_.public_header);
         write_raw(ConstByteSpan{public_bytes.data(), public_bytes.size()});
 
-        rewrite_current_frame_header(kUnknownTotalChunkCount);
+        rewrite_current_frame_header(kUnknownTotalChunkCount, 0, false);
         current_stream_.seekp(0, std::ios::end);
         return;
     }
@@ -149,22 +187,25 @@ void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
     throw Error("failed to allocate unique random shard filename");
 }
 
-void ShardWriter::rewrite_current_frame_header(std::uint64_t total_chunk_count) {
+void ShardWriter::rewrite_current_frame_header(
+        std::uint64_t total_chunk_count,
+        std::uint32_t shard_count,
+        bool final_shard) {
     if (!current_stream_.is_open()) {
         throw Error("internal error: no current shard to rewrite");
     }
 
-    ShardFileV1Header header;
-    header.suite_id = options_.suite_id;
-    header.archive_id = options_.archive_id;
-    header.shard_index = current_shard_index_;
-    header.chunk_plain_size = options_.chunk_plain_size;
-    header.first_chunk_index = current_first_chunk_index_;
-    header.chunk_count = current_chunk_count_;
-    header.total_chunk_count = total_chunk_count;
-    header.public_header_hash = options_.public_header_hash;
+    const auto header = make_shard_header(
+        options_,
+        current_shard_index_,
+        shard_count,
+        final_shard,
+        current_first_chunk_index_,
+        current_chunk_count_,
+        total_chunk_count,
+        current_payload_offset_);
 
-    const auto encoded = serialize_shard_file_v1_header(header);
+    const auto encoded = serialize_shard_header_v1(header);
 
     current_stream_.seekp(
         static_cast<std::streamoff>(archive::kPublicHeaderV1SerializedSize),
@@ -174,24 +215,27 @@ void ShardWriter::rewrite_current_frame_header(std::uint64_t total_chunk_count) 
 }
 
 void ShardWriter::rewrite_finalized_frame_header(
-    const FinalizedShard& shard,
-    std::uint64_t total_chunk_count) {
+        const FinalizedShard& shard,
+        std::uint64_t total_chunk_count,
+        std::uint32_t shard_count) {
     std::fstream stream(shard.path, std::ios::binary | std::ios::in | std::ios::out);
     if (!stream) {
         throw Error("failed to reopen finalized shard for header update: " + shard.path.string());
     }
 
-    ShardFileV1Header header;
-    header.suite_id = options_.suite_id;
-    header.archive_id = options_.archive_id;
-    header.shard_index = shard.shard_index;
-    header.chunk_plain_size = options_.chunk_plain_size;
-    header.first_chunk_index = shard.first_chunk_index;
-    header.chunk_count = shard.chunk_count;
-    header.total_chunk_count = total_chunk_count;
-    header.public_header_hash = options_.public_header_hash;
+    const bool final_shard = shard.shard_index + 1 == shard_count;
 
-    const auto encoded = serialize_shard_file_v1_header(header);
+    const auto header = make_shard_header(
+        options_,
+        shard.shard_index,
+        shard_count,
+        final_shard,
+        shard.first_chunk_index,
+        shard.chunk_count,
+        total_chunk_count,
+        shard.payload_len);
+
+    const auto encoded = serialize_shard_header_v1(header);
 
     stream.seekp(
         static_cast<std::streamoff>(archive::kPublicHeaderV1SerializedSize),
@@ -199,6 +243,7 @@ void ShardWriter::rewrite_finalized_frame_header(
     stream.write(
         reinterpret_cast<const char*>(encoded.data()),
         static_cast<std::streamsize>(encoded.size()));
+
     if (!stream) {
         throw Error("failed to rewrite finalized shard header: " + shard.path.string());
     }
@@ -216,7 +261,7 @@ void ShardWriter::close_current_shard(std::uint64_t total_chunk_count) {
         return;
     }
 
-    rewrite_current_frame_header(total_chunk_count);
+    rewrite_current_frame_header(total_chunk_count, 0, false);
     current_stream_.close();
 
     finalized_shards_.push_back(FinalizedShard{
@@ -224,6 +269,7 @@ void ShardWriter::close_current_shard(std::uint64_t total_chunk_count) {
         .shard_index = current_shard_index_,
         .first_chunk_index = current_first_chunk_index_,
         .chunk_count = current_chunk_count_,
+        .payload_len = current_payload_offset_,
     });
 
     current_path_.clear();
@@ -297,13 +343,6 @@ ShardWritePosition ShardWriter::write_chunk_record(
     return position;
 }
 
-ShardWritePosition ShardWriter::write(ConstByteSpan bytes) {
-    return write_chunk_record(
-        next_legacy_chunk_index_++,
-        static_cast<std::uint64_t>(bytes.size()),
-        bytes);
-}
-
 void ShardWriter::finish() {
     if (finished_) {
         return;
@@ -312,8 +351,14 @@ void ShardWriter::finish() {
     close_current_shard(kUnknownTotalChunkCount);
 
     const auto total_chunk_count = next_expected_chunk_index_;
+
+    if (finalized_shards_.size() > std::numeric_limits<std::uint32_t>::max()) {
+        throw InvalidArgument("too many shards for ShardHeaderV1");
+    }
+
+    const auto shard_count = static_cast<std::uint32_t>(finalized_shards_.size());
     for (const auto& shard : finalized_shards_) {
-        rewrite_finalized_frame_header(shard, total_chunk_count);
+        rewrite_finalized_frame_header(shard, total_chunk_count, shard_count);
     }
 
     finished_ = true;

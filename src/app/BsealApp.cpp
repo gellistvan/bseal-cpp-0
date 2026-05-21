@@ -368,6 +368,16 @@ namespace bseal::app {
             return bseal::crypto::expand_keys(master_seed.as_span(), context.suite);
         }
 
+        std::array<Byte, 32> copy_secret_32(bseal::crypto::SecureBuffer& key) {
+            auto span = key.as_span();
+            if (span.size() != 32) {
+                throw bseal::InvalidArgument("expected 32-byte header authentication key");
+            }
+
+            std::array<Byte, 32> out{};
+            std::copy(span.begin(), span.end(), out.begin());
+            return out;
+        }
     } // namespace
 
     int encrypt(const bseal::cli::EncryptOptions &options) {
@@ -400,6 +410,7 @@ namespace bseal::app {
         shard_options.public_header = context.public_header;
         shard_options.header_authentication_key = header_authentication_key;
         shard_options.has_header_authentication_key = true;
+        shard_options.header_authentication_key = copy_secret_32(keys.header_authentication_key);
 
         bseal::io::ShardWriter shard_writer(std::move(shard_options));
 
@@ -445,6 +456,7 @@ namespace bseal::app {
         validation.archive_id = context.archive_id;
         validation.chunk_plain_size = context.chunk_plain_size;
         validation.public_header_hash = context.public_header_hash;
+        validation.header_authentication_key = copy_secret_32(keys.header_authentication_key);
 
         bseal::io::ShardReader shard_reader(std::move(shards), validation);
         bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{

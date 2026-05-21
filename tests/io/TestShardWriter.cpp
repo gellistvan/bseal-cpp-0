@@ -41,6 +41,14 @@ std::array<bseal::Byte, 16> test_archive_id() {
     return out;
 }
 
+std::array<bseal::Byte, 32> test_header_authentication_key() {
+    std::array<bseal::Byte, 32> out{};
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        out[i] = static_cast<bseal::Byte>(0x30u + i);
+    }
+    return out;
+}
+
 bseal::io::ShardWriterOptions make_writer_options(
     const std::filesystem::path& dir,
     std::uint64_t max_payload_size,
@@ -63,6 +71,7 @@ bseal::io::ShardWriterOptions make_writer_options(
     options.chunk_plain_size = chunk_plain_size;
     options.public_header = public_header;
     options.public_header_hash = bseal::archive::compute_public_header_hash(public_header);
+    options.header_authentication_key = test_header_authentication_key();
 
     return options;
 }

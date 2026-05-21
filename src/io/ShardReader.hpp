@@ -26,6 +26,12 @@ namespace bseal::io {
         std::uint64_t total_chunk_count{0};
         std::array<Byte, 32> public_header_hash{};
         std::uint64_t file_size{0};
+
+        std::uint32_t shard_count{0};
+        std::uint32_t shard_flags{0};
+        std::uint64_t shard_payload_len{0};
+        std::uint64_t shard_payload_offset{0};
+        std::array<Byte, 32> header_mac{};
     };
 
     struct ShardReaderValidation {
@@ -33,6 +39,7 @@ namespace bseal::io {
         std::optional<std::array<Byte, 16>> archive_id;
         std::optional<std::uint64_t> chunk_plain_size;
         std::optional<std::array<Byte, 32>> public_header_hash;
+        std::optional<std::array<Byte, 32>> header_authentication_key;
     };
 
     struct ChunkRecord {

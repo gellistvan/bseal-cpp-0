@@ -63,13 +63,14 @@ private:
         std::uint32_t shard_index{0};
         std::uint64_t first_chunk_index{0};
         std::uint64_t chunk_count{0};
+        std::uint64_t payload_len{0};
     };
 
     void validate_and_normalize_options();
     void open_next_shard(std::uint64_t first_chunk_index);
     void close_current_shard(std::uint64_t total_chunk_count);
-    void rewrite_current_frame_header(std::uint64_t total_chunk_count);
-    void rewrite_finalized_frame_header(const FinalizedShard& shard, std::uint64_t total_chunk_count);
+    void rewrite_current_frame_header( std::uint64_t total_chunk_count, std::uint32_t shard_count, bool final_shard);
+    void rewrite_finalized_frame_header( const FinalizedShard& shard, std::uint64_t total_chunk_count, std::uint32_t shard_count);
     void write_raw(ConstByteSpan bytes);
 
     ShardWriterOptions options_;
