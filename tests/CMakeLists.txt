@@ -35,6 +35,7 @@ add_executable(bseal_io_gtests
         io/TestBufferPool.cpp
         io/TestShardReader.cpp
         io/TestShardWriter.cpp
+        io/format_conformance_test.cpp
 )
 
 target_link_libraries(bseal_io_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
