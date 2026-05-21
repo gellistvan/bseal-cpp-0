@@ -320,11 +320,15 @@ namespace bseal::app {
             context.kdf_salt = header.kdf_salt;
             context.archive_id = header.archive_id;
             context.chunk_plain_size = header.chunk_plain_size;
-            context.public_header_hash = bseal::archive::compute_public_header_hash(header);
+            const auto computed_public_header_hash =
+                bseal::archive::compute_public_header_hash(header);
 
-            if (first->public_header_hash != context.public_header_hash) {
+            if (first->public_header_hash != computed_public_header_hash) {
                 throw bseal::InvalidArgument("public_header_hash mismatch in shard_index 0");
             }
+
+            // Important: use the exact hash carried by the shard header for chunk AEAD AAD.
+            context.public_header_hash = first->public_header_hash;
 
             return context;
         }
@@ -419,7 +423,7 @@ namespace bseal::app {
         pipeline_options.worker_count = 0;
         pipeline_options.queue_depth = 0;
         pipeline_options.archive_id = context.archive_id;
-        pipeline_options.public_header_hash = context.public_header_hash;
+        pipeline_options.public_header_hash = shard_writer.public_header_hash();
         pipeline_options.aad_shard_index = 0;
         pipeline_options.emit_final_chunk_when_empty = true;
 
@@ -473,6 +477,7 @@ namespace bseal::app {
         pipeline_options.queue_depth = 0;
         pipeline_options.archive_id = context.archive_id;
         pipeline_options.public_header_hash = context.public_header_hash;
+
         pipeline_options.aad_shard_index = 0;
 
         bseal::pipeline::DecryptPipeline pipeline(pipeline_options, make_backend(context.suite),

@@ -2,6 +2,7 @@
 
 #include "archive/RecordFormat.hpp"
 #include "common/Types.hpp"
+#include "io/ShardFrame.hpp"
 
 #include <array>
 #include <cstdint>
@@ -35,6 +36,12 @@ struct ShardWritePosition {
     std::uint64_t chunk_index{0};
 };
 
+struct PlannedChunkFrame {
+    ShardWritePosition position{};
+    ChunkFrameHeaderV1 header{};
+    Bytes header_bytes;
+};
+
 class ShardWriter {
 public:
     explicit ShardWriter(ShardWriterOptions options);
@@ -46,14 +53,16 @@ public:
     ShardWriter(ShardWriter&&) noexcept = default;
     ShardWriter& operator=(ShardWriter&&) noexcept = default;
 
-    ShardWritePosition write_chunk_record(
-        std::uint64_t chunk_index,
-        std::uint64_t plaintext_size,
-        ConstByteSpan ciphertext);
+    PlannedChunkFrame plan_chunk_frame( std::uint64_t chunk_index, std::uint64_t plaintext_len, std::uint64_t ciphertext_len, std::uint16_t tag_len, bool final_chunk);
 
+    ShardWritePosition write_chunk_frame( const ChunkFrameHeaderV1& header, ConstByteSpan header_bytes, ConstByteSpan ciphertext_and_tag);
     // Compatibility wrapper for old unit tests. New production code must call
     // write_chunk_record() so chunk_index/plaintext_size are explicit.
     ShardWritePosition write(ConstByteSpan bytes);
+
+    [[nodiscard]] const std::array<Byte, 32>& public_header_hash() const noexcept {
+        return options_.public_header_hash;
+    }
 
     void finish();
 
@@ -85,6 +94,10 @@ private:
 
     std::uint64_t next_expected_chunk_index_{0};
     std::uint64_t next_legacy_chunk_index_{0};
+
+    std::uint32_t planned_shard_index_{0};
+    std::uint64_t planned_payload_offset_{0};
+    std::uint64_t planned_next_chunk_index_{0};
 
     std::vector<FinalizedShard> finalized_shards_;
     bool finished_{false};

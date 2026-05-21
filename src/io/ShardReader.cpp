@@ -1,7 +1,6 @@
 #include "io/ShardReader.hpp"
 
 #include "io/ShardFrame.hpp"
-
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -10,6 +9,7 @@
 #include <string>
 
 namespace bseal::io {
+
 namespace {
 
 bool has_bin_extension(const std::filesystem::path& path) {
@@ -49,6 +49,20 @@ std::uint64_t checked_range_end(std::uint64_t first, std::uint64_t count) {
     return first + count;
 }
 
+std::uint64_t checked_frame_body_size(const ChunkFrameHeaderV1& frame_header) {
+    const auto body_len = frame_header.ciphertext_len +
+        static_cast<std::uint64_t>(frame_header.tag_len);
+
+    if (body_len < frame_header.ciphertext_len) {
+        throw InvalidArgument("invalid ciphertext_length");
+    }
+    if (body_len > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw InvalidArgument("invalid ciphertext_length");
+    }
+
+    return body_len;
+}
+
 ShardInfo read_shard_info(const std::filesystem::path& path) {
     const auto file_size = std::filesystem::file_size(path);
 
@@ -62,7 +76,6 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
         archive::kPublicHeaderV1SerializedSize,
         path,
         "truncated public header");
-
     const auto public_header = archive::parse_public_header(
         ConstByteSpan{public_bytes.data(), public_bytes.size()});
 
@@ -71,7 +84,6 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
         kShardHeaderV1Size,
         path,
         "truncated shard header");
-
     const auto shard_header = parse_shard_header_v1(
         ConstByteSpan{shard_header_bytes.data(), shard_header_bytes.size()});
 
@@ -90,8 +102,7 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
         throw InvalidArgument("public_header_hash mismatch: " + path.string());
     }
 
-    const auto expected_payload_offset =
-        archive::kPublicHeaderV1SerializedSize + kShardHeaderV1Size;
+    const auto expected_payload_offset = archive::kPublicHeaderV1SerializedSize + kShardHeaderV1Size;
     if (shard_header.shard_payload_offset != expected_payload_offset) {
         throw InvalidArgument("invalid shard payload offset: " + path.string());
     }
@@ -124,7 +135,6 @@ std::vector<ShardInfo> ShardReader::discover(const std::filesystem::path& input_
     }
 
     std::vector<ShardInfo> shards;
-
     for (const auto& entry : std::filesystem::directory_iterator(input_dir)) {
         if (!entry.is_regular_file()) {
             continue;
@@ -132,7 +142,6 @@ std::vector<ShardInfo> ShardReader::discover(const std::filesystem::path& input_
         if (!has_bin_extension(entry.path())) {
             continue;
         }
-
         shards.push_back(read_shard_info(entry.path()));
     }
 
@@ -146,6 +155,7 @@ std::vector<ShardInfo> ShardReader::discover(const std::filesystem::path& input_
         [](const ShardInfo& a, const ShardInfo& b) {
             return a.shard_index < b.shard_index;
         });
+
     return shards;
 }
 
@@ -163,7 +173,6 @@ void ShardReader::validate_shards() {
     }
 
     std::set<std::uint32_t> shard_indices;
-
     std::optional<std::uint16_t> common_suite_id;
     std::optional<std::array<Byte, 16>> common_archive_id;
     std::optional<std::uint64_t> common_chunk_plain_size;
@@ -185,7 +194,8 @@ void ShardReader::validate_shards() {
         if (validation_.chunk_plain_size && shard.chunk_plain_size != *validation_.chunk_plain_size) {
             throw InvalidArgument("chunk_plain_size mismatch");
         }
-        if (validation_.public_header_hash && !equal_array(shard.public_header_hash, *validation_.public_header_hash)) {
+        if (validation_.public_header_hash &&
+            !equal_array(shard.public_header_hash, *validation_.public_header_hash)) {
             throw InvalidArgument("public_header_hash mismatch");
         }
 
@@ -204,8 +214,10 @@ void ShardReader::validate_shards() {
         if (common_total_chunk_count && shard.total_chunk_count != *common_total_chunk_count) {
             throw InvalidArgument("total_chunk_count mismatch across shards");
         }
+
         if (validation_.header_authentication_key) {
             const auto public_bytes = archive::serialize_public_header(shard.public_header);
+
             ShardHeaderV1 header_for_mac;
             header_for_mac.suite_id = shard.suite_id;
             header_for_mac.archive_id = shard.archive_id;
@@ -222,17 +234,19 @@ void ShardReader::validate_shards() {
             header_for_mac.header_mac = shard.header_mac;
 
             if (!verify_shard_header_mac(
-                    ConstByteSpan{validation_.header_authentication_key->data(),
-                                  validation_.header_authentication_key->size()},
+                    ConstByteSpan{
+                        validation_.header_authentication_key->data(),
+                        validation_.header_authentication_key->size()},
                     ConstByteSpan{public_bytes.data(), public_bytes.size()},
                     header_for_mac)) {
                 throw InvalidArgument("shard header_mac verification failed");
-                    }
+            }
         }
 
         if (common_shard_count && shard.shard_count != *common_shard_count) {
             throw InvalidArgument("shard_count mismatch across shards");
         }
+
         common_shard_count = shard.shard_count;
         common_suite_id = shard.suite_id;
         common_archive_id = shard.archive_id;
@@ -244,7 +258,6 @@ void ShardReader::validate_shards() {
     if (!common_shard_count || *common_shard_count == 0) {
         throw InvalidArgument("missing shard_count");
     }
-
     if (shards_.size() != *common_shard_count) {
         throw InvalidArgument("missing shard index");
     }
@@ -261,6 +274,7 @@ void ShardReader::validate_shards() {
         [](const ShardInfo& a, const ShardInfo& b) {
             return a.shard_index < b.shard_index;
         });
+
     std::uint64_t expected_first_chunk = 0;
     for (std::size_t i = 0; i < shards_.size(); ++i) {
         const auto& shard = shards_[i];
@@ -286,6 +300,9 @@ void ShardReader::validate_shards() {
     }
 
     expected_total_chunk_count_ = *common_total_chunk_count;
+    if (expected_total_chunk_count_ == kUnknownTotalChunkCount) {
+        throw InvalidArgument("unknown total_chunk_count in finalized archive");
+    }
     if (expected_first_chunk != expected_total_chunk_count_) {
         throw InvalidArgument("missing chunk index: shard set does not cover total_chunk_count");
     }
@@ -300,18 +317,15 @@ void ShardReader::open_current_shard() {
     }
 
     const auto& shard = shards_[current_shard_pos_];
-
     current_stream_.open(shard.path, std::ios::binary);
     if (!current_stream_) {
         throw Error("failed to open shard for reading: " + shard.path.string());
     }
 
     current_stream_.seekg(static_cast<std::streamoff>(shard.shard_payload_offset), std::ios::beg);
-
     if (!current_stream_) {
         throw InvalidArgument("truncated shard header: " + shard.path.string());
     }
-
     current_record_in_shard_ = 0;
 }
 
@@ -333,7 +347,7 @@ void ShardReader::close_current_shard_and_check_trailing_garbage() {
 
     const auto next = current_stream_.peek();
     if (next != std::char_traits<char>::eof()) {
-        throw InvalidArgument("trailing garbage after declared chunk records: " + shard.path.string());
+        throw InvalidArgument("trailing garbage after declared chunk frames: " + shard.path.string());
     }
 
     current_stream_.close();
@@ -344,7 +358,6 @@ void ShardReader::close_current_shard_and_check_trailing_garbage() {
 std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
     while (current_shard_pos_ < shards_.size()) {
         const auto& shard = shards_[current_shard_pos_];
-
         open_current_shard();
 
         if (current_record_in_shard_ >= shard.chunk_count) {
@@ -354,62 +367,95 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
 
         const auto header_bytes = read_exact(
             current_stream_,
-            kChunkRecordV1HeaderSize,
+            kChunkFrameHeaderV1Size,
             shard.path,
-            "truncated chunk record");
+            "truncated frame header");
 
-        const auto record_header = parse_chunk_record_v1_header(
+        const auto frame_header = parse_chunk_frame_header_v1(
             ConstByteSpan{header_bytes.data(), header_bytes.size()});
 
-        const auto expected_chunk_index = shard.first_chunk_index + current_record_in_shard_;
+        if (frame_header.shard_index != shard.shard_index) {
+            throw InvalidArgument("chunk frame shard_index does not match enclosing shard");
+        }
 
-        if (record_header.chunk_index != expected_chunk_index) {
-            if (record_header.chunk_index < expected_chunk_index) {
+        const auto expected_chunk_index = shard.first_chunk_index + current_record_in_shard_;
+        if (frame_header.global_chunk_index != expected_chunk_index) {
+            if (frame_header.global_chunk_index < expected_chunk_index) {
                 throw InvalidArgument("duplicate or reordered chunk index");
             }
-
             throw InvalidArgument("missing chunk index");
         }
 
-        constexpr std::uint64_t kAeadTagBytes = 16;
-
-        if (record_header.plaintext_size > shard.chunk_plain_size) {
-            throw InvalidArgument("invalid chunk plaintext_size");
+        if (!seen_chunk_indices_.insert(frame_header.global_chunk_index).second) {
+            throw InvalidArgument("duplicate chunk index");
         }
 
-        if (record_header.ciphertext_size < kAeadTagBytes) {
-            throw InvalidArgument("invalid ciphertext size");
+        if (frame_header.tag_len != 16) {
+            throw InvalidArgument("invalid chunk frame tag length");
+        }
+        if (frame_header.plaintext_len > shard.chunk_plain_size) {
+            throw InvalidArgument("invalid chunk frame plaintext_len");
+        }
+        if (frame_header.ciphertext_len != frame_header.plaintext_len) {
+            throw InvalidArgument("invalid ciphertext_length");
         }
 
-        if (record_header.ciphertext_size > shard.chunk_plain_size + kAeadTagBytes) {
-            throw InvalidArgument("invalid ciphertext size");
+        const bool is_final = (frame_header.frame_flags & kChunkFrameFlagFinalChunk) != 0;
+        const bool should_be_final =
+            expected_total_chunk_count_ != 0 &&
+            frame_header.global_chunk_index == expected_total_chunk_count_ - 1;
+
+        if (is_final != should_be_final) {
+            throw InvalidArgument("invalid final chunk marker");
+        }
+        if (is_final) {
+            if (saw_final_chunk_) {
+                throw InvalidArgument("duplicate final chunk marker");
+            }
+            saw_final_chunk_ = true;
+        } else if (frame_header.plaintext_len != shard.chunk_plain_size) {
+            throw InvalidArgument("non-final chunk has partial plaintext length");
         }
 
-        if (record_header.ciphertext_size < record_header.plaintext_size + kAeadTagBytes) {
-            throw InvalidArgument("invalid ciphertext size");
+        const auto body_len_u64 = checked_frame_body_size(frame_header);
+
+        const auto after_header_pos = current_stream_.tellg();
+        if (after_header_pos < std::streampos{0}) {
+            throw InvalidArgument("failed to read shard position: " + shard.path.string());
+        }
+        const auto expected_payload_end = checked_range_end(
+            shard.shard_payload_offset,
+            shard.shard_payload_len);
+        const auto after_header_offset = static_cast<std::uint64_t>(after_header_pos);
+
+        if (after_header_offset > expected_payload_end ||
+            body_len_u64 > expected_payload_end - after_header_offset) {
+            throw InvalidArgument("chunk frame exceeds declared shard payload");
         }
 
         const auto ciphertext = read_exact(
             current_stream_,
-            static_cast<std::size_t>(record_header.ciphertext_size),
+            static_cast<std::size_t>(body_len_u64),
             shard.path,
-            "truncated chunk record");
-
-        if (!seen_chunk_indices_.insert(record_header.chunk_index).second) {
-            throw InvalidArgument("duplicate chunk index");
-        }
+            "truncated ciphertext");
 
         ++current_record_in_shard_;
 
         return ChunkRecord{
-            .chunk_index = record_header.chunk_index,
-            .plaintext_size = record_header.plaintext_size,
+            .chunk_index = frame_header.global_chunk_index,
+            .shard_index = frame_header.shard_index,
+            .plaintext_size = frame_header.plaintext_len,
+            .frame_flags = frame_header.frame_flags,
+            .frame_header_bytes = header_bytes,
             .ciphertext = ciphertext,
         };
     }
 
     if (seen_chunk_indices_.size() != expected_total_chunk_count_) {
         throw InvalidArgument("missing chunk index at end of archive");
+    }
+    if (expected_total_chunk_count_ != 0 && !saw_final_chunk_) {
+        throw InvalidArgument("missing final chunk marker");
     }
 
     return std::nullopt;
@@ -420,7 +466,6 @@ std::optional<Bytes> ShardReader::read_next_cipher_chunk() {
     if (!record) {
         return std::nullopt;
     }
-
     return std::move(record->ciphertext);
 }
 
