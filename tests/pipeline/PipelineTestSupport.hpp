@@ -21,10 +21,12 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -35,11 +37,8 @@ public:
     explicit TempDir(std::string name_prefix) {
         const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
-
         root_ = std::filesystem::temp_directory_path() /
-                (std::move(name_prefix) + "_" + std::to_string(now) + "_" +
-                 std::to_string(tid));
-
+            (std::move(name_prefix) + "_" + std::to_string(now) + "_" + std::to_string(tid));
         std::filesystem::create_directories(root_);
     }
 
@@ -150,82 +149,71 @@ inline std::vector<std::filesystem::path> list_bin_files(const std::filesystem::
 
 inline std::array<Byte, 16> test_archive_id() {
     std::array<Byte, 16> out{};
-
     for (std::size_t i = 0; i < out.size(); ++i) {
         out[i] = static_cast<Byte>(0x10u + i);
     }
-
     return out;
 }
 
-inline std::array<Byte, 32> test_public_header_hash() {
+inline std::array<Byte, 32> test_header_authentication_key() {
     std::array<Byte, 32> out{};
-
     for (std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<Byte>(0xA0u + i);
+        out[i] = static_cast<Byte>(0x60u + i);
     }
-
     return out;
 }
 
+inline constexpr std::uint64_t kTestShardPayloadSize = 1024ull * 1024ull;
 
-    inline constexpr std::uint64_t kTestShardPayloadSize = 1024ull * 1024ull;
+inline archive::PublicHeaderV1 make_test_public_header(
+    std::uint64_t chunk_plain_size = 128,
+    std::uint64_t shard_payload_size = kTestShardPayloadSize) {
+    archive::PublicHeaderV1 header{};
+    header.suite_id = 1;
+    header.archive_id = test_archive_id();
+    header.shard_index = 0;
+    header.header_len = static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
+    header.chunk_plain_size = static_cast<std::uint32_t>(chunk_plain_size);
+    header.shard_payload_size = shard_payload_size;
 
-    inline bseal::archive::PublicHeaderV1 make_test_public_header(
-        std::uint64_t chunk_plain_size = 128,
-        std::uint64_t shard_payload_size = kTestShardPayloadSize) {
-        bseal::archive::PublicHeaderV1 header{};
+    // The pipeline tests do not exercise real KDF behavior, but keep the
+    // public header deterministic and non-weird.
+    header.argon2_memory_kib = 0;
+    header.argon2_iterations = 0;
+    header.argon2_parallelism = 0;
 
-        header.suite_id = 1;
-        header.archive_id = test_archive_id();
-        header.shard_index = 0;
-        header.header_len =
-            static_cast<std::uint32_t>(bseal::archive::kPublicHeaderV1SerializedSize);
+    return header;
+}
 
-        header.chunk_plain_size = static_cast<std::uint32_t>(chunk_plain_size);
-        header.shard_payload_size = shard_payload_size;
+inline std::array<Byte, 32> make_test_public_header_hash(
+    std::uint64_t chunk_plain_size = 128,
+    std::uint64_t shard_payload_size = kTestShardPayloadSize) {
+    return archive::compute_public_header_hash(
+        make_test_public_header(chunk_plain_size, shard_payload_size));
+}
 
-        // The pipeline tests do not exercise real KDF behavior, but keep the
-        // public header deterministic and non-weird.
-        header.argon2_memory_kib = 0;
-        header.argon2_iterations = 0;
-        header.argon2_parallelism = 0;
+inline io::ShardWriterOptions make_test_shard_writer_options(
+    const std::filesystem::path& sealed_dir,
+    std::uint64_t chunk_plain_size = 128,
+    std::uint64_t shard_payload_size = kTestShardPayloadSize) {
+    const auto public_header = make_test_public_header(chunk_plain_size, shard_payload_size);
 
-        return header;
-    }
+    io::ShardWriterOptions options{};
+    options.output_dir = sealed_dir;
+    options.max_shard_payload_size = shard_payload_size;
+    options.filename_extension = ".bin";
+    options.suite_id = public_header.suite_id;
+    options.archive_id = public_header.archive_id;
+    options.chunk_plain_size = chunk_plain_size;
+    options.public_header = public_header;
+    options.public_header_hash = archive::compute_public_header_hash(public_header);
+    options.header_authentication_key = test_header_authentication_key();
 
-    inline std::array<bseal::Byte, 32> make_test_public_header_hash(
-        std::uint64_t chunk_plain_size = 128,
-        std::uint64_t shard_payload_size = kTestShardPayloadSize) {
-        return bseal::archive::compute_public_header_hash(
-            make_test_public_header(chunk_plain_size, shard_payload_size));
-    }
-
-    inline bseal::io::ShardWriterOptions make_test_shard_writer_options(
-        const std::filesystem::path& sealed_dir,
-        std::uint64_t chunk_plain_size = 128,
-        std::uint64_t shard_payload_size = kTestShardPayloadSize) {
-        const auto public_header =
-            make_test_public_header(chunk_plain_size, shard_payload_size);
-
-        bseal::io::ShardWriterOptions options{};
-        options.output_dir = sealed_dir;
-        options.max_shard_payload_size = shard_payload_size;
-        options.filename_extension = ".bin";
-
-        options.suite_id = public_header.suite_id;
-        options.archive_id = public_header.archive_id;
-        options.chunk_plain_size = chunk_plain_size;
-        options.public_header = public_header;
-        options.public_header_hash =
-            bseal::archive::compute_public_header_hash(public_header);
-
-        return options;
-    }
+    return options;
+}
 
 inline crypto::ExpandedKeys make_test_keys() {
     crypto::ExpandedKeys keys;
-
     keys.chunk_encryption_key = crypto::SecureBuffer(32);
     keys.manifest_key = crypto::SecureBuffer(32);
     keys.header_authentication_key = crypto::SecureBuffer(32);
@@ -234,15 +222,12 @@ inline crypto::ExpandedKeys make_test_keys() {
     for (std::size_t i = 0; i < keys.chunk_encryption_key.size(); ++i) {
         keys.chunk_encryption_key.as_span()[i] = static_cast<Byte>(0x20u + i);
     }
-
     for (std::size_t i = 0; i < keys.manifest_key.size(); ++i) {
         keys.manifest_key.as_span()[i] = static_cast<Byte>(0x40u + i);
     }
-
     for (std::size_t i = 0; i < keys.header_authentication_key.size(); ++i) {
         keys.header_authentication_key.as_span()[i] = static_cast<Byte>(0x60u + i);
     }
-
     for (std::size_t i = 0; i < keys.nonce_derivation_key.size(); ++i) {
         keys.nonce_derivation_key.as_span()[i] = static_cast<Byte>(0x80u + i);
     }
@@ -252,35 +237,30 @@ inline crypto::ExpandedKeys make_test_keys() {
 
 inline EncryptPipelineOptions make_encrypt_options(std::uint64_t chunk_size = 128) {
     EncryptPipelineOptions options;
-
     options.chunk_plain_size = chunk_size;
     options.worker_count = 4;
     options.queue_depth = 8;
     options.archive_id = test_archive_id();
     options.public_header_hash = make_test_public_header_hash(chunk_size);
-    options.aad_shard_index = 0;
     options.emit_final_chunk_when_empty = true;
-
     return options;
 }
 
 inline DecryptPipelineOptions make_decrypt_options(std::uint64_t chunk_size = 128) {
     DecryptPipelineOptions options;
-
     options.chunk_plain_size = chunk_size;
     options.worker_count = 4;
     options.queue_depth = 8;
     options.archive_id = test_archive_id();
     options.public_header_hash = make_test_public_header_hash(chunk_size);
-    options.aad_shard_index = 0;
-
     return options;
 }
 
 class TestAeadBackend final : public crypto::CryptoBackend {
 public:
-    explicit TestAeadBackend(std::uint64_t fail_encrypt_at = invalid_index(),
-                             std::uint64_t fail_decrypt_at = invalid_index())
+    explicit TestAeadBackend(
+        std::uint64_t fail_encrypt_at = invalid_index(),
+        std::uint64_t fail_decrypt_at = invalid_index())
         : fail_encrypt_at_(fail_encrypt_at), fail_decrypt_at_(fail_decrypt_at) {}
 
     [[nodiscard]] crypto::CipherSuite suite() const noexcept override {
@@ -306,7 +286,8 @@ public:
     Bytes encrypt_chunk(const crypto::EncryptChunkRequest& request) override {
         validate_common(request.key.bytes, request.nonce.bytes, request.aad);
 
-        const auto chunk_index = request.aad.global_chunk_index;
+        const auto frame_header = parse_frame_header(request.aad);
+        const auto chunk_index = frame_header.global_chunk_index;
         record(encrypted_indices_, chunk_index);
 
         if (chunk_index == fail_encrypt_at_) {
@@ -318,14 +299,14 @@ public:
 
         const auto tag = make_tag(ciphertext, request.nonce.bytes, request.aad);
         ciphertext.insert(ciphertext.end(), tag.begin(), tag.end());
-
         return ciphertext;
     }
 
     Bytes decrypt_chunk(const crypto::DecryptChunkRequest& request) override {
         validate_common(request.key.bytes, request.nonce.bytes, request.aad);
 
-        const auto chunk_index = request.aad.global_chunk_index;
+        const auto frame_header = parse_frame_header(request.aad);
+        const auto chunk_index = frame_header.global_chunk_index;
         record(decrypted_indices_, chunk_index);
 
         if (chunk_index == fail_decrypt_at_) {
@@ -337,37 +318,32 @@ public:
         }
 
         const auto ciphertext_size = request.ciphertext_and_tag.size() - tag_size();
-
         ConstByteSpan ciphertext{
             request.ciphertext_and_tag.data(),
             ciphertext_size,
         };
-
         ConstByteSpan supplied_tag{
             request.ciphertext_and_tag.data() + ciphertext_size,
             tag_size(),
         };
 
         const auto expected_tag = make_tag(ciphertext, request.nonce.bytes, request.aad);
-
-        if (!std::equal(expected_tag.begin(), expected_tag.end(), supplied_tag.begin(),
-                        supplied_tag.end())) {
+        if (!std::equal(expected_tag.begin(), expected_tag.end(), supplied_tag.begin(), supplied_tag.end())) {
             throw AuthenticationFailed();
         }
 
         Bytes plaintext(ciphertext.begin(), ciphertext.end());
         xor_in_place(plaintext, mask_from(request.key.bytes, request.nonce.bytes));
-
         return plaintext;
     }
 
     [[nodiscard]] std::vector<std::uint64_t> encrypted_indices() const {
-        std::lock_guard lock(mutex_);
+        std::lock_guard<std::mutex> lock(mutex_);
         return encrypted_indices_;
     }
 
     [[nodiscard]] std::vector<std::uint64_t> decrypted_indices() const {
-        std::lock_guard lock(mutex_);
+        std::lock_guard<std::mutex> lock(mutex_);
         return decrypted_indices_;
     }
 
@@ -376,33 +352,33 @@ public:
     }
 
 private:
-    static void validate_common(ConstByteSpan key,
-                                ConstByteSpan nonce,
-                                const crypto::ChunkAad& aad) {
+    static io::ChunkFrameHeaderV1 parse_frame_header(const crypto::ChunkAad& aad) {
+        return io::parse_chunk_frame_header_v1(aad.chunk_frame_header);
+    }
+
+    static void validate_common(ConstByteSpan key, ConstByteSpan nonce, const crypto::ChunkAad& aad) {
         if (key.size() != 32) {
             throw InvalidArgument("test backend expected 32-byte key");
         }
-
         if (nonce.size() != 24) {
             throw InvalidArgument("test backend expected 24-byte nonce");
         }
-
         if (aad.public_header_hash.size() != 32) {
             throw InvalidArgument("test backend expected 32-byte public header hash");
+        }
+        if (aad.chunk_frame_header.size() != io::kChunkFrameHeaderV1Size) {
+            throw InvalidArgument("test backend expected 40-byte chunk frame header AAD");
         }
     }
 
     static Byte mask_from(ConstByteSpan key, ConstByteSpan nonce) {
         Byte mask{0xA5};
-
         for (const auto byte : key) {
             mask = static_cast<Byte>(mask ^ byte);
         }
-
         for (const auto byte : nonce) {
             mask = static_cast<Byte>(mask ^ byte);
         }
-
         return mask;
     }
 
@@ -411,42 +387,32 @@ private:
         hash *= 1099511628211ull;
     }
 
-    static void feed_hash_u64(std::uint64_t& hash, std::uint64_t value) {
-        for (int i = 0; i < 8; ++i) {
-            feed_hash(hash, static_cast<Byte>((value >> (i * 8)) & 0xFFu));
-        }
-    }
-
-    static std::array<Byte, 16> make_tag(ConstByteSpan ciphertext,
-                                         ConstByteSpan nonce,
-                                         const crypto::ChunkAad& aad) {
+    static std::array<Byte, 16> make_tag(
+        ConstByteSpan ciphertext,
+        ConstByteSpan nonce,
+        const crypto::ChunkAad& aad) {
         std::uint64_t h1 = 1469598103934665603ull;
         std::uint64_t h2 = 1099511628211ull;
-
-        feed_hash_u64(h1, aad.global_chunk_index);
-        feed_hash_u64(h1, aad.shard_index);
-        feed_hash_u64(h1, aad.flags);
 
         for (const auto byte : aad.public_header_hash) {
             feed_hash(h1, byte);
         }
-
+        for (const auto byte : aad.chunk_frame_header) {
+            feed_hash(h1, byte);
+            feed_hash(h2, static_cast<Byte>(byte ^ Byte{0x33}));
+        }
         for (const auto byte : nonce) {
             feed_hash(h1, byte);
         }
-
         for (const auto byte : ciphertext) {
             feed_hash(h1, byte);
-            feed_hash(h2, static_cast<Byte>(byte ^ 0x5Cu));
+            feed_hash(h2, static_cast<Byte>(byte ^ Byte{0x5C}));
         }
 
         std::array<Byte, 16> tag{};
-
         for (int i = 0; i < 8; ++i) {
-            tag[static_cast<std::size_t>(i)] =
-                static_cast<Byte>((h1 >> (i * 8)) & 0xFFu);
-            tag[static_cast<std::size_t>(8 + i)] =
-                static_cast<Byte>((h2 >> (i * 8)) & 0xFFu);
+            tag[static_cast<std::size_t>(i)] = static_cast<Byte>((h1 >> (i * 8)) & 0xFFu);
+            tag[static_cast<std::size_t>(8 + i)] = static_cast<Byte>((h2 >> (i * 8)) & 0xFFu);
         }
 
         return tag;
@@ -459,13 +425,12 @@ private:
     }
 
     void record(std::vector<std::uint64_t>& target, std::uint64_t index) const {
-        std::lock_guard lock(mutex_);
+        std::lock_guard<std::mutex> lock(mutex_);
         target.push_back(index);
     }
 
     std::uint64_t fail_encrypt_at_{invalid_index()};
     std::uint64_t fail_decrypt_at_{invalid_index()};
-
     mutable std::mutex mutex_;
     mutable std::vector<std::uint64_t> encrypted_indices_;
     mutable std::vector<std::uint64_t> decrypted_indices_;
@@ -476,15 +441,12 @@ inline void create_sample_tree(const std::filesystem::path& root) {
     std::filesystem::create_directories(root / "empty-dir");
 
     write_binary_file(root / "hello.txt", "hello from bseal\n");
-    write_binary_file(root / "nested" / "data.bin",
-                      repeated_pattern("0123456789abcdef", 64));
-    write_binary_file(root / "nested" / "deep" / "unicode-name-árvíztűrő.txt",
-                      repeated_pattern("unicode payload\n", 32));
+    write_binary_file(root / "nested" / "data.bin", repeated_pattern("0123456789abcdef", 64));
+    write_binary_file(root / "nested" / "deep" / "unicode-name-árvíztűrő.txt", repeated_pattern("unicode payload\n", 32));
 }
 
-    inline void corrupt_first_ciphertext_byte(const std::filesystem::path& sealed_dir) {
+inline void corrupt_first_ciphertext_byte(const std::filesystem::path& sealed_dir) {
     auto shards = io::ShardReader::discover(sealed_dir);
-
     auto it = std::find_if(
         shards.begin(),
         shards.end(),
@@ -493,13 +455,13 @@ inline void create_sample_tree(const std::filesystem::path& root) {
         });
 
     if (it == shards.end()) {
-        throw std::runtime_error("no chunk records found to corrupt");
+        throw std::runtime_error("no chunk frames found to corrupt");
     }
 
     const auto ciphertext_offset =
-        static_cast<std::uint64_t>(archive::kPublicHeaderV1SerializedSize)
-        + static_cast<std::uint64_t>(io::kShardFileV1HeaderSize)
-        + static_cast<std::uint64_t>(io::kChunkRecordV1HeaderSize);
+        static_cast<std::uint64_t>(archive::kPublicHeaderV1SerializedSize) +
+        static_cast<std::uint64_t>(io::kShardFileV1HeaderSize) +
+        static_cast<std::uint64_t>(io::kChunkFrameHeaderV1Size);
 
     std::fstream stream(it->path, std::ios::in | std::ios::out | std::ios::binary);
     if (!stream) {
@@ -507,7 +469,6 @@ inline void create_sample_tree(const std::filesystem::path& root) {
     }
 
     stream.seekg(static_cast<std::streamoff>(ciphertext_offset), std::ios::beg);
-
     char byte = 0;
     stream.read(&byte, 1);
     if (!stream) {
@@ -518,7 +479,6 @@ inline void create_sample_tree(const std::filesystem::path& root) {
 
     stream.seekp(static_cast<std::streamoff>(ciphertext_offset), std::ios::beg);
     stream.write(&byte, 1);
-
     if (!stream) {
         throw std::runtime_error("failed to write corrupted ciphertext byte");
     }
@@ -534,8 +494,7 @@ struct DecryptionRunResult {
 
 inline EncryptionRunResult run_test_encryption(
     const std::filesystem::path& input_dir,
-    const std::filesystem::path& sealed_dir)
-{
+    const std::filesystem::path& sealed_dir) {
     std::filesystem::create_directories(sealed_dir);
 
     auto backend = std::make_unique<TestAeadBackend>();
@@ -550,7 +509,7 @@ inline EncryptionRunResult run_test_encryption(
             false,
         });
 
-    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_dir, 128));
+    io::ShardWriter shard_writer(make_test_shard_writer_options(sealed_dir, 128));
 
     EncryptPipeline pipeline(
         make_encrypt_options(128),
@@ -561,14 +520,15 @@ inline EncryptionRunResult run_test_encryption(
 
     pipeline.run();
 
-    // backend_raw is still valid here because pipeline is still alive.
     return EncryptionRunResult{
         .encrypted_indices = backend_raw->encrypted_indices(),
     };
 }
 
-inline io::ShardReader make_valid_test_shard_reader( const std::filesystem::path& input_dir,
-                        const std::filesystem::path& sealed_dir, std::uint64_t chunk_size = 128) {
+inline io::ShardReader make_valid_test_shard_reader(
+    const std::filesystem::path& input_dir,
+    const std::filesystem::path& sealed_dir,
+    std::uint64_t chunk_size = 128) {
     std::filesystem::create_directories(input_dir);
     std::filesystem::create_directories(sealed_dir);
 
@@ -606,15 +566,13 @@ inline io::ShardReader make_valid_test_shard_reader( const std::filesystem::path
 
 inline DecryptionRunResult run_test_decryption(
     const std::filesystem::path& sealed_dir,
-    const std::filesystem::path& output_dir)
-{
+    const std::filesystem::path& output_dir) {
     std::filesystem::create_directories(output_dir);
 
     auto backend = std::make_unique<TestAeadBackend>();
     auto* backend_raw = backend.get();
 
     auto discovered_shards = io::ShardReader::discover(sealed_dir);
-
     io::ShardReader shard_reader(std::move(discovered_shards));
 
     archive::ArchiveReader archive_reader(
@@ -635,7 +593,6 @@ inline DecryptionRunResult run_test_decryption(
 
     pipeline.run();
 
-    // backend_raw is still valid here because pipeline is still alive.
     return DecryptionRunResult{
         .decrypted_indices = backend_raw->decrypted_indices(),
     };

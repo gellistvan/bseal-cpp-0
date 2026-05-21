@@ -1,8 +1,8 @@
 #pragma once
 
+#include "common/Errors.hpp"
 #include "common/Types.hpp"
 
-#include <array>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -30,12 +30,7 @@ struct AeadNonceView {
 
 struct ChunkAad {
     ConstByteSpan public_header_hash;
-    std::uint32_t shard_index{0};
-    std::uint64_t global_chunk_index{0};
-    std::uint32_t flags{0};
-
-    // Future implementation should serialize this deterministically as little-endian bytes.
-    // Do not depend on native struct layout for AAD.
+    ConstByteSpan chunk_frame_header;
 };
 
 struct EncryptChunkRequest {
@@ -51,6 +46,28 @@ struct DecryptChunkRequest {
     ConstByteSpan ciphertext_and_tag;
     ChunkAad aad;
 };
+
+inline Bytes serialize_chunk_aad_v1(const ChunkAad& aad) {
+    if (aad.public_header_hash.size() != 32) {
+        throw InvalidArgument("chunk AAD requires 32-byte public_header_hash");
+    }
+    if (aad.chunk_frame_header.size() != 40) {
+        throw InvalidArgument("chunk AAD requires 40-byte ChunkFrameHeaderV1");
+    }
+
+    static constexpr std::string_view kDomain{"BSEAL chunk aad v1\0", 19};
+
+    Bytes out;
+    out.reserve(kDomain.size() + aad.public_header_hash.size() + aad.chunk_frame_header.size());
+
+    for (const char c : kDomain) {
+        out.push_back(static_cast<Byte>(c));
+    }
+    out.insert(out.end(), aad.public_header_hash.begin(), aad.public_header_hash.end());
+    out.insert(out.end(), aad.chunk_frame_header.begin(), aad.chunk_frame_header.end());
+
+    return out;
+}
 
 class CryptoBackend {
 public:

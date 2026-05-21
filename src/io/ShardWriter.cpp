@@ -34,11 +34,18 @@ bool all_zero(ConstByteSpan bytes) {
     return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
 }
 
-std::uint64_t checked_record_size(std::size_t ciphertext_size) {
-    if (ciphertext_size > std::numeric_limits<std::uint64_t>::max() - kChunkRecordV1HeaderSize) {
-        throw InvalidArgument("ciphertext size too large");
+std::uint64_t checked_frame_body_size( std::uint64_t ciphertext_len, std::uint16_t tag_len) {
+    const auto body_len = ciphertext_len + static_cast<std::uint64_t>(tag_len);
+
+    if (body_len < ciphertext_len) {
+        throw InvalidArgument("chunk frame body length overflow");
     }
-    return static_cast<std::uint64_t>(kChunkRecordV1HeaderSize + ciphertext_size);
+
+    if (body_len > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw InvalidArgument("chunk frame body too large for this platform");
+    }
+
+    return body_len;
 }
 
 ShardHeaderV1 make_shard_header(
@@ -138,7 +145,21 @@ void ShardWriter::validate_and_normalize_options() {
     options_.public_header.header_len = static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
     options_.public_header.chunk_plain_size = static_cast<std::uint32_t>(options_.chunk_plain_size);
     options_.public_header.shard_payload_size = options_.max_shard_payload_size;
-    options_.public_header_hash = archive::compute_public_header_hash(options_.public_header);
+
+    // Hash the canonical public header with header_mac zeroed.
+    options_.public_header.header_mac.fill(Byte{0});
+    options_.public_header_hash =
+        archive::compute_public_header_hash(options_.public_header);
+
+    // But serialize/write the authenticated public header.
+    // Decrypt verifies this MAC before reading payload frames.
+    if (options_.has_header_authentication_key) {
+        options_.public_header = archive::finalize_public_header(
+            options_.public_header,
+            ConstByteSpan{
+                options_.header_authentication_key.data(),
+                options_.header_authentication_key.size()});
+    }
 }
 
 void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
@@ -162,19 +183,6 @@ void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
         current_payload_offset_ = 0;
         current_first_chunk_index_ = first_chunk_index;
         current_chunk_count_ = 0;
-
-        auto public_header = options_.public_header;
-        public_header.shard_index = current_shard_index_;
-        public_header.header_len = static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
-        public_header.header_mac.fill(Byte{0});
-
-        if (options_.has_header_authentication_key) {
-            public_header = archive::finalize_public_header(
-                public_header,
-                ConstByteSpan{
-                    options_.header_authentication_key.data(),
-                    options_.header_authentication_key.size()});
-        }
 
         const auto public_bytes = archive::serialize_public_header(options_.public_header);
         write_raw(ConstByteSpan{public_bytes.data(), public_bytes.size()});
@@ -291,48 +299,64 @@ void ShardWriter::write_raw(ConstByteSpan bytes) {
     }
 }
 
-ShardWritePosition ShardWriter::write_chunk_record(
-    std::uint64_t chunk_index,
-    std::uint64_t plaintext_size,
-    ConstByteSpan ciphertext) {
+ShardWritePosition ShardWriter::write_chunk_frame(
+    const ChunkFrameHeaderV1& header,
+    ConstByteSpan header_bytes,
+    ConstByteSpan ciphertext_and_tag) {
     if (finished_) {
         throw Error("cannot write to finalized ShardWriter");
     }
-    if (chunk_index != next_expected_chunk_index_) {
-        throw InvalidArgument("ShardWriter requires contiguous ascending chunk indexes");
-    }
-    if (plaintext_size > options_.chunk_plain_size) {
-        throw InvalidArgument("chunk plaintext_size exceeds archive chunk_plain_size");
+
+    if (header.global_chunk_index != next_expected_chunk_index_) {
+        throw InvalidArgument("ShardWriter requires contiguous ascending frame chunk indexes");
     }
 
-    const auto record_size = checked_record_size(ciphertext.size());
+    if (header.plaintext_len > options_.chunk_plain_size) {
+        throw InvalidArgument("chunk plaintext_len exceeds archive chunk_plain_size");
+    }
+
+    const auto expected_header_bytes = serialize_chunk_frame_header_v1(header);
+
+    if (header_bytes.size() != expected_header_bytes.size() ||
+        !std::equal(
+            header_bytes.begin(),
+            header_bytes.end(),
+            expected_header_bytes.begin(),
+            expected_header_bytes.end())) {
+        throw InvalidArgument("ChunkFrameHeaderV1 bytes do not match supplied header");
+    }
+
+    const auto body_size = checked_frame_body_size(header.ciphertext_len, header.tag_len);
+
+    if (ciphertext_and_tag.size() != body_size) {
+        throw InvalidArgument("ciphertext length does not match ChunkFrameHeaderV1");
+    }
+
+    const auto frame_size = chunk_frame_v1_encoded_size(header);
 
     if (!current_stream_.is_open()) {
-        open_next_shard(chunk_index);
+        open_next_shard(header.global_chunk_index);
     } else if (
-        current_payload_offset_ > 0
-        && current_payload_offset_ + record_size > options_.max_shard_payload_size) {
+        current_payload_offset_ > 0 &&
+        current_payload_offset_ + frame_size > options_.max_shard_payload_size) {
         close_current_shard(kUnknownTotalChunkCount);
-        open_next_shard(chunk_index);
+        open_next_shard(header.global_chunk_index);
     }
 
-    ChunkRecordV1Header record_header;
-    record_header.chunk_index = chunk_index;
-    record_header.plaintext_size = plaintext_size;
-    record_header.ciphertext_size = ciphertext.size();
-
-    const auto encoded_header = serialize_chunk_record_v1_header(record_header);
+    if (header.shard_index != current_shard_index_) {
+        throw InvalidArgument("ChunkFrameHeaderV1 shard_index does not match current shard");
+    }
 
     const ShardWritePosition position{
         .shard_index = current_shard_index_,
         .record_offset = current_payload_offset_,
-        .chunk_index = chunk_index,
+        .chunk_index = header.global_chunk_index,
     };
 
-    write_raw(ConstByteSpan{encoded_header.data(), encoded_header.size()});
-    write_raw(ciphertext);
+    write_raw(header_bytes);
+    write_raw(ciphertext_and_tag);
 
-    current_payload_offset_ += record_size;
+    current_payload_offset_ += frame_size;
     ++current_chunk_count_;
     ++next_expected_chunk_index_;
 
@@ -362,6 +386,62 @@ void ShardWriter::finish() {
     }
 
     finished_ = true;
+}
+
+    PlannedChunkFrame ShardWriter::plan_chunk_frame(
+        std::uint64_t chunk_index,
+        std::uint64_t plaintext_len,
+        std::uint64_t ciphertext_len,
+        std::uint16_t tag_len,
+        bool final_chunk) {
+    if (finished_) {
+        throw Error("cannot plan frame for finalized ShardWriter");
+    }
+
+    if (chunk_index != planned_next_chunk_index_) {
+        throw InvalidArgument("ShardWriter frame planner requires contiguous ascending chunk indexes");
+    }
+
+    if (plaintext_len > options_.chunk_plain_size) {
+        throw InvalidArgument("chunk plaintext_len exceeds archive chunk_plain_size");
+    }
+
+    if (plaintext_len > std::numeric_limits<std::uint32_t>::max()) {
+        throw InvalidArgument("chunk plaintext_len does not fit ChunkFrameHeaderV1");
+    }
+
+    ChunkFrameHeaderV1 header;
+    header.frame_flags = final_chunk ? kChunkFrameFlagFinalChunk : 0;
+    header.shard_index = planned_shard_index_;
+    header.global_chunk_index = chunk_index;
+    header.plaintext_len = static_cast<std::uint32_t>(plaintext_len);
+    header.ciphertext_len = ciphertext_len;
+    header.tag_len = tag_len;
+
+    const auto frame_size = chunk_frame_v1_encoded_size(header);
+
+    if (planned_payload_offset_ > 0 &&
+        planned_payload_offset_ + frame_size > options_.max_shard_payload_size) {
+        ++planned_shard_index_;
+        planned_payload_offset_ = 0;
+        header.shard_index = planned_shard_index_;
+        }
+
+    const auto header_bytes = serialize_chunk_frame_header_v1(header);
+
+    PlannedChunkFrame planned;
+    planned.position = ShardWritePosition{
+        .shard_index = header.shard_index,
+        .record_offset = planned_payload_offset_,
+        .chunk_index = chunk_index,
+    };
+    planned.header = header;
+    planned.header_bytes = header_bytes;
+
+    planned_payload_offset_ += frame_size;
+    ++planned_next_chunk_index_;
+
+    return planned;
 }
 
 } // namespace bseal::io

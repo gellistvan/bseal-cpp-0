@@ -29,19 +29,6 @@ void append_le64(Bytes& out, std::uint64_t value) {
     }
 }
 
-Bytes serialize_aad(const ChunkAad& aad) {
-    Bytes out;
-    out.reserve(4 + aad.public_header_hash.size() + 4 + 8 + 4);
-
-    append_le32(out, static_cast<std::uint32_t>(aad.public_header_hash.size()));
-    out.insert(out.end(), aad.public_header_hash.begin(), aad.public_header_hash.end());
-    append_le32(out, aad.shard_index);
-    append_le64(out, aad.global_chunk_index);
-    append_le32(out, aad.flags);
-
-    return out;
-}
-
 unsigned long long checked_ull_size(std::size_t value, const char* what) {
     if (value > static_cast<std::size_t>(std::numeric_limits<unsigned long long>::max())) {
         throw InvalidArgument(std::string(what) + " is too large");
@@ -88,7 +75,7 @@ Bytes XChaCha20Poly1305Backend::encrypt_chunk(const EncryptChunkRequest& request
 
     validate_request(request.key, request.nonce, key_size(), nonce_size());
 
-    const Bytes aad = serialize_aad(request.aad);
+    const Bytes aad = serialize_chunk_aad_v1(request.aad);
 
     Bytes ciphertext(request.plaintext.size() + tag_size());
     unsigned long long ciphertext_len = 0;
@@ -122,7 +109,7 @@ Bytes XChaCha20Poly1305Backend::decrypt_chunk(const DecryptChunkRequest& request
         throw AuthenticationFailed();
     }
 
-    const Bytes aad = serialize_aad(request.aad);
+    const Bytes aad = serialize_chunk_aad_v1(request.aad);
 
     Bytes plaintext(request.ciphertext_and_tag.size() - tag_size());
     unsigned long long plaintext_len = 0;
