@@ -145,7 +145,21 @@ void ShardWriter::validate_and_normalize_options() {
     options_.public_header.header_len = static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
     options_.public_header.chunk_plain_size = static_cast<std::uint32_t>(options_.chunk_plain_size);
     options_.public_header.shard_payload_size = options_.max_shard_payload_size;
-    options_.public_header_hash = archive::compute_public_header_hash(options_.public_header);
+
+    // Hash the canonical public header with header_mac zeroed.
+    options_.public_header.header_mac.fill(Byte{0});
+    options_.public_header_hash =
+        archive::compute_public_header_hash(options_.public_header);
+
+    // But serialize/write the authenticated public header.
+    // Decrypt verifies this MAC before reading payload frames.
+    if (options_.has_header_authentication_key) {
+        options_.public_header = archive::finalize_public_header(
+            options_.public_header,
+            ConstByteSpan{
+                options_.header_authentication_key.data(),
+                options_.header_authentication_key.size()});
+    }
 }
 
 void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
@@ -169,19 +183,6 @@ void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
         current_payload_offset_ = 0;
         current_first_chunk_index_ = first_chunk_index;
         current_chunk_count_ = 0;
-
-        auto public_header = options_.public_header;
-        public_header.shard_index = current_shard_index_;
-        public_header.header_len = static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
-        public_header.header_mac.fill(Byte{0});
-
-        if (options_.has_header_authentication_key) {
-            public_header = archive::finalize_public_header(
-                public_header,
-                ConstByteSpan{
-                    options_.header_authentication_key.data(),
-                    options_.header_authentication_key.size()});
-        }
 
         const auto public_bytes = archive::serialize_public_header(options_.public_header);
         write_raw(ConstByteSpan{public_bytes.data(), public_bytes.size()});
