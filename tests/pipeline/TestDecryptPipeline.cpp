@@ -12,13 +12,14 @@ namespace bseal::pipeline::test {
 namespace {
 
 TEST(DecryptPipeline, ThrowsWhenBackendIsNull) {
+    TempDir input_root("bseal_decrypt_null_backend_input");
     TempDir sealed_root("bseal_decrypt_null_backend_sealed");
     TempDir output_root("bseal_decrypt_null_backend_output");
 
     std::filesystem::create_directories(sealed_root.path());
     std::filesystem::create_directories(output_root.path());
 
-    io::ShardReader shard_reader(std::vector<io::ShardInfo>{});
+    auto shard_reader = make_valid_test_shard_reader( input_root.path(), sealed_root.path(), 128);
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{
@@ -40,16 +41,18 @@ TEST(DecryptPipeline, ThrowsWhenBackendIsNull) {
 }
 
 TEST(DecryptPipeline, ThrowsWhenChunkSizeIsZero) {
+    TempDir input_root("bseal_decrypt_zero_chunk_input");
     TempDir sealed_root("bseal_decrypt_zero_chunk_sealed");
     TempDir output_root("bseal_decrypt_zero_chunk_output");
 
     std::filesystem::create_directories(sealed_root.path());
     std::filesystem::create_directories(output_root.path());
 
+
     auto options = make_decrypt_options(128);
     options.chunk_plain_size = 0;
 
-    io::ShardReader shard_reader(std::vector<io::ShardInfo>{});
+    auto shard_reader = make_valid_test_shard_reader( input_root.path(), sealed_root.path(), 128);
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{
@@ -71,16 +74,18 @@ TEST(DecryptPipeline, ThrowsWhenChunkSizeIsZero) {
 }
 
 TEST(DecryptPipeline, ThrowsWhenChunkKeySizeDoesNotMatchBackend) {
+    TempDir input_root("bseal_decrypt_bad_key_input");
     TempDir sealed_root("bseal_decrypt_bad_key_sealed");
     TempDir output_root("bseal_decrypt_bad_key_output");
 
     std::filesystem::create_directories(sealed_root.path());
     std::filesystem::create_directories(output_root.path());
 
+    auto shard_reader = make_valid_test_shard_reader( input_root.path(), sealed_root.path(), 128);
+
+
     auto keys = make_test_keys();
     keys.chunk_encryption_key = crypto::SecureBuffer(31);
-
-    io::ShardReader shard_reader(std::vector<io::ShardInfo>{});
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{
@@ -110,23 +115,24 @@ TEST(DecryptPipeline, RoundTripsEncryptedDirectoryTree) {
 
     run_test_encryption(input_root.path(), sealed_root.path());
 
-    TestAeadBackend* decrypt_backend = nullptr;
-    run_test_decryption(sealed_root.path(), output_root.path(), &decrypt_backend);
+    const auto decrypt_result =
+        run_test_decryption(sealed_root.path(), output_root.path());
 
-    EXPECT_EQ(collect_regular_files(output_root.path()),
-              collect_regular_files(input_root.path()));
+    EXPECT_EQ(
+        collect_regular_files(output_root.path()),
+        collect_regular_files(input_root.path()));
 
     const auto input_dirs = collect_directories(input_root.path());
     const auto output_dirs = collect_directories(output_root.path());
 
     for (const auto& dir : input_dirs) {
-        EXPECT_NE(std::find(output_dirs.begin(), output_dirs.end(), dir), output_dirs.end())
+        EXPECT_NE(
+            std::find(output_dirs.begin(), output_dirs.end(), dir),
+            output_dirs.end())
             << "missing restored directory: " << dir;
     }
 
-    ASSERT_NE(decrypt_backend, nullptr);
-
-    auto decrypted_indices = decrypt_backend->decrypted_indices();
+    auto decrypted_indices = decrypt_result.decrypted_indices;
     ASSERT_FALSE(decrypted_indices.empty());
 
     std::sort(decrypted_indices.begin(), decrypted_indices.end());
@@ -178,7 +184,7 @@ TEST(DecryptPipeline, FailsWhenCiphertextIsModified) {
     create_sample_tree(input_root.path());
 
     run_test_encryption(input_root.path(), sealed_root.path());
-    corrupt_first_bin_file_byte(sealed_root.path());
+    corrupt_first_ciphertext_byte(sealed_root.path());
 
     auto discovered_shards = io::ShardReader::discover(sealed_root.path());
 

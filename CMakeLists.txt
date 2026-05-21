@@ -20,6 +20,7 @@ include(ProjectWarnings)
 include(Sanitizers)
 
 add_library(bseal_core
+    src/app/BsealApp.cpp
     src/cli/Args.cpp
     src/crypto/AesGcmBackend.cpp
     src/crypto/Kdf.cpp
@@ -29,10 +30,12 @@ add_library(bseal_core
     src/archive/ArchiveReader.cpp
     src/archive/ArchiveWriter.cpp
     src/archive/PathSanitizer.cpp
+    src/archive/PublicHeaderAuth.cpp
     src/archive/RecordFormat.cpp
     src/io/AsyncReader.cpp
     src/io/AsyncWriter.cpp
     src/io/BufferPool.cpp
+    src/io/ShardFrame.cpp
     src/io/ShardReader.cpp
     src/io/ShardWriter.cpp
     src/pipeline/DecryptPipeline.cpp

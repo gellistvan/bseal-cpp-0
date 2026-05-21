@@ -18,6 +18,7 @@ namespace {
 
 struct CipherChunk {
     std::uint64_t index{0};
+    std::uint64_t logical_plaintext_size{0};
     Bytes bytes;
 };
 
@@ -126,17 +127,20 @@ void reader_main(io::ShardReader& shard_reader,
                  WorkQueue<CipherChunk>& decrypt_queue,
                  FailureState& failure_state) {
     try {
-        std::uint64_t next_chunk_index = 0;
-
         while (!failure_state.failed()) {
-            auto ciphertext = shard_reader.read_next_cipher_chunk();
-            if (!ciphertext) {
+            auto record = shard_reader.read_next_chunk_record();
+
+            if (!record) {
                 break;
             }
 
-            if (!decrypt_queue.push(CipherChunk{next_chunk_index++, std::move(*ciphertext)})) {
+            if (!decrypt_queue.push(CipherChunk{
+                    .index = record->chunk_index,
+                    .logical_plaintext_size = record->plaintext_size,
+                    .bytes = std::move(record->ciphertext),
+                })) {
                 break;
-            }
+                }
         }
 
         decrypt_queue.close();
@@ -175,6 +179,12 @@ void decryption_worker_main(const DecryptPipelineOptions& options,
                 ConstByteSpan{job->bytes.data(), job->bytes.size()},
                 aad,
             });
+
+            if (job->logical_plaintext_size > plaintext.size()) {
+                throw Error("framed plaintext_size exceeds decrypted plaintext size");
+            }
+
+            plaintext.resize(static_cast<std::size_t>(job->logical_plaintext_size));
 
             if (!plaintext_queue.push(PlainChunk{job->index, std::move(plaintext)})) {
                 break;

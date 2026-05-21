@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <sodium.h>
 #include <limits>
 #include <string>
 
@@ -109,6 +110,42 @@ private:
     std::size_t pos_{0};
 };
 
+
+constexpr std::string_view kPublicHeaderHashDomain{
+    "BSEAL public header hash v1",
+    sizeof("BSEAL public header hash v1") // include the trailing NUL byte required by FORMAT.md
+};
+
+void ensure_sodium_initialized()
+{
+    static const int rc = sodium_init();
+    if (rc < 0) {
+        throw Error("libsodium initialization failed");
+    }
+}
+
+void hash_update_bytes(crypto_generichash_state& state, ConstByteSpan bytes)
+{
+    if (!bytes.empty()) {
+        crypto_generichash_update(
+            &state,
+            bytes.data(),
+            static_cast<unsigned long long>(bytes.size())
+        );
+    }
+}
+
+void hash_update_text(crypto_generichash_state& state, std::string_view text)
+{
+    if (!text.empty()) {
+        crypto_generichash_update(
+            &state,
+            reinterpret_cast<const unsigned char*>(text.data()),
+            static_cast<unsigned long long>(text.size())
+        );
+    }
+}
+
 bool valid_record_type(std::uint8_t value) {
     switch (static_cast<RecordType>(value)) {
         case RecordType::ArchiveBegin:
@@ -181,6 +218,44 @@ Bytes serialize_public_header(const PublicHeaderV1& header) {
     if (out.size() != kPublicHeaderV1SerializedSize) {
         throw Error("internal public header size mismatch");
     }
+    return out;
+}
+
+    Bytes serialize_public_header_for_hash(const PublicHeaderV1& header)
+{
+    PublicHeaderV1 canonical = header;
+
+    // FORMAT.md requires public_header_hash input to exclude header_mac, or
+    // equivalently include it as all-zero bytes. Never let the keyed MAC feed
+    // the unkeyed public-header hash.
+    canonical.header_mac.fill(Byte{0});
+
+    return serialize_public_header(canonical);
+}
+
+    std::array<Byte, 32> compute_public_header_hash(const PublicHeaderV1& header)
+{
+    ensure_sodium_initialized();
+
+    const auto canonical_header = serialize_public_header_for_hash(header);
+
+    std::array<Byte, 32> out{};
+    crypto_generichash_state state{};
+
+    if (crypto_generichash_init(&state, nullptr, 0, out.size()) != 0) {
+        throw Error("public header hash initialization failed");
+    }
+
+    hash_update_text(state, kPublicHeaderHashDomain);
+    hash_update_bytes(
+        state,
+        ConstByteSpan{canonical_header.data(), canonical_header.size()}
+    );
+
+    if (crypto_generichash_final(&state, out.data(), out.size()) != 0) {
+        throw Error("public header hash finalization failed");
+    }
+
     return out;
 }
 

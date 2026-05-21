@@ -9,9 +9,9 @@
 
 #include <chrono>
 #include <cstdint>
-#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -27,6 +27,7 @@ using bseal::crypto::derive_master_seed;
 using bseal::crypto::hash_keyfiles_blake3;
 using bseal::crypto::mix_keyfile_digests;
 using bseal::crypto::preset_params;
+using bseal::crypto::validate_kdf_params;
 
 template <typename ExceptionT, typename Fn>
 bool throws_exception(Fn&& fn) {
@@ -328,4 +329,58 @@ TEST(Kdf, DeriveMasterSeedRejectsZeroMemoryCost) {
     })));
 
     std::filesystem::remove_all(dir);
+}
+
+TEST(KdfParamValidation, RejectsZeroMemoryKiB) {
+    auto params = small_test_kdf_params();
+    params.memory_kib = 0;
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsAbsurdMemoryKiB) {
+    auto params = small_test_kdf_params();
+    params.memory_kib = std::numeric_limits<std::uint32_t>::max();
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsZeroIterations) {
+    auto params = small_test_kdf_params();
+    params.iterations = 0;
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsAbsurdIterations) {
+    auto params = small_test_kdf_params();
+    params.iterations = std::numeric_limits<std::uint32_t>::max();
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsZeroParallelism) {
+    auto params = small_test_kdf_params();
+    params.parallelism = 0;
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsAbsurdParallelism) {
+    auto params = small_test_kdf_params();
+    params.parallelism = std::numeric_limits<std::uint32_t>::max();
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsTooSmallOutputBytes) {
+    auto params = small_test_kdf_params();
+    params.output_bytes = 0;
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsAbsurdOutputBytes) {
+    auto params = small_test_kdf_params();
+    params.output_bytes = std::numeric_limits<std::uint32_t>::max();
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, AcceptsValidPresetParams) {
+    EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Fast)));
+    EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Strong)));
+    EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Paranoid)));
 }
