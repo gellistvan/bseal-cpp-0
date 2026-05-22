@@ -306,6 +306,16 @@ void producer_main(
                     true,
                     tag_size);
             }
+
+            if (options.expected_plaintext_bytes > 0) {
+                const auto produced = archive_writer.bytes_produced();
+                if (produced != options.expected_plaintext_bytes) {
+                    throw InvalidArgument(
+                        "archive content changed during encryption: expected " +
+                        std::to_string(options.expected_plaintext_bytes) +
+                        " plaintext bytes but produced " + std::to_string(produced));
+                }
+            }
         }
 
         encrypt_queue.close();

@@ -1121,3 +1121,80 @@ TEST(BlackBoxCli, PaddingFixedSizeTooSmallFails) {
     EXPECT_TRUE(contains_text(result.stderr_text, "smaller than the unpadded archive"))
         << "expected size-too-small error in stderr: " << result.stderr_text;
 }
+
+TEST(BlackBoxCli, EncryptOutputCleanedUpOnFailure) {
+    // Verify that a failed encryption does not leave stale .bin shards in the output directory.
+    // We trigger failure by passing a non-existent input directory.
+    TempDir temp("bseal_integration_cleanup_on_failure");
+
+    const auto input  = temp.subdir("does-not-exist");  // deliberately absent
+    const auto sealed = temp.subdir("sealed");
+    fs::create_directories(sealed);
+
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+        },
+        "passphrase\n");
+
+    EXPECT_NE(result.exit_code, 0) << "encryption must fail when input does not exist";
+
+    // Verify no .bin shards were left behind.
+    std::error_code ec;
+    bool found_bin = false;
+    for (const auto& entry : fs::directory_iterator(sealed, ec)) {
+        if (entry.path().extension() == ".bin") {
+            found_bin = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(found_bin)
+        << "no .bin shard files should remain in the output directory after a failed encryption";
+}
+
+TEST(BlackBoxCli, LargeFileSingleShardRoundTrip) {
+    // Round-trip a file large enough to span multiple FileBytes records and verify
+    // that the streaming path reconstructs the exact bytes (not just size).
+    TempDir temp("bseal_integration_large_file");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    fs::create_directories(sealed);
+    fs::create_directories(output);
+
+    // 300 KiB — forces multiple FileBytes records at the default 64 KiB payload target.
+    const std::string content = repeated("abcdefghijklmnopqrstuvwxyz0123456789", 8192);
+    write_file(input / "large.bin", content);
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "2M",
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    EXPECT_EQ(read_file(output / "large.bin"), content)
+        << "round-trip must reproduce exact file content";
+}
