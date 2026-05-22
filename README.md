@@ -22,6 +22,7 @@ Implemented today:
   * Decrypt verifies the header MAC before decrypting any chunk.
 * Public header metadata such as suite id, archive id, KDF salt, chunk size, shard size, and shard index is authenticated through canonical public-header serialization.
 * Archive records cover archive begin/end, directories, regular files, file bytes, file end markers, symlinks in the record format, and random padding records.
+* All four padding policies are implemented end-to-end: `none`, `chunk` (pad to next chunk-size multiple), `power2` (pad to next power-of-two total), and `fixed-size=N` (pad to exact byte count). Padding is represented as encrypted `RandomPadding` archive records so it is authenticated by AEAD and indistinguishable from real data.
 * Chunk encryption binds the immutable public-header hash and chunk index into AEAD associated data.
 * Shards use explicit per-shard headers and chunk records. Decrypt scans `*.bin`
   files, parses shard headers from file contents, rejects malformed garbage
@@ -34,7 +35,7 @@ Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
 * The archive/container format is not stable and has no compatibility guarantee.
-* Padding modes other than `none` (`chunk`, `power2`, `fixed-size=N`) are parsed and rejected with a clear error; they are not implemented and will fail before encryption starts.
+* Padding is functional but the archive/container format has not been externally audited.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 * Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
 
@@ -105,7 +106,7 @@ bseal encrypt \
   --kdf strong \
   --chunk-size 16M \
   --shard-size 4G \
-  --padding none
+  --padding chunk
 ```
 
 Decrypt it later with the same passphrase and keyfiles, in the same keyfile order:
@@ -161,7 +162,12 @@ Encrypt-only options:
 * `--kdf fast|strong|paranoid`
 * `--chunk-size SIZE`, for example `1K`, `16M`
 * `--shard-size SIZE`, for example `16K`, `4G`
-* `--padding none` — only `none` is currently implemented; `chunk`, `power2`, and `fixed-size=N` are rejected with a clear error until real padding is implemented
+* `--padding none|chunk|power2|fixed-size=N`
+  * `none` — no padding; plaintext size is exactly the unpadded archive stream
+  * `chunk` — pad to the next multiple of `--chunk-size`
+  * `power2` — pad to the next power-of-two total plaintext size
+  * `fixed-size=N` — pad to exactly N bytes (fails if the archive is already larger, or if the gap is too small to hold a padding record header)
+  * Padding is represented as an encrypted `RandomPadding` archive record so it is authenticated by AEAD and indistinguishable from file data
 
 Decrypt-only options:
 
@@ -258,11 +264,10 @@ When changing crypto/container code:
 
 ## High-value next work
 
-1. Finalize and test exact padding behavior for `none`, `chunk`, `power2`, and `fixed-size=N`.
-2. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
-3. Decide the compatibility policy for archive format version 1.
-4. Add benchmarks after correctness and format-hardening work settles.
-5. Prepare the codebase for external cryptographic review.
+1. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
+2. Decide the compatibility policy for archive format version 1.
+3. Add benchmarks after correctness and format-hardening work settles.
+4. Prepare the codebase for external cryptographic review.
 
 ## Related docs
 

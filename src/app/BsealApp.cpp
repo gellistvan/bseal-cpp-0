@@ -304,8 +304,9 @@ ArchiveOpenContext make_encrypt_context(const bseal::cli::EncryptOptions& option
     gh.argon2_parallelism = context.kdf_params.parallelism;
     gh.chunk_plain_size  = static_cast<std::uint32_t>(options.chunk_size);
     gh.max_shard_payload_len = options.shard_size;
-    gh.padding_policy_id = 0;
-    gh.reserved0         = 0;
+    // padding_policy_id and padding_policy_value are set after plaintext buffering.
+    gh.padding_policy_id    = 0;
+    gh.reserved0            = 0;
     gh.padding_policy_value = 0;
     gh.required_feature_flags = 0;
     gh.reserved1.fill(Byte{0});
@@ -313,6 +314,73 @@ ArchiveOpenContext make_encrypt_context(const bseal::cli::EncryptOptions& option
     // are filled in after plaintext buffering + layout planning.
 
     return context;
+}
+
+// ---------------------------------------------------------------------------
+// Padding helpers
+// ---------------------------------------------------------------------------
+
+struct PaddingResult {
+    std::uint64_t target_size;
+    std::uint16_t policy_id;
+    std::uint64_t policy_value;
+};
+
+PaddingResult compute_padding(
+    std::uint64_t raw_size,
+    std::uint64_t chunk_plain_size,
+    const bseal::cli::PaddingPolicy& policy)
+{
+    using Kind = bseal::cli::PaddingPolicyKind;
+
+    switch (policy.kind) {
+    case Kind::None:
+        return {raw_size, 0, 0};
+
+    case Kind::Chunk: {
+        if (raw_size == 0) return {0, 1, 0};
+        const std::uint64_t rem = raw_size % chunk_plain_size;
+        std::uint64_t target = (rem == 0) ? raw_size : raw_size + (chunk_plain_size - rem);
+        const std::uint64_t gap = target - raw_size;
+        // If gap is non-zero but too small for a RandomPadding prefix, bump one chunk.
+        if (gap > 0 && gap < bseal::archive::kRecordPrefixSize) {
+            target += chunk_plain_size;
+        }
+        return {target, 1, 0};
+    }
+
+    case Kind::Power2: {
+        if (raw_size == 0) return {0, 2, 0};
+        std::uint64_t target = 1;
+        while (target < raw_size) target <<= 1;
+        const std::uint64_t gap = target - raw_size;
+        if (gap > 0 && gap < bseal::archive::kRecordPrefixSize) {
+            target <<= 1;
+        }
+        return {target, 2, 0};
+    }
+
+    case Kind::FixedSize: {
+        const std::uint64_t N = policy.fixed_size_bytes;
+        if (raw_size > N) {
+            throw bseal::InvalidArgument(
+                "fixed-size padding target (" + std::to_string(N) +
+                " bytes) is smaller than the unpadded archive (" +
+                std::to_string(raw_size) + " bytes)");
+        }
+        const std::uint64_t gap = N - raw_size;
+        if (gap > 0 && gap < bseal::archive::kRecordPrefixSize) {
+            throw bseal::InvalidArgument(
+                "fixed-size padding target leaves " + std::to_string(gap) +
+                " bytes of gap, which is too small for a padding record"
+                " (minimum " + std::to_string(bseal::archive::kRecordPrefixSize) + " bytes);"
+                " choose a larger fixed-size value");
+        }
+        return {N, 3, N};
+    }
+    }
+
+    throw bseal::InvalidArgument("unsupported padding policy kind");
 }
 
 // ---------------------------------------------------------------------------
@@ -401,10 +469,26 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         plaintext_buffer.insert(plaintext_buffer.end(), rec->begin(), rec->end());
     }
 
-    const std::uint64_t padded_plaintext_size =
+    const std::uint64_t raw_plaintext_size =
         static_cast<std::uint64_t>(plaintext_buffer.size());
     const std::uint64_t chunk_plain_size = context.chunk_plain_size;
     const std::uint16_t tag_len = 16; // All v1 AEADs use a 16-byte tag.
+
+    // Apply padding policy: append RandomPadding record if needed.
+    const auto pad = compute_padding(raw_plaintext_size, chunk_plain_size, options.padding);
+    if (pad.target_size > raw_plaintext_size) {
+        const std::uint64_t gap = pad.target_size - raw_plaintext_size;
+        const std::uint64_t payload_size = gap - bseal::archive::kRecordPrefixSize;
+        bseal::archive::ArchiveRecord padding_rec;
+        padding_rec.type    = bseal::archive::RecordType::RandomPadding;
+        padding_rec.payload = bseal::platform::secure_random_bytes(
+            static_cast<std::size_t>(payload_size));
+        auto rec_bytes = bseal::archive::serialize_record(padding_rec);
+        plaintext_buffer.insert(plaintext_buffer.end(), rec_bytes.begin(), rec_bytes.end());
+    }
+
+    const std::uint64_t padded_plaintext_size =
+        static_cast<std::uint64_t>(plaintext_buffer.size());
 
     // Compute global chunk counts.
     std::uint64_t global_chunk_count = 0;
@@ -435,6 +519,8 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         : padded_plaintext_size;
 
     auto& gh = context.global_header;
+    gh.padding_policy_id    = pad.policy_id;
+    gh.padding_policy_value = pad.policy_value;
     gh.global_chunk_count        = global_chunk_count;
     gh.padded_plaintext_size     = effective_padded_size;
     gh.final_plaintext_chunk_len = final_plaintext_chunk_len;
@@ -474,17 +560,9 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     bseal::io::ShardWriter shard_writer(std::move(shard_options));
 
-    // Re-wrap the buffered plaintext as a MemoryArchiveWriter substitute by
-    // constructing an ArchiveWriter-like source from the buffer.
-    // Since ArchiveWriter reads from disk, we need to replay the buffer.
-    // We do this by re-creating an ArchiveWriter with the same options.
-    bseal::archive::ArchiveWriter replay_writer(bseal::archive::ArchiveWriterOptions{
-        options.input,
-        options.chunk_size,
-        true,
-        true,
-        false,
-    });
+    // Replay the padded plaintext buffer in pass 2 (avoids re-reading disk and
+    // ensures the pipeline encrypts exactly the same bytes we planned around).
+    bseal::archive::ArchiveWriter replay_writer(std::move(plaintext_buffer));
 
     bseal::pipeline::EncryptPipelineOptions pipeline_options;
     pipeline_options.chunk_plain_size               = options.chunk_size;
