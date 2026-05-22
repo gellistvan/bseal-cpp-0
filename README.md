@@ -34,7 +34,7 @@ Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
 * The archive/container format is not stable and has no compatibility guarantee.
-* Padding options are parsed, but exact padding semantics still need to be finalized and tested end to end.
+* Padding modes other than `none` (`chunk`, `power2`, `fixed-size=N`) are parsed and rejected with a clear error; they are not implemented and will fail before encryption starts.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 * Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
 
@@ -105,7 +105,7 @@ bseal encrypt \
   --kdf strong \
   --chunk-size 16M \
   --shard-size 4G \
-  --padding power2
+  --padding none
 ```
 
 Decrypt it later with the same passphrase and keyfiles, in the same keyfile order:
@@ -161,7 +161,7 @@ Encrypt-only options:
 * `--kdf fast|strong|paranoid`
 * `--chunk-size SIZE`, for example `1K`, `16M`
 * `--shard-size SIZE`, for example `16K`, `4G`
-* `--padding none|chunk|power2|fixed-size=SIZE`
+* `--padding none` — only `none` is currently implemented; `chunk`, `power2`, and `fixed-size=N` are rejected with a clear error until real padding is implemented
 
 Decrypt-only options:
 
