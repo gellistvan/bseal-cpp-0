@@ -12,7 +12,7 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 
-#include <sodium.h> // for crypto_generichash (BLAKE2b, which libsodium uses for generic_hash)
+#include <blake3.h>
 
 namespace bseal::io {
 namespace {
@@ -120,17 +120,6 @@ std::array<Byte, N> read_array(Reader& reader, std::string_view what) {
     std::copy(span.begin(), span.end(), out.begin());
     (void)what;
     return out;
-}
-
-// ---------------------------------------------------------------------------
-// BLAKE2b-256 (libsodium generic hash) used as public_header_hash
-// ---------------------------------------------------------------------------
-
-void ensure_sodium_initialized() {
-    static const int rc = sodium_init();
-    if (rc < 0) {
-        throw Error("libsodium initialization failed");
-    }
 }
 
 // The domain string from FORMAT.md §6 includes the NUL terminator.
@@ -404,43 +393,23 @@ ShardPublicHeaderV1 parse_shard_public_header(ConstByteSpan bytes) {
 }
 
 // ---------------------------------------------------------------------------
-// Public header hash (BLAKE2b-256 via libsodium)
+// Public header hash (BLAKE3-256 per FORMAT.md §15)
 // ---------------------------------------------------------------------------
 
 std::array<Byte, 32> compute_public_header_hash(
     const GlobalPublicHeaderV1& global_header,
     const ShardPublicHeaderV1&  shard_header) {
-    ensure_sodium_initialized();
-
     const auto global_bytes = serialize_global_public_header(global_header);
     const auto shard_bytes  = serialize_shard_public_header_for_mac(shard_header);
 
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
+    blake3_hasher_update(&hasher, kPublicHeaderHashDomain.data(), kPublicHeaderHashDomain.size());
+    blake3_hasher_update(&hasher, global_bytes.data(), global_bytes.size());
+    blake3_hasher_update(&hasher, shard_bytes.data(), shard_bytes.size());
+
     std::array<Byte, 32> out{};
-    crypto_generichash_state state{};
-
-    if (crypto_generichash_init(&state, nullptr, 0, out.size()) != 0) {
-        throw Error("public header hash initialization failed");
-    }
-
-    crypto_generichash_update(
-        &state,
-        reinterpret_cast<const unsigned char*>(kPublicHeaderHashDomain.data()),
-        static_cast<unsigned long long>(kPublicHeaderHashDomain.size()));
-
-    crypto_generichash_update(
-        &state,
-        global_bytes.data(),
-        static_cast<unsigned long long>(global_bytes.size()));
-
-    crypto_generichash_update(
-        &state,
-        shard_bytes.data(),
-        static_cast<unsigned long long>(shard_bytes.size()));
-
-    if (crypto_generichash_final(&state, out.data(), out.size()) != 0) {
-        throw Error("public header hash finalization failed");
-    }
-
+    blake3_hasher_finalize(&hasher, out.data(), out.size());
     return out;
 }
 

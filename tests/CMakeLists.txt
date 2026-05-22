@@ -33,11 +33,12 @@ add_executable(bseal_io_gtests
         io/TestAsyncReader.cpp
         io/TestAsyncWriter.cpp
         io/TestBufferPool.cpp
+        io/TestShardFrameHash.cpp
         io/TestShardReader.cpp
         io/TestShardWriter.cpp
 )
 
-target_link_libraries(bseal_io_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
+target_link_libraries(bseal_io_gtests PRIVATE bseal::core blake3::blake3 ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_io_gtests)
 bseal_enable_sanitizers_if_requested(bseal_io_gtests)
 
