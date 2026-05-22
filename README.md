@@ -43,9 +43,10 @@ Still unsafe or incomplete:
 * CMake 3.24 or newer
 * A C++20 compiler (GCC 11+, Clang 14+)
 * `pkg-config`
-* libsodium
-* OpenSSL crypto library
+* libsodium (XChaCha20-Poly1305 AEAD and secure memory)
+* OpenSSL crypto library (AES-256-GCM AEAD and HKDF-SHA-256)
 * [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) — bundled as a git submodule under `submodules/blake3` (dual-licensed CC0-1.0 / Apache-2.0 with LLVM exception; built automatically by CMake)
+* [Argon2](https://github.com/P-H-C/phc-winner-argon2) — bundled as a git submodule under `submodules/argon2` (dual-licensed CC0-1.0 / Apache-2.0; built automatically by CMake)
 * Optional: GoogleTest. If system GoogleTest is unavailable, the test tree falls back to the local lightweight compatibility harness.
 
 ## Build

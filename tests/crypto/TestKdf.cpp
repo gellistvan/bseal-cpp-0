@@ -554,3 +554,109 @@ TEST(Kdf_MixKeyfileDigests_Vectors, TwoKeyfilesBAMatchesExpectedMixAndDiffersFro
 
     std::filesystem::remove_all(dir);
 }
+
+// ---------------------------------------------------------------------------
+// Real-parallelism Argon2id tests (FORMAT.md §7, §8)
+//
+// These tests verify that all three KDF cost parameters (memory, iterations,
+// parallelism) are genuinely honored by derive_master_seed().  Each test
+// changes exactly one parameter and asserts that the output differs.
+// ---------------------------------------------------------------------------
+
+TEST(KdfParamValidation, RejectsParallelismBelowMinBeforeExpensiveWork) {
+    // validate_kdf_params() must reject out-of-range parallelism before any
+    // Argon2id work is attempted.
+    KdfParams params = preset_params(KdfPreset::Fast);
+    params.parallelism = 0;
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsParallelismAboveMaxBeforeExpensiveWork) {
+    KdfParams params = preset_params(KdfPreset::Fast);
+    params.parallelism = bseal::crypto::kArgon2ParallelismMax + 1u;
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, AcceptsMaxParallelism) {
+    KdfParams params = small_test_kdf_params();
+    params.parallelism = bseal::crypto::kArgon2ParallelismMax;
+    EXPECT_NO_THROW(validate_kdf_params(params));
+}
+
+TEST(KdfPresetParams, FastPresetMatchesFormatSpec) {
+    // FORMAT.md §7 / preset_params() contract: Fast = 256 MiB, 3 iterations, parallelism 4.
+    const auto p = preset_params(KdfPreset::Fast);
+    EXPECT_EQ(p.memory_kib, 256u * 1024u);
+    EXPECT_EQ(p.iterations, 3u);
+    EXPECT_EQ(p.parallelism, 4u);
+    EXPECT_EQ(p.output_bytes, bseal::crypto::kArgon2OutputBytesDefault);
+}
+
+TEST(KdfPresetParams, StrongPresetMatchesFormatSpec) {
+    // FORMAT.md §7 / preset_params() contract: Strong = 1 GiB, 3 iterations, parallelism 4.
+    const auto p = preset_params(KdfPreset::Strong);
+    EXPECT_EQ(p.memory_kib, 1024u * 1024u);
+    EXPECT_EQ(p.iterations, 3u);
+    EXPECT_EQ(p.parallelism, 4u);
+    EXPECT_EQ(p.output_bytes, bseal::crypto::kArgon2OutputBytesDefault);
+}
+
+TEST(KdfPresetParams, ParanoidPresetMatchesFormatSpec) {
+    // FORMAT.md §7 / preset_params() contract: Paranoid = 2 GiB, 4 iterations, parallelism 8.
+    const auto p = preset_params(KdfPreset::Paranoid);
+    EXPECT_EQ(p.memory_kib, 2u * 1024u * 1024u);
+    EXPECT_EQ(p.iterations, 4u);
+    EXPECT_EQ(p.parallelism, 8u);
+    EXPECT_EQ(p.output_bytes, bseal::crypto::kArgon2OutputBytesDefault);
+}
+
+TEST(Kdf_RealParallelism, ChangingParallelismChangesMasterSeed) {
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(32, 0xAA));
+
+    auto input = make_input({kf});
+    input.params.parallelism = 1;
+    const auto seed_p1 = to_vector(derive_master_seed(input));
+
+    input.params.parallelism = 2;
+    const auto seed_p2 = to_vector(derive_master_seed(input));
+
+    EXPECT_NE(seed_p1, seed_p2)
+        << "parallelism=1 and parallelism=2 must derive different master seeds";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_RealParallelism, ChangingIterationsChangesMasterSeed) {
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(32, 0xBB));
+
+    auto input = make_input({kf});
+    input.params.iterations = 1;
+    const auto seed_i1 = to_vector(derive_master_seed(input));
+
+    input.params.iterations = 2;
+    const auto seed_i2 = to_vector(derive_master_seed(input));
+
+    EXPECT_NE(seed_i1, seed_i2)
+        << "iterations=1 and iterations=2 must derive different master seeds";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_RealParallelism, ChangingMemoryChangesMasterSeed) {
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(32, 0xCC));
+
+    auto input = make_input({kf});
+    input.params.memory_kib = bseal::crypto::kArgon2MemoryKiBMin;
+    const auto seed_m1 = to_vector(derive_master_seed(input));
+
+    input.params.memory_kib = bseal::crypto::kArgon2MemoryKiBMin * 2u;
+    const auto seed_m2 = to_vector(derive_master_seed(input));
+
+    EXPECT_NE(seed_m1, seed_m2)
+        << "different memory costs must derive different master seeds";
+
+    std::filesystem::remove_all(dir);
+}

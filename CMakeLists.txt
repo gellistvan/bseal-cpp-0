@@ -19,6 +19,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ProjectWarnings)
 include(Sanitizers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/external_libraries/blake3.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/external_libraries/argon2.cmake)
 
 add_library(bseal_core
     src/app/BsealApp.cpp
@@ -55,6 +56,7 @@ target_link_libraries(bseal_core
         PkgConfig::SODIUM
         OpenSSL::Crypto
         blake3::blake3
+        argon2::argon2
 )
 
 

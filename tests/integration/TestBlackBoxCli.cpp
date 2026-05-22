@@ -373,6 +373,30 @@ void create_keyfiles(const fs::path& keyfile_a, const fs::path& keyfile_b) {
                       });
 }
 
+// Patch exactly 4 LE bytes at a fixed byte offset in the first .bin file.
+// Used to tamper with specific fields of GlobalPublicHeaderV1.
+void patch_u32_le_at_offset(const fs::path& sealed_dir, std::size_t byte_offset, std::uint32_t new_value) {
+    const auto files = list_bin_files(sealed_dir);
+    if (files.empty()) {
+        throw std::runtime_error("no .bin file found to patch");
+    }
+    std::fstream stream(files.front(), std::ios::in | std::ios::out | std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error("failed to open .bin file for patching");
+    }
+    stream.seekp(static_cast<std::streamoff>(byte_offset));
+    const std::uint8_t bytes[4] = {
+        static_cast<std::uint8_t>(new_value & 0xFFu),
+        static_cast<std::uint8_t>((new_value >> 8)  & 0xFFu),
+        static_cast<std::uint8_t>((new_value >> 16) & 0xFFu),
+        static_cast<std::uint8_t>((new_value >> 24) & 0xFFu),
+    };
+    stream.write(reinterpret_cast<const char*>(bytes), 4);
+    if (!stream) {
+        throw std::runtime_error("failed to write patched bytes");
+    }
+}
+
 void corrupt_first_bin_file(const fs::path& sealed_dir) {
     const auto files = list_bin_files(sealed_dir);
 
@@ -796,6 +820,113 @@ TEST(BlackBoxCli, KeyfileArchiveDecryptWithoutKeyfileFails) {
         "passphrase\n");
 
     EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+}
+
+// GlobalPublicHeaderV1 KDF field byte offsets (FORMAT.md §5, fixed 192-byte header).
+static constexpr std::size_t kOffsetArgon2MemoryKiB  = 100;
+static constexpr std::size_t kOffsetArgon2Iterations = 104;
+static constexpr std::size_t kOffsetArgon2Parallelism = 108;
+
+TEST(BlackBoxCli, TamperedKdfMemoryFailsAuthentication) {
+    TempDir temp("bseal_integration_tampered_kdf_memory");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key    = temp.subdir("keys") / "key.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "data");
+    write_binary_file(key, {0xAA, 0xBB, 0xCC, 0xDD});
+
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "chunk",
+        },
+        "passphrase\n");
+
+    // Bump argon2_memory_kib by 1 KiB — changes KDF output, breaks header MAC.
+    patch_u32_le_at_offset(sealed, kOffsetArgon2MemoryKiB, 256u * 1024u + 1u);
+
+    const auto result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string(), "--keyfile", key.string()},
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+}
+
+TEST(BlackBoxCli, TamperedKdfIterationsFailsAuthentication) {
+    TempDir temp("bseal_integration_tampered_kdf_iterations");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key    = temp.subdir("keys") / "key.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "data");
+    write_binary_file(key, {0xAA, 0xBB, 0xCC, 0xDD});
+
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "chunk",
+        },
+        "passphrase\n");
+
+    // Change iterations from 3 to 2 — different KDF output, header MAC fails.
+    patch_u32_le_at_offset(sealed, kOffsetArgon2Iterations, 2u);
+
+    const auto result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string(), "--keyfile", key.string()},
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+}
+
+TEST(BlackBoxCli, TamperedKdfParallelismFailsAuthentication) {
+    TempDir temp("bseal_integration_tampered_kdf_parallelism");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key    = temp.subdir("keys") / "key.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "data");
+    write_binary_file(key, {0xAA, 0xBB, 0xCC, 0xDD});
+
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "chunk",
+        },
+        "passphrase\n");
+
+    // Change parallelism from 4 to 2 — different KDF output, header MAC fails.
+    patch_u32_le_at_offset(sealed, kOffsetArgon2Parallelism, 2u);
+
+    const auto result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string(), "--keyfile", key.string()},
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
 }
 
 TEST(BlackBoxCli, EmptyDirectoryCanBeEncryptedAndDecrypted) {

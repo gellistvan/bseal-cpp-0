@@ -235,6 +235,16 @@ They are still untrusted until `header_mac` verifies. The only allowed v1 KDF pa
 
 A decryptor MUST reject values outside these limits before allocating Argon2 memory. A decryptor MAY also fail closed if local policy sets a lower maximum memory or parallelism limit; that failure is an unsupported-parameters failure, not a successful password check.
 
+All three cost parameters — `argon2_memory_kib`, `argon2_iterations`, and `argon2_parallelism` — MUST be honored exactly by both the encryptor and decryptor. These parameters are not advisory or best-effort; they determine the Argon2id output and therefore the entire derived key schedule. Changing any one of them changes the master seed and all expanded keys.
+
+Named presets and their serialized parameter values:
+
+| Preset | `argon2_memory_kib` | `argon2_iterations` | `argon2_parallelism` |
+|---|---:|---:|---:|
+| `fast` | 262144 (256 MiB) | 3 | 4 |
+| `strong` | 1048576 (1 GiB) | 3 | 4 |
+| `paranoid` | 2097152 (2 GiB) | 4 | 8 |
+
 Keyfiles are optional. Zero keyfiles is a valid, explicitly supported mode: `keyfile_mix` is still computed from the domain string with `keyfile_count = 0`. An archive encrypted with no keyfiles cannot be distinguished from one that has keyfiles by examining the archive alone — the difference is entirely in the derived key material.
 
 When keyfiles are supplied, their order is part of the KDF input. Keyfiles are hashed and mixed in the exact CLI order supplied by the user. Adding, removing, or reordering a keyfile produces a different `keyfile_mix` and therefore a different master seed. The archive format does not store keyfile paths, names, counts, or digests.
@@ -246,10 +256,11 @@ For `kdf_alg_id = 1`, the key schedule is:
 ```text
 pass_key = Argon2id(
     password = passphrase_utf8_bytes,
-    salt = kdf_salt,
-    memory = argon2_memory_kib,
-    iterations = argon2_iterations,
+    salt     = kdf_salt,            -- the 32-byte public field directly; no pre-hashing
+    memory   = argon2_memory_kib,   -- KiB, passed to the Argon2 library as-is
+    iterations  = argon2_iterations,
     parallelism = argon2_parallelism,
+    version  = 0x13,
     output_len = 32)
 
 keyfile_digest[i] = BLAKE3-256(
