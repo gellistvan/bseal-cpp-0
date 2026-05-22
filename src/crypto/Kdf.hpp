@@ -57,13 +57,23 @@ struct KeyfileDigest {
 // before calling crypto_pwhash().
 void validate_kdf_params(const KdfParams& params);
 
-// Hash each keyfile with BLAKE3 using domain-separated framing.
-// The future implementation should stream large keyfiles and should not load all keyfiles at once.
+/// Hash each keyfile with BLAKE3-256 using the domain-separated framing defined in FORMAT.md §8:
+///
+///   keyfile_digest[i] = BLAKE3-256(
+///       "BSEAL keyfile digest v1\0" || u64le(keyfile_size) || keyfile_bytes)
+///
+/// Keyfile content is streamed in chunks; large keyfiles are not fully buffered.
+/// Throws InvalidArgument if the list is empty, a file is missing, or a file cannot be read.
 std::vector<KeyfileDigest> hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles);
 
-// Mix ordered keyfile digests into a single 32-byte digest.
-// Important: decide whether keyfile order matters. This skeleton assumes order matters and should be
-// documented in CLI help. If order should not matter, sort by digest bytes before mixing.
+/// Mix ordered keyfile digests into a single 32-byte digest using BLAKE3-256 per FORMAT.md §8:
+///
+///   keyfile_mix = BLAKE3-256(
+///       "BSEAL keyfile mix v1\0" || u32le(keyfile_count) || keyfile_digest[0] || ...)
+///
+/// Order is significant: swapping keyfiles produces a different mix.
+/// If no keyfiles are supplied, keyfile_count is 0 and the hash is still computed.
+/// Throws InvalidArgument if the digest vector is empty.
 std::array<Byte, 32> mix_keyfile_digests(const std::vector<KeyfileDigest>& digests);
 
 // Derive the master seed from passphrase + mixed keyfile digest.

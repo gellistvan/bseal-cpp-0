@@ -41,13 +41,22 @@ Still unsafe or incomplete:
 ## Build requirements
 
 * CMake 3.24 or newer
-* A C++20 compiler
+* A C++20 compiler (GCC 11+, Clang 14+)
 * `pkg-config`
 * libsodium
 * OpenSSL crypto library
-* Optional: GoogleTest. If system GoogleTest is unavailable, the test tree can use the local lightweight compatibility harness.
+* [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) — bundled as a git submodule under `submodules/blake3` (dual-licensed CC0-1.0 / Apache-2.0 with LLVM exception; built automatically by CMake)
+* Optional: GoogleTest. If system GoogleTest is unavailable, the test tree falls back to the local lightweight compatibility harness.
 
 ## Build
+
+After cloning, initialise the git submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+Then configure and build:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
