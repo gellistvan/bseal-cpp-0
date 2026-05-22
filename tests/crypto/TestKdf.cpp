@@ -180,10 +180,10 @@ TEST(Kdf, HashKeyfilesChangesWhenContentChanges) {
     std::filesystem::remove_all(dir);
 }
 
-TEST(Kdf, HashKeyfilesRejectsEmptyList) {
-    EXPECT_TRUE((throws_exception<InvalidArgument>([] {
-        hash_keyfiles_blake3({});
-    })));
+TEST(Kdf, HashKeyfilesEmptyListReturnsEmptyVector) {
+    // Passphrase-only mode: empty keyfile list is valid and returns an empty vector.
+    const auto digests = hash_keyfiles_blake3({});
+    EXPECT_TRUE(digests.empty());
 }
 
 TEST(Kdf, HashKeyfilesRejectsMissingFile) {
@@ -227,10 +227,18 @@ TEST(Kdf, MixKeyfileDigestsIsOrderSensitive) {
     std::filesystem::remove_all(dir);
 }
 
-TEST(Kdf, MixKeyfileDigestsRejectsEmptyList) {
-    EXPECT_TRUE((throws_exception<InvalidArgument>([] {
-        mix_keyfile_digests({});
-    })));
+TEST(Kdf, MixKeyfileDigestsEmptyListProducesDeterministicZeroKeyfileMix) {
+    // Zero keyfiles: BLAKE3("BSEAL keyfile mix v1\0" || u32le(0)) — must be stable.
+    const auto mix_a = mix_keyfile_digests({});
+    const auto mix_b = mix_keyfile_digests({});
+    EXPECT_EQ(mix_a, mix_b);
+
+    // Must differ from a single-keyfile mix.
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(16, 0xAB));
+    const auto one_keyfile_mix = mix_keyfile_digests(hash_keyfiles_blake3({kf}));
+    EXPECT_NE(mix_a, one_keyfile_mix);
+    std::filesystem::remove_all(dir);
 }
 
 TEST(Kdf, DeriveMasterSeedIsDeterministicForSameInputs) {
@@ -295,13 +303,15 @@ TEST(Kdf, DeriveMasterSeedRejectsEmptyPassphrase) {
     std::filesystem::remove_all(dir);
 }
 
-TEST(Kdf, DeriveMasterSeedRejectsNoKeyfiles) {
+TEST(Kdf, DeriveMasterSeedPassphraseOnlySucceeds) {
+    // Zero keyfiles is valid — passphrase-only mode must produce a 32-byte seed.
     auto input = make_input({});
-    input.keyfiles.clear();
+    auto seed  = derive_master_seed(input);
+    EXPECT_EQ(seed.size(), 32u);
 
-    EXPECT_TRUE((throws_exception<InvalidArgument>([&] {
-        derive_master_seed(input);
-    })));
+    // Must be deterministic.
+    auto seed2 = derive_master_seed(input);
+    EXPECT_EQ(to_vector(seed), to_vector(seed2));
 }
 
 TEST(Kdf, DeriveMasterSeedRejectsTooSmallOutputLength) {

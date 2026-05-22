@@ -235,7 +235,9 @@ They are still untrusted until `header_mac` verifies. The only allowed v1 KDF pa
 
 A decryptor MUST reject values outside these limits before allocating Argon2 memory. A decryptor MAY also fail closed if local policy sets a lower maximum memory or parallelism limit; that failure is an unsupported-parameters failure, not a successful password check.
 
-Keyfile order is part of the KDF input. Keyfiles are hashed and mixed in the exact CLI order supplied by the user. The archive format does not store keyfile paths, names, counts, or digests.
+Keyfiles are optional. Zero keyfiles is a valid, explicitly supported mode: `keyfile_mix` is still computed from the domain string with `keyfile_count = 0`. An archive encrypted with no keyfiles cannot be distinguished from one that has keyfiles by examining the archive alone — the difference is entirely in the derived key material.
+
+When keyfiles are supplied, their order is part of the KDF input. Keyfiles are hashed and mixed in the exact CLI order supplied by the user. Adding, removing, or reordering a keyfile produces a different `keyfile_mix` and therefore a different master seed. The archive format does not store keyfile paths, names, counts, or digests.
 
 ## 8. Key derivation contract
 

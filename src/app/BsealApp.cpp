@@ -153,10 +153,6 @@ void require_directory(const std::filesystem::path& path, std::string_view descr
 }
 
 void require_keyfiles_exist(const std::vector<std::filesystem::path>& keyfiles) {
-    if (keyfiles.empty()) {
-        throw bseal::InvalidArgument("at least one --keyfile is required");
-    }
-
     for (const auto& keyfile : keyfiles) {
         require_path_exists(keyfile, "keyfile");
         if (!std::filesystem::is_regular_file(keyfile)) {

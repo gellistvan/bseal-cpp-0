@@ -646,6 +646,158 @@ TEST(BlackBoxCli, RefusesNonEmptyOutputDirectoryWithoutOverwrite) {
     EXPECT_EQ(restored_files.at("hello.txt"), read_file(input / "hello.txt"));
 }
 
+TEST(BlackBoxCli, PassphraseOnlyEncryptDecryptSucceeds) {
+    TempDir temp("bseal_integration_passphrase_only_roundtrip");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "secret.txt", "top secret contents");
+
+    // No --keyfile arguments.
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(),
+            "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+            "--chunk-size", "64K",
+            "--shard-size", "512K",
+            "--padding", "chunk",
+        },
+        "passphrase-only\n");
+
+    EXPECT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+    EXPECT_FALSE(list_bin_files(sealed).empty());
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(),
+            "--output", output.string(),
+        },
+        "passphrase-only\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    const auto restored = collect_regular_files(output);
+    EXPECT_EQ(restored.at("secret.txt"), read_file(input / "secret.txt"));
+}
+
+TEST(BlackBoxCli, PassphraseOnlyWrongPassphraseFails) {
+    TempDir temp("bseal_integration_passphrase_only_wrong_pass");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "some data");
+
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(),
+            "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+            "--chunk-size", "64K",
+            "--shard-size", "512K",
+            "--padding", "chunk",
+        },
+        "correct-passphrase\n");
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(),
+            "--output", output.string(),
+        },
+        "wrong-passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+}
+
+TEST(BlackBoxCli, PassphraseOnlyDecryptWithExtraKeyfileFails) {
+    TempDir temp("bseal_integration_passphrase_only_extra_keyfile");
+
+    const auto input   = temp.subdir("input");
+    const auto sealed  = temp.subdir("sealed");
+    const auto output  = temp.subdir("output");
+    const auto keyfile = temp.subdir("keys") / "extra.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "some data");
+    write_binary_file(keyfile, std::vector<std::uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
+
+    // Encrypt with passphrase only.
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(),
+            "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+            "--chunk-size", "64K",
+            "--shard-size", "512K",
+            "--padding", "chunk",
+        },
+        "passphrase\n");
+
+    // Decrypt with an extra keyfile that was not used during encryption.
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(),
+            "--output", output.string(),
+            "--keyfile", keyfile.string(),
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+}
+
+TEST(BlackBoxCli, KeyfileArchiveDecryptWithoutKeyfileFails) {
+    TempDir temp("bseal_integration_keyfile_required");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "some data");
+    create_keyfiles(key_a, key_b);
+
+    // Encrypt with two keyfiles.
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        encrypt_args(input, sealed, key_a, key_b),
+        "passphrase\n");
+
+    // Decrypt without any keyfile.
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(),
+            "--output", output.string(),
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+}
+
 TEST(BlackBoxCli, EmptyDirectoryCanBeEncryptedAndDecrypted) {
     TempDir temp("bseal_integration_empty_directory");
 

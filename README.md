@@ -118,6 +118,28 @@ bseal decrypt \
   --passphrase-prompt
 ```
 
+`--keyfile` is optional. Omitting it completely gives passphrase-only mode:
+
+```bash
+# Encrypt with passphrase only.
+bseal encrypt \
+  --input ./folder \
+  --output ./sealed \
+  --passphrase-prompt \
+  --suite xchacha20-poly1305 \
+  --kdf strong
+
+# Decrypt with passphrase only.
+bseal decrypt \
+  --input ./sealed \
+  --output ./restored \
+  --passphrase-prompt
+```
+
+Keyfile order matters: the archive will only decrypt when exactly the same keyfiles
+are supplied in exactly the same order. Adding, removing, or reordering a keyfile
+produces a different derived key and will fail authentication (exit code 3).
+
 If `--passphrase-prompt` is omitted, BSEAL reads one passphrase line from standard input.
 
 With `--passphrase-prompt`, it asks twice and rejects mismatches.
@@ -128,7 +150,7 @@ Common options:
 
 * `--input DIR`
 * `--output DIR`
-* `--keyfile FILE`, repeatable
+* `--keyfile FILE`, repeatable, optional (omit for passphrase-only mode)
 * `--passphrase-prompt`
 * `--verbose`, parsed but not yet a complete logging mode
 

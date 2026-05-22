@@ -62,8 +62,8 @@ void validate_kdf_params(const KdfParams& params);
 ///   keyfile_digest[i] = BLAKE3-256(
 ///       "BSEAL keyfile digest v1\0" || u64le(keyfile_size) || keyfile_bytes)
 ///
-/// Keyfile content is streamed in chunks; large keyfiles are not fully buffered.
-/// Throws InvalidArgument if the list is empty, a file is missing, or a file cannot be read.
+/// An empty list is valid (passphrase-only mode); returns an empty vector.
+/// Throws InvalidArgument if a file is missing or cannot be read.
 std::vector<KeyfileDigest> hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles);
 
 /// Mix ordered keyfile digests into a single 32-byte digest using BLAKE3-256 per FORMAT.md §8:
@@ -72,8 +72,7 @@ std::vector<KeyfileDigest> hash_keyfiles_blake3(const std::vector<std::filesyste
 ///       "BSEAL keyfile mix v1\0" || u32le(keyfile_count) || keyfile_digest[0] || ...)
 ///
 /// Order is significant: swapping keyfiles produces a different mix.
-/// If no keyfiles are supplied, keyfile_count is 0 and the hash is still computed.
-/// Throws InvalidArgument if the digest vector is empty.
+/// An empty vector is valid: keyfile_count is 0 and no digest bytes are hashed.
 std::array<Byte, 32> mix_keyfile_digests(const std::vector<KeyfileDigest>& digests);
 
 // Derive the master seed from passphrase + mixed keyfile digest.

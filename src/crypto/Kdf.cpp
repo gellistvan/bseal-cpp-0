@@ -245,10 +245,6 @@ void validate_kdf_params(const KdfParams& params) {
 
 std::vector<KeyfileDigest>
 hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
-    if (keyfiles.empty()) {
-        throw InvalidArgument("at least one keyfile is required");
-    }
-
     std::vector<KeyfileDigest> digests;
     digests.reserve(keyfiles.size());
 
@@ -307,11 +303,7 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
 
 std::array<Byte, 32>
 mix_keyfile_digests(const std::vector<KeyfileDigest>& digests) {
-    if (digests.empty()) {
-        throw InvalidArgument("at least one keyfile digest is required");
-    }
-
-    // FORMAT.md §8:
+    // FORMAT.md §8: zero-keyfile mode is valid — count=0, no digest bytes fed.
     //   keyfile_mix = BLAKE3-256(
     //       "BSEAL keyfile mix v1\0" || u32le(keyfile_count) || keyfile_digest[0] || ...)
     //
