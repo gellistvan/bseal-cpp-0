@@ -23,19 +23,22 @@ struct EncryptPipelineOptions {
 
     // Required for deterministic nonce derivation.
     // Must be the same archive_id that is present in the public header.
-    std::array<Byte, 16> archive_id{};
+    std::array<Byte, 32> archive_id{};  // Extended to 32 bytes per FORMAT.md §3.
 
-    // Hash of the immutable public header.
+    // Per-shard public_header_hash for AEAD AAD.  Indexed by shard_index.
     //
-    // This is used as AEAD AAD, binding encrypted chunks to the public container metadata.
-    // The owner of the pipeline should compute this after the public header is finalized.
+    // The caller must pre-compute these using compute_public_header_hash(global, shard)
+    // for each shard before encryption starts.  Workers look up the hash using the
+    // shard_index from the ChunkFrameHeaderV1.
+    //
+    // If empty the pipeline falls back to a single hash (legacy / test path only).
+    std::vector<std::array<Byte, 32>> per_shard_public_header_hashes;
+
+    // Fallback single hash used when per_shard_public_header_hashes is empty.
     std::array<Byte, 32> public_header_hash{};
 
-    // The current ShardWriter interface chooses physical shard placement internally.
-    // Therefore the pipeline binds chunks to global_chunk_index, not physical shard index.
-    //
-    // Keep this 0 unless the surrounding shard layer exposes deterministic per-chunk shard
-    // placement before encryption.
+    // aad_shard_index is kept for compatibility but ignored when
+    // per_shard_public_header_hashes is non-empty.
     std::uint32_t aad_shard_index{0};
 
     // Ensures even an otherwise empty archive emits one authenticated fixed-size chunk.

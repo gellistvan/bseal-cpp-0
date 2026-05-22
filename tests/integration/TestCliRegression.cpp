@@ -26,7 +26,9 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr std::size_t kChunkSizeBytes = 1024;
+// kChunkSizeBytes is used to size large-binary.dat so that it spans multiple
+// 64K chunks (the FORMAT.md minimum chunk size).  Must produce > 65536 bytes total.
+constexpr std::size_t kChunkSizeBytes = 65536;
 constexpr std::string_view kPassphrase = "integration passphrase\n";
 
 class TempDir {
@@ -109,8 +111,10 @@ void create_input_tree(const fs::path& root) {
   write_file(root / "normal.txt", "normal text file for bseal CLI regression\n");
   write_file(root / "empty.txt", "");
   write_file(root / "nested" / "child.txt", "nested file payload\n");
+  // large-binary.dat must be large enough to span multiple 64K chunks so that
+  // the multi-shard path is exercised.  2 * 64K + small overhead = 2+ chunks.
   write_binary_file(root / "large-binary.dat",
-                    deterministic_bytes(kChunkSizeBytes * 48u + 333u));
+                    deterministic_bytes(kChunkSizeBytes * 2u + 333u));
 }
 
 void create_keyfile(const fs::path& keyfile) {
@@ -289,8 +293,8 @@ std::vector<std::string> encrypt_args(const fs::path& input,
       "--keyfile", keyfile.string(),
       "--suite", "xchacha20-poly1305",
       "--kdf", "fast",
-      "--chunk-size", "1K",
-      "--shard-size", "4K",
+      "--chunk-size", "64K",   // minimum valid per FORMAT.md §3 (65536 bytes)
+      "--shard-size", "64K",   // 64K < one frame (65592 bytes) → forces a new shard per chunk
       "--padding", "chunk",
   };
 }

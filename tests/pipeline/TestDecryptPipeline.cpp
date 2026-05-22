@@ -19,7 +19,7 @@ TEST(DecryptPipeline, ThrowsWhenBackendIsNull) {
     std::filesystem::create_directories(sealed_root.path());
     std::filesystem::create_directories(output_root.path());
 
-    auto shard_reader = make_valid_test_shard_reader( input_root.path(), sealed_root.path(), 128);
+    auto shard_reader = make_valid_test_shard_reader(input_root.path(), sealed_root.path());
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{
@@ -31,7 +31,7 @@ TEST(DecryptPipeline, ThrowsWhenBackendIsNull) {
         });
 
     DecryptPipeline pipeline(
-        make_decrypt_options(128),
+        make_decrypt_options(),
         nullptr,
         make_test_keys(),
         std::move(shard_reader),
@@ -49,10 +49,10 @@ TEST(DecryptPipeline, ThrowsWhenChunkSizeIsZero) {
     std::filesystem::create_directories(output_root.path());
 
 
-    auto options = make_decrypt_options(128);
+    auto options = make_decrypt_options();
     options.chunk_plain_size = 0;
 
-    auto shard_reader = make_valid_test_shard_reader( input_root.path(), sealed_root.path(), 128);
+    auto shard_reader = make_valid_test_shard_reader(input_root.path(), sealed_root.path());
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{
@@ -81,7 +81,7 @@ TEST(DecryptPipeline, ThrowsWhenChunkKeySizeDoesNotMatchBackend) {
     std::filesystem::create_directories(sealed_root.path());
     std::filesystem::create_directories(output_root.path());
 
-    auto shard_reader = make_valid_test_shard_reader( input_root.path(), sealed_root.path(), 128);
+    auto shard_reader = make_valid_test_shard_reader(input_root.path(), sealed_root.path());
 
 
     auto keys = make_test_keys();
@@ -97,7 +97,7 @@ TEST(DecryptPipeline, ThrowsWhenChunkKeySizeDoesNotMatchBackend) {
         });
 
     DecryptPipeline pipeline(
-        make_decrypt_options(128),
+        make_decrypt_options(),
         std::make_unique<TestAeadBackend>(),
         std::move(keys),
         std::move(shard_reader),
@@ -165,10 +165,10 @@ TEST(DecryptPipeline, PropagatesAuthenticationFailureAndDoesNotFinishRestore) {
         });
 
     DecryptPipeline pipeline(
-        make_decrypt_options(128),
+        make_decrypt_options(),
         std::make_unique<TestAeadBackend>(
             TestAeadBackend::invalid_index(),
-            1),
+            0), // fail on the first chunk (index 0)
         make_test_keys(),
         std::move(shard_reader),
         std::move(archive_reader));
@@ -200,7 +200,7 @@ TEST(DecryptPipeline, FailsWhenCiphertextIsModified) {
         });
 
     DecryptPipeline pipeline(
-        make_decrypt_options(128),
+        make_decrypt_options(),
         std::make_unique<TestAeadBackend>(),
         make_test_keys(),
         std::move(shard_reader),

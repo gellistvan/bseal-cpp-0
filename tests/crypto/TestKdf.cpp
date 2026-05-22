@@ -86,8 +86,9 @@ std::array<Byte, 32> make_salt() {
     return salt;
 }
 
-std::array<Byte, 16> make_archive_id() {
-    std::array<Byte, 16> id{};
+// archive_id is 32 bytes per FORMAT.md §3.
+std::array<Byte, 32> make_archive_id() {
+    std::array<Byte, 32> id{};
     for (std::size_t i = 0; i < id.size(); ++i) {
         id[i] = static_cast<Byte>(0x70u + static_cast<Byte>(i * 3u));
     }
@@ -97,7 +98,7 @@ std::array<Byte, 16> make_archive_id() {
 KdfParams small_test_kdf_params() {
     return KdfParams{
         KdfPreset::Custom,
-        64, // 64 KiB; intentionally small for unit tests.
+        bseal::crypto::kArgon2MemoryKiBMin, // minimum valid value per FORMAT.md §7
         1,
         1,
         32

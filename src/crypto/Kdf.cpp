@@ -149,9 +149,9 @@ SecureBuffer hkdf_sha256(ConstByteSpan ikm,
 
 std::array<Byte, crypto_pwhash_SALTBYTES>
 derive_argon2_salt(const std::array<Byte, 32>& kdf_salt,
-                   const std::array<Byte, 16>& archive_id) {
+                   const std::array<Byte, 32>& archive_id) {
     Bytes framed;
-    framed.reserve(32 + 16);
+    framed.reserve(32 + 32);
     framed.insert(framed.end(), kdf_salt.begin(), kdf_salt.end());
     framed.insert(framed.end(), archive_id.begin(), archive_id.end());
 
