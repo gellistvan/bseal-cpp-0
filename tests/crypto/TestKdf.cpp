@@ -86,8 +86,9 @@ std::array<Byte, 32> make_salt() {
     return salt;
 }
 
-std::array<Byte, 16> make_archive_id() {
-    std::array<Byte, 16> id{};
+// archive_id is 32 bytes per FORMAT.md §3.
+std::array<Byte, 32> make_archive_id() {
+    std::array<Byte, 32> id{};
     for (std::size_t i = 0; i < id.size(); ++i) {
         id[i] = static_cast<Byte>(0x70u + static_cast<Byte>(i * 3u));
     }
@@ -97,7 +98,7 @@ std::array<Byte, 16> make_archive_id() {
 KdfParams small_test_kdf_params() {
     return KdfParams{
         KdfPreset::Custom,
-        64, // 64 KiB; intentionally small for unit tests.
+        bseal::crypto::kArgon2MemoryKiBMin, // minimum valid value per FORMAT.md §7
         1,
         1,
         32
@@ -179,10 +180,10 @@ TEST(Kdf, HashKeyfilesChangesWhenContentChanges) {
     std::filesystem::remove_all(dir);
 }
 
-TEST(Kdf, HashKeyfilesRejectsEmptyList) {
-    EXPECT_TRUE((throws_exception<InvalidArgument>([] {
-        hash_keyfiles_blake3({});
-    })));
+TEST(Kdf, HashKeyfilesEmptyListReturnsEmptyVector) {
+    // Passphrase-only mode: empty keyfile list is valid and returns an empty vector.
+    const auto digests = hash_keyfiles_blake3({});
+    EXPECT_TRUE(digests.empty());
 }
 
 TEST(Kdf, HashKeyfilesRejectsMissingFile) {
@@ -226,10 +227,18 @@ TEST(Kdf, MixKeyfileDigestsIsOrderSensitive) {
     std::filesystem::remove_all(dir);
 }
 
-TEST(Kdf, MixKeyfileDigestsRejectsEmptyList) {
-    EXPECT_TRUE((throws_exception<InvalidArgument>([] {
-        mix_keyfile_digests({});
-    })));
+TEST(Kdf, MixKeyfileDigestsEmptyListProducesDeterministicZeroKeyfileMix) {
+    // Zero keyfiles: BLAKE3("BSEAL keyfile mix v1\0" || u32le(0)) — must be stable.
+    const auto mix_a = mix_keyfile_digests({});
+    const auto mix_b = mix_keyfile_digests({});
+    EXPECT_EQ(mix_a, mix_b);
+
+    // Must differ from a single-keyfile mix.
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(16, 0xAB));
+    const auto one_keyfile_mix = mix_keyfile_digests(hash_keyfiles_blake3({kf}));
+    EXPECT_NE(mix_a, one_keyfile_mix);
+    std::filesystem::remove_all(dir);
 }
 
 TEST(Kdf, DeriveMasterSeedIsDeterministicForSameInputs) {
@@ -294,13 +303,15 @@ TEST(Kdf, DeriveMasterSeedRejectsEmptyPassphrase) {
     std::filesystem::remove_all(dir);
 }
 
-TEST(Kdf, DeriveMasterSeedRejectsNoKeyfiles) {
+TEST(Kdf, DeriveMasterSeedPassphraseOnlySucceeds) {
+    // Zero keyfiles is valid — passphrase-only mode must produce a 32-byte seed.
     auto input = make_input({});
-    input.keyfiles.clear();
+    auto seed  = derive_master_seed(input);
+    EXPECT_EQ(seed.size(), 32u);
 
-    EXPECT_TRUE((throws_exception<InvalidArgument>([&] {
-        derive_master_seed(input);
-    })));
+    // Must be deterministic.
+    auto seed2 = derive_master_seed(input);
+    EXPECT_EQ(to_vector(seed), to_vector(seed2));
 }
 
 TEST(Kdf, DeriveMasterSeedRejectsTooSmallOutputLength) {
@@ -383,4 +394,269 @@ TEST(KdfParamValidation, AcceptsValidPresetParams) {
     EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Fast)));
     EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Strong)));
     EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Paranoid)));
+}
+
+// ---------------------------------------------------------------------------
+// BLAKE3-256 deterministic test vectors (FORMAT.md §8)
+//
+// These vectors were computed independently using the canonical BLAKE3 C
+// library with no application-layer code, then hardcoded here.  Any
+// regression in Kdf.cpp that changes the hash function, domain string, or
+// length framing will cause these tests to fail.
+//
+// How to regenerate: compile third_party/blake3 with the same domain strings
+// used in Kdf.cpp and feed the same inputs.  The reference program used to
+// produce these vectors is in tests/crypto/blake3_reference_vectors.c (not
+// compiled into the test suite; kept as documentation only).
+// ---------------------------------------------------------------------------
+
+// Expected BLAKE3-256 digests produced by hash_keyfiles_blake3() per FORMAT.md §8:
+//   BLAKE3-256("BSEAL keyfile digest v1\0" || u64le(size) || bytes)
+
+// Zero-length keyfile.
+static constexpr std::array<Byte, 32> kVecDigestEmpty = {{
+    0x83, 0xd3, 0x93, 0xd2, 0x6c, 0x2d, 0x07, 0xb0, 0xa2, 0x7b, 0x49, 0x02, 0xbd, 0x58, 0x3a, 0x34,
+    0x05, 0x1e, 0x52, 0xe5, 0x31, 0x8b, 0xe3, 0xc4, 0x18, 0xca, 0x53, 0x73, 0x9f, 0x4e, 0x26, 0x24,
+}};
+
+// Keyfile containing exactly b"hello" (5 bytes).
+static constexpr std::array<Byte, 32> kVecDigestHello = {{
+    0x6c, 0x5f, 0x1a, 0xc4, 0x22, 0x29, 0xba, 0x1b, 0x33, 0x12, 0x28, 0xe7, 0x50, 0xc3, 0x94, 0x44,
+    0xcc, 0x37, 0xbd, 0xe0, 0xac, 0xd5, 0x55, 0x88, 0x98, 0x4a, 0x1b, 0x81, 0x03, 0xe3, 0xf1, 0xf5,
+}};
+
+// Keyfile containing exactly b"world" (5 bytes).
+static constexpr std::array<Byte, 32> kVecDigestWorld = {{
+    0xf7, 0x92, 0x54, 0xc4, 0xc6, 0x11, 0xe0, 0x15, 0x89, 0x17, 0xdf, 0x63, 0x8a, 0x84, 0x4d, 0x4c,
+    0x4e, 0xb0, 0x17, 0x5c, 0x4a, 0xbb, 0x33, 0xb9, 0xfe, 0x83, 0x18, 0x9a, 0x24, 0x55, 0x6b, 0xd5,
+}};
+
+// Expected BLAKE3-256 mixes produced by mix_keyfile_digests() per FORMAT.md §8:
+//   BLAKE3-256("BSEAL keyfile mix v1\0" || u32le(count) || digest[0] || ...)
+
+// mix([hello]).
+static constexpr std::array<Byte, 32> kVecMixHello = {{
+    0x99, 0x5c, 0xdd, 0x96, 0xdf, 0x12, 0x72, 0x94, 0xda, 0xf5, 0x32, 0x99, 0x29, 0xf7, 0x4a, 0xfd,
+    0x7a, 0xc2, 0x8e, 0x02, 0x37, 0xe4, 0x10, 0x39, 0x0a, 0x52, 0x42, 0xf0, 0x91, 0x68, 0x70, 0x44,
+}};
+
+// mix([hello, world]).
+static constexpr std::array<Byte, 32> kVecMixHelloWorld = {{
+    0x9a, 0x77, 0x46, 0x27, 0x10, 0xc4, 0xdf, 0xd8, 0x87, 0xbf, 0xc5, 0xe2, 0xd0, 0xad, 0x21, 0x58,
+    0xc8, 0xee, 0xaa, 0x43, 0x63, 0xc9, 0xf2, 0xaa, 0x1f, 0xd3, 0xf5, 0x9e, 0x38, 0xb3, 0x2a, 0xf4,
+}};
+
+// mix([world, hello]) — must differ from mix([hello, world]).
+static constexpr std::array<Byte, 32> kVecMixWorldHello = {{
+    0x92, 0x2d, 0x62, 0x18, 0xc2, 0x22, 0x26, 0x65, 0x80, 0xba, 0x0c, 0x98, 0x8f, 0xf1, 0x09, 0x6e,
+    0x76, 0x18, 0x59, 0x62, 0xe1, 0x2a, 0x93, 0x98, 0x66, 0x02, 0xaf, 0x09, 0x40, 0x08, 0xbe, 0x83,
+}};
+
+// BLAKE2b output that the old (wrong) implementation produced for b"hello".
+// The new implementation MUST produce a different value — proving it actually
+// uses BLAKE3, not BLAKE2b.
+static constexpr std::array<Byte, 32> kVecBlake2bHelloOldWrong = {{
+    0x89, 0x36, 0x66, 0xe1, 0x2f, 0xa2, 0x58, 0x73, 0xeb, 0x37, 0xf9, 0xf8, 0xe7, 0x06, 0xb4, 0x8b,
+    0x58, 0xf3, 0x2c, 0xad, 0x53, 0xc9, 0xca, 0x42, 0x97, 0x78, 0x11, 0xa8, 0x2c, 0x65, 0xe3, 0xdd,
+}};
+
+TEST(Kdf_HashKeyfilesBlake3_Vectors, ZeroLengthKeyfileMatchesExpectedDigest) {
+    const auto dir = unique_test_dir();
+    // Write a zero-length file.
+    const auto path = write_keyfile(dir, "empty.bin", {});
+
+    const auto digests = hash_keyfiles_blake3({path});
+
+    ASSERT_EQ(digests.size(), 1u);
+    EXPECT_EQ(digests[0].digest, kVecDigestEmpty)
+        << "zero-length keyfile digest does not match FORMAT.md §8 BLAKE3-256 vector";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_HashKeyfilesBlake3_Vectors, HelloKeyfileMatchesExpectedDigest) {
+    const auto dir = unique_test_dir();
+    const Bytes hello_bytes = {'h', 'e', 'l', 'l', 'o'};
+    const auto path = write_keyfile(dir, "hello.bin", hello_bytes);
+
+    const auto digests = hash_keyfiles_blake3({path});
+
+    ASSERT_EQ(digests.size(), 1u);
+    EXPECT_EQ(digests[0].digest, kVecDigestHello)
+        << "b\"hello\" keyfile digest does not match FORMAT.md §8 BLAKE3-256 vector";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_HashKeyfilesBlake3_Vectors, HelloKeyfileDigestDiffersFromBlake2bOutput) {
+    // Behavioral proof that hash_keyfiles_blake3() is NOT using BLAKE2b
+    // (libsodium crypto_generichash).  If this fails the implementation has
+    // regressed back to the wrong hash function.
+    const auto dir = unique_test_dir();
+    const Bytes hello_bytes = {'h', 'e', 'l', 'l', 'o'};
+    const auto path = write_keyfile(dir, "hello.bin", hello_bytes);
+
+    const auto digests = hash_keyfiles_blake3({path});
+
+    ASSERT_EQ(digests.size(), 1u);
+    EXPECT_NE(digests[0].digest, kVecBlake2bHelloOldWrong)
+        << "hash_keyfiles_blake3() returned a BLAKE2b digest — wrong hash function in use";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_MixKeyfileDigests_Vectors, SingleHelloMatchesExpectedMix) {
+    const auto dir = unique_test_dir();
+    const Bytes hello_bytes = {'h', 'e', 'l', 'l', 'o'};
+    const auto path = write_keyfile(dir, "hello.bin", hello_bytes);
+
+    const auto digests = hash_keyfiles_blake3({path});
+    const auto mix = mix_keyfile_digests(digests);
+
+    EXPECT_EQ(mix, kVecMixHello)
+        << "single-keyfile mix does not match FORMAT.md §8 BLAKE3-256 vector";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_MixKeyfileDigests_Vectors, TwoKeyfilesABMatchesExpectedMix) {
+    const auto dir = unique_test_dir();
+    const Bytes hello_bytes = {'h', 'e', 'l', 'l', 'o'};
+    const Bytes world_bytes = {'w', 'o', 'r', 'l', 'd'};
+    const auto path_a = write_keyfile(dir, "a_hello.bin", hello_bytes);
+    const auto path_b = write_keyfile(dir, "b_world.bin", world_bytes);
+
+    const auto digests = hash_keyfiles_blake3({path_a, path_b});
+    const auto mix = mix_keyfile_digests(digests);
+
+    EXPECT_EQ(mix, kVecMixHelloWorld)
+        << "two-keyfile mix [hello, world] does not match FORMAT.md §8 BLAKE3-256 vector";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_MixKeyfileDigests_Vectors, TwoKeyfilesBAMatchesExpectedMixAndDiffersFromAB) {
+    const auto dir = unique_test_dir();
+    const Bytes hello_bytes = {'h', 'e', 'l', 'l', 'o'};
+    const Bytes world_bytes = {'w', 'o', 'r', 'l', 'd'};
+    const auto path_a = write_keyfile(dir, "a_hello.bin", hello_bytes);
+    const auto path_b = write_keyfile(dir, "b_world.bin", world_bytes);
+
+    // B then A — reversed order must produce a different, deterministic digest.
+    const auto digests_ba = hash_keyfiles_blake3({path_b, path_a});
+    const auto mix_ba = mix_keyfile_digests(digests_ba);
+
+    EXPECT_EQ(mix_ba, kVecMixWorldHello)
+        << "two-keyfile mix [world, hello] does not match FORMAT.md §8 BLAKE3-256 vector";
+
+    EXPECT_NE(mix_ba, kVecMixHelloWorld)
+        << "mix([world, hello]) must differ from mix([hello, world]) — order must matter";
+
+    std::filesystem::remove_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// Real-parallelism Argon2id tests (FORMAT.md §7, §8)
+//
+// These tests verify that all three KDF cost parameters (memory, iterations,
+// parallelism) are genuinely honored by derive_master_seed().  Each test
+// changes exactly one parameter and asserts that the output differs.
+// ---------------------------------------------------------------------------
+
+TEST(KdfParamValidation, RejectsParallelismBelowMinBeforeExpensiveWork) {
+    // validate_kdf_params() must reject out-of-range parallelism before any
+    // Argon2id work is attempted.
+    KdfParams params = preset_params(KdfPreset::Fast);
+    params.parallelism = 0;
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, RejectsParallelismAboveMaxBeforeExpensiveWork) {
+    KdfParams params = preset_params(KdfPreset::Fast);
+    params.parallelism = bseal::crypto::kArgon2ParallelismMax + 1u;
+    EXPECT_THROW(validate_kdf_params(params), InvalidArgument);
+}
+
+TEST(KdfParamValidation, AcceptsMaxParallelism) {
+    KdfParams params = small_test_kdf_params();
+    params.parallelism = bseal::crypto::kArgon2ParallelismMax;
+    EXPECT_NO_THROW(validate_kdf_params(params));
+}
+
+TEST(KdfPresetParams, FastPresetMatchesFormatSpec) {
+    // FORMAT.md §7 / preset_params() contract: Fast = 256 MiB, 3 iterations, parallelism 4.
+    const auto p = preset_params(KdfPreset::Fast);
+    EXPECT_EQ(p.memory_kib, 256u * 1024u);
+    EXPECT_EQ(p.iterations, 3u);
+    EXPECT_EQ(p.parallelism, 4u);
+    EXPECT_EQ(p.output_bytes, bseal::crypto::kArgon2OutputBytesDefault);
+}
+
+TEST(KdfPresetParams, StrongPresetMatchesFormatSpec) {
+    // FORMAT.md §7 / preset_params() contract: Strong = 1 GiB, 3 iterations, parallelism 4.
+    const auto p = preset_params(KdfPreset::Strong);
+    EXPECT_EQ(p.memory_kib, 1024u * 1024u);
+    EXPECT_EQ(p.iterations, 3u);
+    EXPECT_EQ(p.parallelism, 4u);
+    EXPECT_EQ(p.output_bytes, bseal::crypto::kArgon2OutputBytesDefault);
+}
+
+TEST(KdfPresetParams, ParanoidPresetMatchesFormatSpec) {
+    // FORMAT.md §7 / preset_params() contract: Paranoid = 2 GiB, 4 iterations, parallelism 8.
+    const auto p = preset_params(KdfPreset::Paranoid);
+    EXPECT_EQ(p.memory_kib, 2u * 1024u * 1024u);
+    EXPECT_EQ(p.iterations, 4u);
+    EXPECT_EQ(p.parallelism, 8u);
+    EXPECT_EQ(p.output_bytes, bseal::crypto::kArgon2OutputBytesDefault);
+}
+
+TEST(Kdf_RealParallelism, ChangingParallelismChangesMasterSeed) {
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(32, 0xAA));
+
+    auto input = make_input({kf});
+    input.params.parallelism = 1;
+    const auto seed_p1 = to_vector(derive_master_seed(input));
+
+    input.params.parallelism = 2;
+    const auto seed_p2 = to_vector(derive_master_seed(input));
+
+    EXPECT_NE(seed_p1, seed_p2)
+        << "parallelism=1 and parallelism=2 must derive different master seeds";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_RealParallelism, ChangingIterationsChangesMasterSeed) {
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(32, 0xBB));
+
+    auto input = make_input({kf});
+    input.params.iterations = 1;
+    const auto seed_i1 = to_vector(derive_master_seed(input));
+
+    input.params.iterations = 2;
+    const auto seed_i2 = to_vector(derive_master_seed(input));
+
+    EXPECT_NE(seed_i1, seed_i2)
+        << "iterations=1 and iterations=2 must derive different master seeds";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf_RealParallelism, ChangingMemoryChangesMasterSeed) {
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(32, 0xCC));
+
+    auto input = make_input({kf});
+    input.params.memory_kib = bseal::crypto::kArgon2MemoryKiBMin;
+    const auto seed_m1 = to_vector(derive_master_seed(input));
+
+    input.params.memory_kib = bseal::crypto::kArgon2MemoryKiBMin * 2u;
+    const auto seed_m2 = to_vector(derive_master_seed(input));
+
+    EXPECT_NE(seed_m1, seed_m2)
+        << "different memory costs must derive different master seeds";
+
+    std::filesystem::remove_all(dir);
 }

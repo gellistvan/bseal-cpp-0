@@ -1,5 +1,7 @@
-#include "archive/PublicHeaderAuth.hpp"
+/// Tests for the new per-shard compute_public_header_hash and
+/// compute_shard_header_mac / verify_shard_header_mac functions (FORMAT.md §5, §6).
 
+#include "io/ShardFrame.hpp"
 #include "crypto/Kdf.hpp"
 #include "crypto/KeySchedule.hpp"
 
@@ -59,50 +61,83 @@ void write_keyfile(const fs::path& path, std::initializer_list<unsigned char> by
     ASSERT_TRUE(out);
 }
 
-bseal::archive::PublicHeaderV1 make_header()
+/// Build a minimal but valid GlobalPublicHeaderV1 suitable for testing.
+bseal::io::GlobalPublicHeaderV1 make_global_header()
 {
-    bseal::archive::PublicHeaderV1 header{};
-    header.version = 1;
-    header.suite_id = 1;
-    header.header_len =
-        static_cast<std::uint32_t>(bseal::archive::kPublicHeaderV1SerializedSize);
-    header.shard_index = 3;
-    header.argon2_memory_kib = bseal::crypto::kArgon2MemoryKiBMin;
-    header.argon2_iterations = 1;
-    header.argon2_parallelism = 1;
-    header.chunk_plain_size = 64 * 1024;
-    header.shard_payload_size = 4 * 1024 * 1024;
+    bseal::io::GlobalPublicHeaderV1 h{};
+    h.magic            = bseal::io::kGlobalHeaderV1Magic;
+    h.format_major     = 1;
+    h.format_minor     = 0;
+    h.global_header_len = static_cast<std::uint32_t>(bseal::io::kGlobalPublicHeaderV1Size);
+    h.shard_header_len  = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
+    h.frame_header_len  = static_cast<std::uint16_t>(bseal::io::kChunkFrameHeaderV1Size);
+    h.global_flags      = 0;
 
-    for (std::size_t i = 0; i < header.archive_id.size(); ++i) {
-        header.archive_id[i] = static_cast<bseal::Byte>(0xA0u + i);
+    for (std::size_t i = 0; i < h.archive_id.size(); ++i) {
+        h.archive_id[i] = static_cast<bseal::Byte>(0xA0u + i);
     }
 
-    for (std::size_t i = 0; i < header.kdf_salt.size(); ++i) {
-        header.kdf_salt[i] = static_cast<bseal::Byte>(0x10u + i);
+    h.aead_alg_id  = bseal::io::kAeadAlgIdXChaCha20Poly1305;
+    h.kdf_alg_id   = bseal::io::kKdfAlgIdArgon2idHkdf;
+    h.hash_alg_id  = bseal::io::kHashAlgIdBlake3;
+    h.mac_alg_id   = bseal::io::kMacAlgIdHmacSha256;
+
+    for (std::size_t i = 0; i < h.kdf_salt.size(); ++i) {
+        h.kdf_salt[i] = static_cast<bseal::Byte>(0x10u + i);
     }
 
-    header.header_mac.fill(bseal::Byte{0});
-    return header;
+    h.argon2_version     = 0x13;
+    h.argon2_memory_kib  = bseal::crypto::kArgon2MemoryKiBMin;
+    h.argon2_iterations  = 1;
+    h.argon2_parallelism = 1;
+    h.chunk_plain_size   = 65536;    // 64 KiB — minimum power-of-two
+    h.shard_count        = 1;
+    h.global_chunk_count = 1;
+    h.padded_plaintext_size     = 65536;
+    h.final_plaintext_chunk_len = 65536;
+    h.padding_policy_id         = 0;
+    h.reserved0                 = 0;
+    h.padding_policy_value      = 0;
+    h.max_shard_payload_len     = 4 * 1024 * 1024;
+    h.required_feature_flags    = 0;
+    h.reserved1.fill(bseal::Byte{0});
+    return h;
+}
+
+bseal::io::ShardPublicHeaderV1 make_shard_header(
+    std::uint32_t shard_index   = 0,
+    std::uint64_t payload_len   = 65536 + 40 + 16) // chunk_plain_size + frame_header + tag
+{
+    bseal::io::ShardPublicHeaderV1 sh{};
+    sh.shard_magic             = bseal::io::kShardHeaderV1Magic;
+    sh.shard_header_len        = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
+    sh.shard_index             = shard_index;
+    sh.first_global_chunk_index = 0;
+    sh.shard_chunk_count       = 1;
+    sh.shard_payload_len       = payload_len;
+    sh.reserved0               = 0;
+    sh.header_mac.fill(bseal::Byte{0});
+    return sh;
 }
 
 bseal::crypto::ExpandedKeys derive_keys(
-    const bseal::archive::PublicHeaderV1& header,
+    const bseal::io::GlobalPublicHeaderV1& gh,
     std::string passphrase,
     const std::vector<fs::path>& keyfiles)
 {
     bseal::crypto::KdfParams params{};
-    params.preset = bseal::crypto::KdfPreset::Custom;
-    params.memory_kib = header.argon2_memory_kib;
-    params.iterations = header.argon2_iterations;
-    params.parallelism = header.argon2_parallelism;
-    params.output_bytes = bseal::crypto::kArgon2OutputBytesDefault;
+    params.preset        = bseal::crypto::KdfPreset::Custom;
+    params.memory_kib    = gh.argon2_memory_kib;
+    params.iterations    = gh.argon2_iterations;
+    params.parallelism   = gh.argon2_parallelism;
+    params.output_bytes  = bseal::crypto::kArgon2OutputBytesDefault;
 
     bseal::crypto::KdfInput input{};
     input.passphrase_utf8 = std::move(passphrase);
-    input.keyfiles = keyfiles;
-    input.salt = header.kdf_salt;
-    input.archive_id = header.archive_id;
-    input.params = params;
+    input.keyfiles        = keyfiles;
+    input.salt            = gh.kdf_salt;
+    input.archive_id      = gh.archive_id;
+    input.params          = params;
 
     auto master_seed = bseal::crypto::derive_master_seed(input);
     return bseal::crypto::expand_keys(
@@ -112,24 +147,161 @@ bseal::crypto::ExpandedKeys derive_keys(
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// public_header_hash tests
+// ---------------------------------------------------------------------------
+
+TEST(PublicHeaderAuth, HashIsDeterministic)
+{
+    const auto gh = make_global_header();
+    const auto sh = make_shard_header();
+
+    const auto h1 = bseal::io::compute_public_header_hash(gh, sh);
+    const auto h2 = bseal::io::compute_public_header_hash(gh, sh);
+    EXPECT_EQ(h1, h2);
+}
+
+TEST(PublicHeaderAuth, HashIsZeroedMacIndependent)
+{
+    const auto gh = make_global_header();
+    auto sh1 = make_shard_header();
+    auto sh2 = make_shard_header();
+    sh2.header_mac.fill(bseal::Byte{0xFF}); // should not affect hash
+
+    const auto h1 = bseal::io::compute_public_header_hash(gh, sh1);
+    const auto h2 = bseal::io::compute_public_header_hash(gh, sh2);
+    EXPECT_EQ(h1, h2);
+}
+
+TEST(PublicHeaderAuth, HashChangesByShardPayloadLen)
+{
+    const auto gh  = make_global_header();
+    const auto sh1 = make_shard_header(0, 1000);
+    const auto sh2 = make_shard_header(0, 2000);
+
+    const auto h1 = bseal::io::compute_public_header_hash(gh, sh1);
+    const auto h2 = bseal::io::compute_public_header_hash(gh, sh2);
+    EXPECT_NE(h1, h2);
+}
+
+TEST(PublicHeaderAuth, HashChangesByArchiveId)
+{
+    auto gh1 = make_global_header();
+    auto gh2 = make_global_header();
+    gh2.archive_id[0] ^= bseal::Byte{0x01};
+
+    const auto sh = make_shard_header();
+    const auto h1 = bseal::io::compute_public_header_hash(gh1, sh);
+    const auto h2 = bseal::io::compute_public_header_hash(gh2, sh);
+    EXPECT_NE(h1, h2);
+}
+
+// ---------------------------------------------------------------------------
+// header_mac tests
+// ---------------------------------------------------------------------------
+
+TEST(PublicHeaderAuth, CorrectKeyVerifiesMac)
+{
+    const auto gh = make_global_header();
+    auto sh = make_shard_header();
+
+    std::array<bseal::Byte, 32> key{};
+    key.fill(bseal::Byte{0x42});
+
+    sh.header_mac = bseal::io::compute_shard_header_mac(
+        bseal::ConstByteSpan{key.data(), key.size()}, gh, sh);
+
+    EXPECT_TRUE(bseal::io::verify_shard_header_mac(
+        bseal::ConstByteSpan{key.data(), key.size()}, gh, sh));
+}
+
+TEST(PublicHeaderAuth, WrongKeyFailsMacVerification)
+{
+    const auto gh = make_global_header();
+    auto sh = make_shard_header();
+
+    std::array<bseal::Byte, 32> correct_key{};
+    correct_key.fill(bseal::Byte{0x42});
+
+    std::array<bseal::Byte, 32> wrong_key{};
+    wrong_key.fill(bseal::Byte{0x43});
+
+    sh.header_mac = bseal::io::compute_shard_header_mac(
+        bseal::ConstByteSpan{correct_key.data(), correct_key.size()}, gh, sh);
+
+    EXPECT_FALSE(bseal::io::verify_shard_header_mac(
+        bseal::ConstByteSpan{wrong_key.data(), wrong_key.size()}, gh, sh));
+}
+
+TEST(PublicHeaderAuth, ChangingArchiveIdFailsMacVerification)
+{
+    auto gh = make_global_header();
+    auto sh = make_shard_header();
+
+    std::array<bseal::Byte, 32> key{};
+    key.fill(bseal::Byte{0x42});
+
+    sh.header_mac = bseal::io::compute_shard_header_mac(
+        bseal::ConstByteSpan{key.data(), key.size()}, gh, sh);
+
+    gh.archive_id[0] ^= bseal::Byte{0x01};
+
+    EXPECT_FALSE(bseal::io::verify_shard_header_mac(
+        bseal::ConstByteSpan{key.data(), key.size()}, gh, sh));
+}
+
+TEST(PublicHeaderAuth, ChangingKdfSaltFailsMacVerification)
+{
+    auto gh = make_global_header();
+    auto sh = make_shard_header();
+
+    std::array<bseal::Byte, 32> key{};
+    key.fill(bseal::Byte{0x42});
+
+    sh.header_mac = bseal::io::compute_shard_header_mac(
+        bseal::ConstByteSpan{key.data(), key.size()}, gh, sh);
+
+    gh.kdf_salt[0] ^= bseal::Byte{0x01};
+
+    EXPECT_FALSE(bseal::io::verify_shard_header_mac(
+        bseal::ConstByteSpan{key.data(), key.size()}, gh, sh));
+}
+
+TEST(PublicHeaderAuth, ChangingChunkSizeFailsMacVerification)
+{
+    auto gh = make_global_header();
+    auto sh = make_shard_header();
+
+    std::array<bseal::Byte, 32> key{};
+    key.fill(bseal::Byte{0x42});
+
+    sh.header_mac = bseal::io::compute_shard_header_mac(
+        bseal::ConstByteSpan{key.data(), key.size()}, gh, sh);
+
+    gh.chunk_plain_size *= 2; // tamper
+
+    EXPECT_FALSE(bseal::io::verify_shard_header_mac(
+        bseal::ConstByteSpan{key.data(), key.size()}, gh, sh));
+}
+
 TEST(PublicHeaderAuth, CorrectPassphraseAndKeyfileVerify)
 {
     TempDir temp("bseal_header_mac_correct");
     const auto keyfile = temp.path("keys/key.bin");
     write_keyfile(keyfile, {0x10, 0x20, 0x30, 0x40, 0x50});
 
-    const auto header = make_header();
-    auto keys = derive_keys(header, "correct passphrase", {keyfile});
+    const auto gh = make_global_header();
+    auto sh = make_shard_header();
 
-    const auto finalized = bseal::archive::finalize_public_header(
-        header,
-        keys.header_authentication_key.as_span());
+    auto keys = derive_keys(gh, "correct passphrase", {keyfile});
 
-    auto verify_keys = derive_keys(header, "correct passphrase", {keyfile});
+    sh.header_mac = bseal::io::compute_shard_header_mac(
+        keys.header_authentication_key.as_span(), gh, sh);
 
-    EXPECT_TRUE(bseal::archive::verify_header_mac(
-        finalized,
-        verify_keys.header_authentication_key.as_span()));
+    auto verify_keys = derive_keys(gh, "correct passphrase", {keyfile});
+
+    EXPECT_TRUE(bseal::io::verify_shard_header_mac(
+        verify_keys.header_authentication_key.as_span(), gh, sh));
 }
 
 TEST(PublicHeaderAuth, WrongPassphraseFailsAtHeaderMacVerification)
@@ -138,88 +310,15 @@ TEST(PublicHeaderAuth, WrongPassphraseFailsAtHeaderMacVerification)
     const auto keyfile = temp.path("keys/key.bin");
     write_keyfile(keyfile, {0x10, 0x20, 0x30, 0x40, 0x50});
 
-    const auto header = make_header();
-    auto correct_keys = derive_keys(header, "correct passphrase", {keyfile});
+    const auto gh = make_global_header();
+    auto sh = make_shard_header();
 
-    const auto finalized = bseal::archive::finalize_public_header(
-        header,
-        correct_keys.header_authentication_key.as_span());
+    auto correct_keys = derive_keys(gh, "correct passphrase", {keyfile});
+    sh.header_mac = bseal::io::compute_shard_header_mac(
+        correct_keys.header_authentication_key.as_span(), gh, sh);
 
-    auto wrong_keys = derive_keys(header, "wrong passphrase", {keyfile});
+    auto wrong_keys = derive_keys(gh, "wrong passphrase", {keyfile});
 
-    EXPECT_FALSE(bseal::archive::verify_header_mac(
-        finalized,
-        wrong_keys.header_authentication_key.as_span()));
-}
-
-TEST(PublicHeaderAuth, ChangingSuiteIdFails)
-{
-    const auto header = make_header();
-
-    std::array<bseal::Byte, 32> key{};
-    key.fill(bseal::Byte{0x42});
-
-    auto finalized = bseal::archive::finalize_public_header(
-        header,
-        bseal::ConstByteSpan{key.data(), key.size()});
-
-    finalized.suite_id ^= 0x0003u;
-
-    EXPECT_FALSE(bseal::archive::verify_header_mac(
-        finalized,
-        bseal::ConstByteSpan{key.data(), key.size()}));
-}
-
-TEST(PublicHeaderAuth, ChangingArchiveIdFails)
-{
-    const auto header = make_header();
-
-    std::array<bseal::Byte, 32> key{};
-    key.fill(bseal::Byte{0x42});
-
-    auto finalized = bseal::archive::finalize_public_header(
-        header,
-        bseal::ConstByteSpan{key.data(), key.size()});
-
-    finalized.archive_id[0] ^= bseal::Byte{0x01};
-
-    EXPECT_FALSE(bseal::archive::verify_header_mac(
-        finalized,
-        bseal::ConstByteSpan{key.data(), key.size()}));
-}
-
-TEST(PublicHeaderAuth, ChangingKdfSaltFails)
-{
-    const auto header = make_header();
-
-    std::array<bseal::Byte, 32> key{};
-    key.fill(bseal::Byte{0x42});
-
-    auto finalized = bseal::archive::finalize_public_header(
-        header,
-        bseal::ConstByteSpan{key.data(), key.size()});
-
-    finalized.kdf_salt[0] ^= bseal::Byte{0x01};
-
-    EXPECT_FALSE(bseal::archive::verify_header_mac(
-        finalized,
-        bseal::ConstByteSpan{key.data(), key.size()}));
-}
-
-TEST(PublicHeaderAuth, ChangingChunkSizeFails)
-{
-    const auto header = make_header();
-
-    std::array<bseal::Byte, 32> key{};
-    key.fill(bseal::Byte{0x42});
-
-    auto finalized = bseal::archive::finalize_public_header(
-        header,
-        bseal::ConstByteSpan{key.data(), key.size()});
-
-    finalized.chunk_plain_size *= 2;
-
-    EXPECT_FALSE(bseal::archive::verify_header_mac(
-        finalized,
-        bseal::ConstByteSpan{key.data(), key.size()}));
+    EXPECT_FALSE(bseal::io::verify_shard_header_mac(
+        wrong_keys.header_authentication_key.as_span(), gh, sh));
 }

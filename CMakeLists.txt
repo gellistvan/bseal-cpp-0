@@ -18,6 +18,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ProjectWarnings)
 include(Sanitizers)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/external_libraries/blake3.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/external_libraries/argon2.cmake)
 
 add_library(bseal_core
     src/app/BsealApp.cpp
@@ -30,7 +32,6 @@ add_library(bseal_core
     src/archive/ArchiveReader.cpp
     src/archive/ArchiveWriter.cpp
     src/archive/PathSanitizer.cpp
-    src/archive/PublicHeaderAuth.cpp
     src/archive/RecordFormat.cpp
     src/io/AsyncReader.cpp
     src/io/AsyncWriter.cpp
@@ -54,6 +55,8 @@ target_link_libraries(bseal_core
         PRIVATE
         PkgConfig::SODIUM
         OpenSSL::Crypto
+        blake3::blake3
+        argon2::argon2
 )
 
 

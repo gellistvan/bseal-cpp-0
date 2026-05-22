@@ -1,7 +1,7 @@
 #include "io/ShardWriter.hpp"
 
-#include "archive/RecordFormat.hpp"
 #include "common/Errors.hpp"
+#include "crypto/Kdf.hpp"
 #include "io/ShardFrame.hpp"
 #include "io/ShardReader.hpp"
 
@@ -20,12 +20,17 @@ namespace {
 
 constexpr std::uint16_t kTestTagLen = 16;
 
+// chunk_plain_size must be a power-of-two in [65536, 67108864] to pass
+// parse_global_public_header() validation.
+constexpr std::uint32_t kTestChunkPlainSize = 65536;
+
 std::filesystem::path make_temp_dir(const std::string& prefix) {
     const auto base = std::filesystem::temp_directory_path();
     std::random_device rd;
 
     for (int attempt = 0; attempt < 128; ++attempt) {
-        auto candidate = base / (prefix + "_" + std::to_string(rd()) + "_" + std::to_string(attempt));
+        auto candidate =
+            base / (prefix + "_" + std::to_string(rd()) + "_" + std::to_string(attempt));
         std::error_code ec;
         if (std::filesystem::create_directories(candidate, ec)) {
             return candidate;
@@ -35,8 +40,8 @@ std::filesystem::path make_temp_dir(const std::string& prefix) {
     throw std::runtime_error("failed to create temporary test directory");
 }
 
-std::array<bseal::Byte, 16> test_archive_id() {
-    std::array<bseal::Byte, 16> out{};
+std::array<bseal::Byte, 32> test_archive_id() {
+    std::array<bseal::Byte, 32> out{};
     for (std::size_t i = 0; i < out.size(); ++i) {
         out[i] = static_cast<bseal::Byte>(0xA0u + i);
     }
@@ -51,27 +56,64 @@ std::array<bseal::Byte, 32> test_header_authentication_key() {
     return out;
 }
 
+/// Build a GlobalPublicHeaderV1 suitable for unit tests.
+/// shard_count / global_chunk_count / padded_plaintext_size / final_chunk_len
+/// are set to the minimum valid values; tests that only care about shard I/O
+/// don't need to worry about planning.
+bseal::io::GlobalPublicHeaderV1 make_test_global_header(
+    std::uint64_t max_shard_payload_len,
+    std::uint32_t chunk_plain_size = kTestChunkPlainSize,
+    std::uint32_t shard_count      = 1,
+    std::uint64_t global_chunk_count = 1) {
+    bseal::io::GlobalPublicHeaderV1 h{};
+    h.magic            = bseal::io::kGlobalHeaderV1Magic;
+    h.format_major     = 1;
+    h.format_minor     = 0;
+    h.global_header_len = static_cast<std::uint32_t>(bseal::io::kGlobalPublicHeaderV1Size);
+    h.shard_header_len  = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
+    h.frame_header_len  = static_cast<std::uint16_t>(bseal::io::kChunkFrameHeaderV1Size);
+    h.global_flags      = 0;
+    h.archive_id        = test_archive_id();
+    h.aead_alg_id       = bseal::io::kAeadAlgIdXChaCha20Poly1305;
+    h.kdf_alg_id        = bseal::io::kKdfAlgIdArgon2idHkdf;
+    h.hash_alg_id       = bseal::io::kHashAlgIdBlake3;
+    h.mac_alg_id        = bseal::io::kMacAlgIdHmacSha256;
+    h.kdf_salt.fill(bseal::Byte{0x11});
+    h.argon2_version     = 0x13;
+    h.argon2_memory_kib  = bseal::crypto::kArgon2MemoryKiBMin;
+    h.argon2_iterations  = 1;
+    h.argon2_parallelism = 1;
+    h.chunk_plain_size   = chunk_plain_size;
+    h.shard_count        = shard_count;
+    h.global_chunk_count = global_chunk_count;
+    // padded_plaintext_size must satisfy:
+    //   (global_chunk_count-1)*chunk_plain_size + final_chunk_len
+    h.final_plaintext_chunk_len = chunk_plain_size;
+    h.padded_plaintext_size     =
+        (global_chunk_count - 1) * static_cast<std::uint64_t>(chunk_plain_size)
+        + static_cast<std::uint64_t>(chunk_plain_size);
+    h.padding_policy_id      = 0;
+    h.reserved0              = 0;
+    h.padding_policy_value   = 0;
+    h.max_shard_payload_len  = max_shard_payload_len;
+    h.required_feature_flags = 0;
+    h.reserved1.fill(bseal::Byte{0});
+    return h;
+}
+
 bseal::io::ShardWriterOptions make_writer_options(
     const std::filesystem::path& dir,
     std::uint64_t max_payload_size,
-    const std::string& extension = ".bin",
-    std::uint64_t chunk_plain_size = 8) {
-    bseal::archive::PublicHeaderV1 public_header{};
-    public_header.suite_id = 1;
-    public_header.archive_id = test_archive_id();
-    public_header.header_len = static_cast<std::uint32_t>(bseal::archive::kPublicHeaderV1SerializedSize);
-    public_header.chunk_plain_size = static_cast<std::uint32_t>(chunk_plain_size);
-    public_header.shard_payload_size = max_payload_size;
-
+    const std::string& extension          = ".bin",
+    std::uint32_t chunk_plain_size        = kTestChunkPlainSize,
+    std::uint32_t shard_count             = 1,
+    std::uint64_t global_chunk_count      = 1) {
     bseal::io::ShardWriterOptions options{};
-    options.output_dir = dir;
-    options.max_shard_payload_size = max_payload_size;
-    options.filename_extension = extension;
-    options.suite_id = public_header.suite_id;
-    options.archive_id = public_header.archive_id;
-    options.chunk_plain_size = chunk_plain_size;
-    options.public_header = public_header;
-    options.public_header_hash = bseal::archive::compute_public_header_hash(public_header);
+    options.output_dir           = dir;
+    options.max_shard_payload_len = max_payload_size;
+    options.filename_extension   = extension;
+    options.global_header        = make_test_global_header(
+        max_payload_size, chunk_plain_size, shard_count, global_chunk_count);
     options.header_authentication_key = test_header_authentication_key();
     return options;
 }
@@ -88,10 +130,10 @@ bseal::Bytes fake_ciphertext_and_tag(std::uint8_t seed, std::uint64_t plaintext_
 
 bseal::io::ShardWritePosition write_fake_frame(
     bseal::io::ShardWriter& writer,
-    std::uint64_t chunk_index,
-    std::uint64_t plaintext_len,
-    bool final_chunk,
-    bseal::ConstByteSpan ciphertext_and_tag) {
+    std::uint64_t           chunk_index,
+    std::uint64_t           plaintext_len,
+    bool                    final_chunk,
+    bseal::ConstByteSpan    ciphertext_and_tag) {
     const auto planned = writer.plan_chunk_frame(
         chunk_index,
         plaintext_len,
@@ -124,7 +166,7 @@ std::vector<std::filesystem::path> list_files_with_extension(
 
 TEST(TestShardWriter, FinishWithoutWritesCreatesNoShard) {
     const auto dir = make_temp_dir("bseal_shard_writer_empty");
-    bseal::io::ShardWriter writer(make_writer_options(dir, 256));
+    bseal::io::ShardWriter writer(make_writer_options(dir, 256 * 1024));
 
     writer.finish();
 
@@ -135,23 +177,19 @@ TEST(TestShardWriter, FinishWithoutWritesCreatesNoShard) {
 TEST(TestShardWriter, WritesMultipleChunkFramesIntoOneShard) {
     const auto dir = make_temp_dir("bseal_shard_writer_one_shard");
 
-    auto c0 = fake_ciphertext_and_tag(0x10, 8);
-    auto c1 = fake_ciphertext_and_tag(0x40, 4);
+    // Use full chunk_plain_size (65536) for all frames.
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlainSize);
+    auto c1 = fake_ciphertext_and_tag(0x40, kTestChunkPlainSize / 2);
 
-    bseal::io::ShardWriter writer(make_writer_options(dir, 512, ".bin", 8));
+    bseal::io::ShardWriter writer(
+        make_writer_options(dir, 4 * 1024 * 1024, ".bin", kTestChunkPlainSize, 1, 2));
 
     const auto p0 = write_fake_frame(
-        writer,
-        0,
-        8,
-        false,
+        writer, 0, kTestChunkPlainSize, false,
         bseal::ConstByteSpan{c0.data(), c0.size()});
 
     const auto p1 = write_fake_frame(
-        writer,
-        1,
-        4,
-        true,
+        writer, 1, kTestChunkPlainSize / 2, true,
         bseal::ConstByteSpan{c1.data(), c1.size()});
 
     writer.finish();
@@ -173,13 +211,13 @@ TEST(TestShardWriter, WritesMultipleChunkFramesIntoOneShard) {
     auto r0 = reader.read_next_chunk_record();
     ASSERT_TRUE(r0.has_value());
     EXPECT_EQ(r0->chunk_index, 0u);
-    EXPECT_EQ(r0->plaintext_size, 8u);
+    EXPECT_EQ(r0->plaintext_size, static_cast<std::uint64_t>(kTestChunkPlainSize));
     EXPECT_EQ(r0->ciphertext, c0);
 
     auto r1 = reader.read_next_chunk_record();
     ASSERT_TRUE(r1.has_value());
     EXPECT_EQ(r1->chunk_index, 1u);
-    EXPECT_EQ(r1->plaintext_size, 4u);
+    EXPECT_EQ(r1->plaintext_size, static_cast<std::uint64_t>(kTestChunkPlainSize / 2));
     EXPECT_EQ(r1->ciphertext, c1);
 
     EXPECT_FALSE(reader.read_next_chunk_record().has_value());
@@ -189,18 +227,26 @@ TEST(TestShardWriter, WritesMultipleChunkFramesIntoOneShard) {
 TEST(TestShardWriter, SplitsChunkFramesAcrossMultipleShards) {
     const auto dir = make_temp_dir("bseal_shard_writer_split");
 
-    auto c0 = fake_ciphertext_and_tag(0x10, 8);
-    auto c1 = fake_ciphertext_and_tag(0x30, 8);
-    auto c2 = fake_ciphertext_and_tag(0x50, 8);
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlainSize);
+    auto c1 = fake_ciphertext_and_tag(0x30, kTestChunkPlainSize);
+    auto c2 = fake_ciphertext_and_tag(0x50, kTestChunkPlainSize);
 
-    // Frame size is 40-byte ChunkFrameHeaderV1 + plaintext_len + 16-byte tag.
-    // With plaintext_len == 8, each frame is 64 bytes.
-    // A 64-byte shard payload limit forces one frame per shard.
-    bseal::io::ShardWriter writer(make_writer_options(dir, 64, ".bin", 8));
+    // Frame size = kChunkFrameHeaderV1Size + kTestChunkPlainSize + kTestTagLen
+    const std::uint64_t frame_size =
+        static_cast<std::uint64_t>(bseal::io::kChunkFrameHeaderV1Size)
+        + kTestChunkPlainSize
+        + kTestTagLen;
 
-    write_fake_frame(writer, 0, 8, false, bseal::ConstByteSpan{c0.data(), c0.size()});
-    write_fake_frame(writer, 1, 8, false, bseal::ConstByteSpan{c1.data(), c1.size()});
-    write_fake_frame(writer, 2, 8, true, bseal::ConstByteSpan{c2.data(), c2.size()});
+    // Make shard limit exactly one frame so each chunk goes to its own shard.
+    bseal::io::ShardWriter writer(
+        make_writer_options(dir, frame_size, ".bin", kTestChunkPlainSize, 3, 3));
+
+    write_fake_frame(writer, 0, kTestChunkPlainSize, false,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    write_fake_frame(writer, 1, kTestChunkPlainSize, false,
+                     bseal::ConstByteSpan{c1.data(), c1.size()});
+    write_fake_frame(writer, 2, kTestChunkPlainSize, true,
+                     bseal::ConstByteSpan{c2.data(), c2.size()});
 
     writer.finish();
 
@@ -233,15 +279,13 @@ TEST(TestShardWriter, SplitsChunkFramesAcrossMultipleShards) {
 
 TEST(TestShardWriter, SupportsCustomExtension) {
     const auto dir = make_temp_dir("bseal_shard_writer_ext");
-    auto c0 = fake_ciphertext_and_tag(0x10, 8);
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlainSize);
 
-    bseal::io::ShardWriter writer(make_writer_options(dir, 256, ".sealed", 8));
+    bseal::io::ShardWriter writer(
+        make_writer_options(dir, 4 * 1024 * 1024, ".sealed", kTestChunkPlainSize, 1, 1));
 
     const auto pos = write_fake_frame(
-        writer,
-        0,
-        8,
-        true,
+        writer, 0, kTestChunkPlainSize, true,
         bseal::ConstByteSpan{c0.data(), c0.size()});
 
     writer.finish();
@@ -261,14 +305,15 @@ TEST(TestShardWriter, SupportsCustomExtension) {
 
 TEST(TestShardWriter, RejectsOutOfOrderFramePlanning) {
     const auto dir = make_temp_dir("bseal_shard_writer_plan_order");
-    bseal::io::ShardWriter writer(make_writer_options(dir, 256, ".bin", 8));
+    bseal::io::ShardWriter writer(
+        make_writer_options(dir, 4 * 1024 * 1024, ".bin", kTestChunkPlainSize, 1, 2));
 
     EXPECT_THROW(
         {
             (void)writer.plan_chunk_frame(
-                1,
-                8,
-                8,
+                1, // skipping chunk 0
+                kTestChunkPlainSize,
+                kTestChunkPlainSize,
                 kTestTagLen,
                 true);
         },

@@ -33,14 +33,18 @@ crypto::KdfPreset parse_kdf(std::string_view value) {
 }
 
 PaddingPolicy parse_padding(std::string_view value) {
-    if (value == "none") return PaddingPolicy{PaddingPolicyKind::None, 0};
-    if (value == "chunk") return PaddingPolicy{PaddingPolicyKind::Chunk, 0};
-    if (value == "power2") return PaddingPolicy{PaddingPolicyKind::Power2, 0};
+    if (value == "none")   return PaddingPolicy{PaddingPolicyKind::None,    0};
+    if (value == "chunk")  return PaddingPolicy{PaddingPolicyKind::Chunk,   0};
+    if (value == "power2") return PaddingPolicy{PaddingPolicyKind::Power2,  0};
+
     constexpr std::string_view prefix = "fixed-size=";
     if (value.starts_with(prefix)) {
-        return PaddingPolicy{PaddingPolicyKind::FixedSize, parse_size_bytes(value.substr(prefix.size()))};
+        const std::uint64_t n = parse_size_bytes(std::string(value.substr(prefix.size())));
+        return PaddingPolicy{PaddingPolicyKind::FixedSize, n};
     }
-    throw InvalidArgument("unknown padding policy");
+
+    throw InvalidArgument("unknown padding policy '" + std::string(value) +
+                          "'; valid values: none, chunk, power2, fixed-size=N");
 }
 
 void parse_common_option(CommonOptions& options, std::string_view key, std::string_view value) {
@@ -133,7 +137,7 @@ Encrypt options:
   --kdf fast|strong|paranoid
   --chunk-size 16M
   --shard-size 4G
-  --padding none|chunk|power2|fixed-size=100G
+  --padding none|chunk|power2|fixed-size=N
 
 Decrypt options:
   --overwrite

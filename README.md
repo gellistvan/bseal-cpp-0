@@ -22,6 +22,7 @@ Implemented today:
   * Decrypt verifies the header MAC before decrypting any chunk.
 * Public header metadata such as suite id, archive id, KDF salt, chunk size, shard size, and shard index is authenticated through canonical public-header serialization.
 * Archive records cover archive begin/end, directories, regular files, file bytes, file end markers, symlinks in the record format, and random padding records.
+* All four padding policies are implemented end-to-end: `none`, `chunk` (pad to next chunk-size multiple), `power2` (pad to next power-of-two total), and `fixed-size=N` (pad to exact byte count). Padding is represented as encrypted `RandomPadding` archive records so it is authenticated by AEAD and indistinguishable from real data.
 * Chunk encryption binds the immutable public-header hash and chunk index into AEAD associated data.
 * Shards use explicit per-shard headers and chunk records. Decrypt scans `*.bin`
   files, parses shard headers from file contents, rejects malformed garbage
@@ -34,20 +35,30 @@ Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
 * The archive/container format is not stable and has no compatibility guarantee.
-* Padding options are parsed, but exact padding semantics still need to be finalized and tested end to end.
+* Padding is functional but the archive/container format has not been externally audited.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 * Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
 
 ## Build requirements
 
 * CMake 3.24 or newer
-* A C++20 compiler
+* A C++20 compiler (GCC 11+, Clang 14+)
 * `pkg-config`
-* libsodium
-* OpenSSL crypto library
-* Optional: GoogleTest. If system GoogleTest is unavailable, the test tree can use the local lightweight compatibility harness.
+* libsodium (XChaCha20-Poly1305 AEAD and secure memory)
+* OpenSSL crypto library (AES-256-GCM AEAD and HKDF-SHA-256)
+* [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) — bundled as a git submodule under `submodules/blake3` (dual-licensed CC0-1.0 / Apache-2.0 with LLVM exception; built automatically by CMake)
+* [Argon2](https://github.com/P-H-C/phc-winner-argon2) — bundled as a git submodule under `submodules/argon2` (dual-licensed CC0-1.0 / Apache-2.0; built automatically by CMake)
+* Optional: GoogleTest. If system GoogleTest is unavailable, the test tree falls back to the local lightweight compatibility harness.
 
 ## Build
+
+After cloning, initialise the git submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+Then configure and build:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -95,7 +106,7 @@ bseal encrypt \
   --kdf strong \
   --chunk-size 16M \
   --shard-size 4G \
-  --padding power2
+  --padding chunk
 ```
 
 Decrypt it later with the same passphrase and keyfiles, in the same keyfile order:
@@ -109,6 +120,28 @@ bseal decrypt \
   --passphrase-prompt
 ```
 
+`--keyfile` is optional. Omitting it completely gives passphrase-only mode:
+
+```bash
+# Encrypt with passphrase only.
+bseal encrypt \
+  --input ./folder \
+  --output ./sealed \
+  --passphrase-prompt \
+  --suite xchacha20-poly1305 \
+  --kdf strong
+
+# Decrypt with passphrase only.
+bseal decrypt \
+  --input ./sealed \
+  --output ./restored \
+  --passphrase-prompt
+```
+
+Keyfile order matters: the archive will only decrypt when exactly the same keyfiles
+are supplied in exactly the same order. Adding, removing, or reordering a keyfile
+produces a different derived key and will fail authentication (exit code 3).
+
 If `--passphrase-prompt` is omitted, BSEAL reads one passphrase line from standard input.
 
 With `--passphrase-prompt`, it asks twice and rejects mismatches.
@@ -119,7 +152,7 @@ Common options:
 
 * `--input DIR`
 * `--output DIR`
-* `--keyfile FILE`, repeatable
+* `--keyfile FILE`, repeatable, optional (omit for passphrase-only mode)
 * `--passphrase-prompt`
 * `--verbose`, parsed but not yet a complete logging mode
 
@@ -129,7 +162,12 @@ Encrypt-only options:
 * `--kdf fast|strong|paranoid`
 * `--chunk-size SIZE`, for example `1K`, `16M`
 * `--shard-size SIZE`, for example `16K`, `4G`
-* `--padding none|chunk|power2|fixed-size=SIZE`
+* `--padding none|chunk|power2|fixed-size=N`
+  * `none` — no padding; plaintext size is exactly the unpadded archive stream
+  * `chunk` — pad to the next multiple of `--chunk-size`
+  * `power2` — pad to the next power-of-two total plaintext size
+  * `fixed-size=N` — pad to exactly N bytes (fails if the archive is already larger, or if the gap is too small to hold a padding record header)
+  * Padding is represented as an encrypted `RandomPadding` archive record so it is authenticated by AEAD and indistinguishable from file data
 
 Decrypt-only options:
 
@@ -226,11 +264,10 @@ When changing crypto/container code:
 
 ## High-value next work
 
-1. Finalize and test exact padding behavior for `none`, `chunk`, `power2`, and `fixed-size=N`.
-2. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
-3. Decide the compatibility policy for archive format version 1.
-4. Add benchmarks after correctness and format-hardening work settles.
-5. Prepare the codebase for external cryptographic review.
+1. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
+2. Decide the compatibility policy for archive format version 1.
+3. Add benchmarks after correctness and format-hardening work settles.
+4. Prepare the codebase for external cryptographic review.
 
 ## Related docs
 

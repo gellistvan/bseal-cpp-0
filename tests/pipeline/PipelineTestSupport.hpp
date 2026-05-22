@@ -147,10 +147,11 @@ inline std::vector<std::filesystem::path> list_bin_files(const std::filesystem::
     return files;
 }
 
-inline std::array<Byte, 16> test_archive_id() {
-    std::array<Byte, 16> out{};
+// archive_id is 32 bytes per FORMAT.md §3.
+inline std::array<Byte, 32> test_archive_id() {
+    std::array<Byte, 32> out{};
     for (std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<Byte>(0x10u + i);
+        out[i] = static_cast<Byte>(0x10u + (i & 0xFFu));
     }
     return out;
 }
@@ -163,52 +164,82 @@ inline std::array<Byte, 32> test_header_authentication_key() {
     return out;
 }
 
+// chunk_plain_size must be a power-of-two in [65536, 67108864] to pass
+// parse_global_public_header() validation.  Pipeline tests that need a small
+// assembler chunk size still set EncryptPipelineOptions::chunk_plain_size = 128;
+// the header value here is only written to disk and must satisfy the format spec.
+inline constexpr std::uint32_t kTestHeaderChunkPlainSize = 65536;
+
 inline constexpr std::uint64_t kTestShardPayloadSize = 1024ull * 1024ull;
 
-inline archive::PublicHeaderV1 make_test_public_header(
-    std::uint64_t chunk_plain_size = 128,
-    std::uint64_t shard_payload_size = kTestShardPayloadSize) {
-    archive::PublicHeaderV1 header{};
-    header.suite_id = 1;
-    header.archive_id = test_archive_id();
-    header.shard_index = 0;
-    header.header_len = static_cast<std::uint32_t>(archive::kPublicHeaderV1SerializedSize);
-    header.chunk_plain_size = static_cast<std::uint32_t>(chunk_plain_size);
-    header.shard_payload_size = shard_payload_size;
-
-    // The pipeline tests do not exercise real KDF behavior, but keep the
-    // public header deterministic and non-weird.
-    header.argon2_memory_kib = 0;
-    header.argon2_iterations = 0;
-    header.argon2_parallelism = 0;
-
-    return header;
+/// Build a minimal but valid GlobalPublicHeaderV1 for pipeline tests.
+inline io::GlobalPublicHeaderV1 make_test_global_header(
+    std::uint64_t max_shard_payload_len = kTestShardPayloadSize) {
+    io::GlobalPublicHeaderV1 h{};
+    h.magic             = io::kGlobalHeaderV1Magic;
+    h.format_major      = 1;
+    h.format_minor      = 0;
+    h.global_header_len = static_cast<std::uint32_t>(io::kGlobalPublicHeaderV1Size);
+    h.shard_header_len  = static_cast<std::uint32_t>(io::kShardPublicHeaderV1Size);
+    h.frame_header_len  = static_cast<std::uint16_t>(io::kChunkFrameHeaderV1Size);
+    h.global_flags      = 0;
+    h.archive_id        = test_archive_id();
+    h.aead_alg_id       = io::kAeadAlgIdXChaCha20Poly1305;
+    h.kdf_alg_id        = io::kKdfAlgIdArgon2idHkdf;
+    h.hash_alg_id       = io::kHashAlgIdBlake3;
+    h.mac_alg_id        = io::kMacAlgIdHmacSha256;
+    h.kdf_salt.fill(Byte{0x11});
+    h.argon2_version     = 0x13;
+    h.argon2_memory_kib  = 65536;   // minimum valid per FORMAT.md §7
+    h.argon2_iterations  = 1;
+    h.argon2_parallelism = 1;
+    h.chunk_plain_size   = kTestHeaderChunkPlainSize;
+    h.shard_count        = 1;
+    h.global_chunk_count = 1;
+    h.final_plaintext_chunk_len = kTestHeaderChunkPlainSize;
+    h.padded_plaintext_size     = kTestHeaderChunkPlainSize;
+    h.padding_policy_id      = 0;
+    h.reserved0              = 0;
+    h.padding_policy_value   = 0;
+    h.max_shard_payload_len  = max_shard_payload_len;
+    h.required_feature_flags = 0;
+    h.reserved1.fill(Byte{0});
+    return h;
 }
 
+/// Build a minimal ShardPublicHeaderV1 (shard 0, single chunk) for hashing.
+inline io::ShardPublicHeaderV1 make_test_shard_header(
+    std::uint64_t shard_payload_len = kTestShardPayloadSize) {
+    io::ShardPublicHeaderV1 sh{};
+    sh.shard_magic              = io::kShardHeaderV1Magic;
+    sh.shard_header_len         = static_cast<std::uint32_t>(io::kShardPublicHeaderV1Size);
+    sh.shard_index              = 0;
+    sh.first_global_chunk_index = 0;
+    sh.shard_chunk_count        = 1;
+    sh.shard_payload_len        = shard_payload_len;
+    sh.reserved0                = 0;
+    sh.header_mac.fill(Byte{0});
+    return sh;
+}
+
+/// Compute the public_header_hash for the test global+shard header pair.
 inline std::array<Byte, 32> make_test_public_header_hash(
-    std::uint64_t chunk_plain_size = 128,
-    std::uint64_t shard_payload_size = kTestShardPayloadSize) {
-    return archive::compute_public_header_hash(
-        make_test_public_header(chunk_plain_size, shard_payload_size));
+    std::uint64_t shard_payload_len = kTestShardPayloadSize) {
+    return io::compute_public_header_hash(
+        make_test_global_header(kTestShardPayloadSize),
+        make_test_shard_header(shard_payload_len));
 }
 
 inline io::ShardWriterOptions make_test_shard_writer_options(
     const std::filesystem::path& sealed_dir,
-    std::uint64_t chunk_plain_size = 128,
+    std::uint64_t /*chunk_plain_size_unused*/ = 128,
     std::uint64_t shard_payload_size = kTestShardPayloadSize) {
-    const auto public_header = make_test_public_header(chunk_plain_size, shard_payload_size);
-
     io::ShardWriterOptions options{};
-    options.output_dir = sealed_dir;
-    options.max_shard_payload_size = shard_payload_size;
-    options.filename_extension = ".bin";
-    options.suite_id = public_header.suite_id;
-    options.archive_id = public_header.archive_id;
-    options.chunk_plain_size = chunk_plain_size;
-    options.public_header = public_header;
-    options.public_header_hash = archive::compute_public_header_hash(public_header);
+    options.output_dir            = sealed_dir;
+    options.max_shard_payload_len = shard_payload_size;
+    options.filename_extension    = ".bin";
+    options.global_header         = make_test_global_header(shard_payload_size);
     options.header_authentication_key = test_header_authentication_key();
-
     return options;
 }
 
@@ -235,24 +266,26 @@ inline crypto::ExpandedKeys make_test_keys() {
     return keys;
 }
 
-inline EncryptPipelineOptions make_encrypt_options(std::uint64_t chunk_size = 128) {
+inline EncryptPipelineOptions make_encrypt_options(
+    std::uint64_t chunk_size = kTestHeaderChunkPlainSize) {
     EncryptPipelineOptions options;
     options.chunk_plain_size = chunk_size;
     options.worker_count = 4;
     options.queue_depth = 8;
     options.archive_id = test_archive_id();
-    options.public_header_hash = make_test_public_header_hash(chunk_size);
+    options.public_header_hash = make_test_public_header_hash();
     options.emit_final_chunk_when_empty = true;
     return options;
 }
 
-inline DecryptPipelineOptions make_decrypt_options(std::uint64_t chunk_size = 128) {
+inline DecryptPipelineOptions make_decrypt_options(
+    std::uint64_t chunk_size = kTestHeaderChunkPlainSize) {
     DecryptPipelineOptions options;
     options.chunk_plain_size = chunk_size;
     options.worker_count = 4;
     options.queue_depth = 8;
     options.archive_id = test_archive_id();
-    options.public_header_hash = make_test_public_header_hash(chunk_size);
+    options.public_header_hash = make_test_public_header_hash();
     return options;
 }
 
@@ -451,16 +484,18 @@ inline void corrupt_first_ciphertext_byte(const std::filesystem::path& sealed_di
         shards.begin(),
         shards.end(),
         [](const io::ShardInfo& shard) {
-            return shard.chunk_count > 0;
+            return shard.chunk_count() > 0;
         });
 
     if (it == shards.end()) {
         throw std::runtime_error("no chunk frames found to corrupt");
     }
 
+    // Payload starts at: GlobalPublicHeaderV1 (192) + ShardPublicHeaderV1 (80) = 272
+    // Then the ChunkFrameHeaderV1 (40) precedes the first ciphertext byte.
     const auto ciphertext_offset =
-        static_cast<std::uint64_t>(archive::kPublicHeaderV1SerializedSize) +
-        static_cast<std::uint64_t>(io::kShardFileV1HeaderSize) +
+        static_cast<std::uint64_t>(io::kGlobalPublicHeaderV1Size) +
+        static_cast<std::uint64_t>(io::kShardPublicHeaderV1Size) +
         static_cast<std::uint64_t>(io::kChunkFrameHeaderV1Size);
 
     std::fstream stream(it->path, std::ios::in | std::ios::out | std::ios::binary);
@@ -503,16 +538,16 @@ inline EncryptionRunResult run_test_encryption(
     archive::ArchiveWriter archive_writer(
         archive::ArchiveWriterOptions{
             input_dir,
-            128,
+            kTestHeaderChunkPlainSize,
             true,
             true,
             false,
         });
 
-    io::ShardWriter shard_writer(make_test_shard_writer_options(sealed_dir, 128));
+    io::ShardWriter shard_writer(make_test_shard_writer_options(sealed_dir));
 
     EncryptPipeline pipeline(
-        make_encrypt_options(128),
+        make_encrypt_options(),
         std::move(backend),
         make_test_keys(),
         std::move(archive_writer),
@@ -528,7 +563,7 @@ inline EncryptionRunResult run_test_encryption(
 inline io::ShardReader make_valid_test_shard_reader(
     const std::filesystem::path& input_dir,
     const std::filesystem::path& sealed_dir,
-    std::uint64_t chunk_size = 128) {
+    std::uint64_t chunk_size = kTestHeaderChunkPlainSize) {
     std::filesystem::create_directories(input_dir);
     std::filesystem::create_directories(sealed_dir);
 
@@ -585,7 +620,7 @@ inline DecryptionRunResult run_test_decryption(
         });
 
     DecryptPipeline pipeline(
-        make_decrypt_options(128),
+        make_decrypt_options(),
         std::move(backend),
         make_test_keys(),
         std::move(shard_reader),

@@ -12,23 +12,29 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 
+#include <blake3.h>
+
 namespace bseal::io {
 namespace {
 
+// ---------------------------------------------------------------------------
+// Serialisation helpers
+// ---------------------------------------------------------------------------
+
 void append_u16_le(Bytes& out, std::uint16_t value) {
-    out.push_back(static_cast<Byte>(value & 0xffU));
-    out.push_back(static_cast<Byte>((value >> 8U) & 0xffU));
+    out.push_back(static_cast<Byte>(value & 0xffu));
+    out.push_back(static_cast<Byte>((value >> 8u) & 0xffu));
 }
 
 void append_u32_le(Bytes& out, std::uint32_t value) {
     for (unsigned shift = 0; shift < 32; shift += 8) {
-        out.push_back(static_cast<Byte>((value >> shift) & 0xffU));
+        out.push_back(static_cast<Byte>((value >> shift) & 0xffu));
     }
 }
 
 void append_u64_le(Bytes& out, std::uint64_t value) {
     for (unsigned shift = 0; shift < 64; shift += 8) {
-        out.push_back(static_cast<Byte>((value >> shift) & 0xffU));
+        out.push_back(static_cast<Byte>((value >> shift) & 0xffu));
     }
 }
 
@@ -36,10 +42,12 @@ void append_bytes(Bytes& out, ConstByteSpan bytes) {
     out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
+void append_zeros(Bytes& out, std::size_t count) {
+    out.insert(out.end(), count, Byte{0});
+}
+
 bool all_zero(ConstByteSpan bytes) {
-    return std::all_of(bytes.begin(), bytes.end(), [](Byte b) {
-        return b == Byte{0};
-    });
+    return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
 }
 
 int checked_int_size(std::size_t value, const char* what) {
@@ -48,6 +56,14 @@ int checked_int_size(std::size_t value, const char* what) {
     }
     return static_cast<int>(value);
 }
+
+bool is_power_of_two(std::uint32_t v) {
+    return v != 0 && (v & (v - 1)) == 0;
+}
+
+// ---------------------------------------------------------------------------
+// Reader helper
+// ---------------------------------------------------------------------------
 
 class Reader {
 public:
@@ -65,22 +81,22 @@ public:
         auto b = read_bytes(2);
         return static_cast<std::uint16_t>(
             static_cast<std::uint16_t>(b[0])
-            | static_cast<std::uint16_t>(static_cast<std::uint16_t>(b[1]) << 8U));
+            | static_cast<std::uint16_t>(static_cast<std::uint16_t>(b[1]) << 8u));
     }
 
     std::uint32_t read_u32_le() {
         auto b = read_bytes(4);
         return static_cast<std::uint32_t>(b[0])
-            | (static_cast<std::uint32_t>(b[1]) << 8U)
-            | (static_cast<std::uint32_t>(b[2]) << 16U)
-            | (static_cast<std::uint32_t>(b[3]) << 24U);
+            | (static_cast<std::uint32_t>(b[1]) << 8u)
+            | (static_cast<std::uint32_t>(b[2]) << 16u)
+            | (static_cast<std::uint32_t>(b[3]) << 24u);
     }
 
     std::uint64_t read_u64_le() {
         auto b = read_bytes(8);
         std::uint64_t value = 0;
         for (unsigned i = 0; i < 8; ++i) {
-            value |= static_cast<std::uint64_t>(b[i]) << (8U * i);
+            value |= static_cast<std::uint64_t>(b[i]) << (8u * i);
         }
         return value;
     }
@@ -92,164 +108,334 @@ private:
         }
     }
 
-    ConstByteSpan bytes_;
-    std::size_t offset_{0};
+    ConstByteSpan   bytes_;
+    std::size_t     offset_{0};
     std::string_view truncated_message_;
 };
 
 template <std::size_t N>
-std::array<Byte, N> to_array(ConstByteSpan bytes, std::string_view message) {
-    if (bytes.size() != N) {
-        throw InvalidArgument(std::string(message));
-    }
+std::array<Byte, N> read_array(Reader& reader, std::string_view what) {
+    auto span = reader.read_bytes(N);
     std::array<Byte, N> out{};
-    std::copy(bytes.begin(), bytes.end(), out.begin());
+    std::copy(span.begin(), span.end(), out.begin());
+    (void)what;
     return out;
 }
 
+// The domain string from FORMAT.md §6 includes the NUL terminator.
+constexpr std::string_view kPublicHeaderHashDomain{
+    "BSEAL public header hash v1",
+    sizeof("BSEAL public header hash v1") // NUL included
+};
+
+constexpr std::string_view kHeaderMacDomain{
+    "BSEAL header mac v1",
+    sizeof("BSEAL header mac v1") // NUL included
+};
+
 } // namespace
 
-Bytes serialize_shard_header_v1(const ShardHeaderV1& header) {
+// ---------------------------------------------------------------------------
+// GlobalPublicHeaderV1 serialisation
+// ---------------------------------------------------------------------------
+
+Bytes serialize_global_public_header(const GlobalPublicHeaderV1& h) {
     Bytes out;
-    out.reserve(kShardHeaderV1Size);
+    out.reserve(kGlobalPublicHeaderV1Size);
 
-    append_bytes(out, ConstByteSpan{kShardHeaderV1Magic.data(), kShardHeaderV1Magic.size()});
-    append_u16_le(out, kShardHeaderV1Version);
-    append_u16_le(out, header.suite_id);
-    append_u32_le(out, static_cast<std::uint32_t>(kShardHeaderV1Size));
-    append_bytes(out, ConstByteSpan{header.archive_id.data(), header.archive_id.size()});
-    append_u32_le(out, header.shard_index);
-    append_u32_le(out, header.shard_count);
-    append_u32_le(out, header.flags);
-    append_u32_le(out, 0); // reserved0
-    append_u64_le(out, header.chunk_plain_size);
-    append_u64_le(out, header.first_chunk_index);
-    append_u64_le(out, header.chunk_count);
-    append_u64_le(out, header.total_chunk_count);
-    append_u64_le(out, header.shard_payload_len);
-    append_u64_le(out, header.shard_payload_offset);
-    append_bytes(out, ConstByteSpan{header.public_header_hash.data(), header.public_header_hash.size()});
-    append_bytes(out, ConstByteSpan{header.header_mac.data(), header.header_mac.size()});
+    append_bytes(out, ConstByteSpan{h.magic.data(), h.magic.size()});             // 8
+    append_u16_le(out, h.format_major);                                            // 2
+    append_u16_le(out, h.format_minor);                                            // 2
+    append_u32_le(out, h.global_header_len);                                       // 4
+    append_u32_le(out, h.shard_header_len);                                        // 4
+    append_u16_le(out, h.frame_header_len);                                        // 2
+    append_u16_le(out, h.global_flags);                                            // 2
+    // total so far: 24
 
-    if (out.size() != kShardHeaderV1Size) {
+    append_bytes(out, ConstByteSpan{h.archive_id.data(), h.archive_id.size()});   // 32
+    // 56
+
+    append_u16_le(out, h.aead_alg_id);                                            // 2
+    append_u16_le(out, h.kdf_alg_id);                                             // 2
+    append_u16_le(out, h.hash_alg_id);                                            // 2
+    append_u16_le(out, h.mac_alg_id);                                             // 2
+    // 64
+
+    append_bytes(out, ConstByteSpan{h.kdf_salt.data(), h.kdf_salt.size()});       // 32
+    // 96
+
+    append_u32_le(out, h.argon2_version);                                          // 4
+    append_u32_le(out, h.argon2_memory_kib);                                       // 4
+    append_u32_le(out, h.argon2_iterations);                                       // 4
+    append_u32_le(out, h.argon2_parallelism);                                      // 4
+    // 112
+
+    append_u32_le(out, h.chunk_plain_size);                                        // 4
+    append_u32_le(out, h.shard_count);                                             // 4
+    append_u64_le(out, h.global_chunk_count);                                      // 8
+    append_u64_le(out, h.padded_plaintext_size);                                   // 8
+    append_u32_le(out, h.final_plaintext_chunk_len);                               // 4
+    append_u16_le(out, h.padding_policy_id);                                       // 2
+    append_u16_le(out, h.reserved0);                                               // 2
+    // 144
+
+    append_u64_le(out, h.padding_policy_value);                                    // 8
+    append_u64_le(out, h.max_shard_payload_len);                                   // 8
+    append_u64_le(out, h.required_feature_flags);                                  // 8
+    // 168
+
+    append_bytes(out, ConstByteSpan{h.reserved1.data(), h.reserved1.size()});     // 24
+    // 192
+
+    if (out.size() != kGlobalPublicHeaderV1Size) {
+        throw Error("internal global header size mismatch");
+    }
+    return out;
+}
+
+GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
+    if (bytes.size() < kGlobalPublicHeaderV1Size) {
+        throw InvalidArgument("truncated global public header");
+    }
+
+    Reader r(bytes.first(kGlobalPublicHeaderV1Size), "truncated global public header");
+    GlobalPublicHeaderV1 h;
+
+    // magic
+    h.magic = read_array<8>(r, "magic");
+    // Reject old BSEAL01\0 magic and any other bad magic.
+    if (!std::equal(h.magic.begin(), h.magic.end(),
+                    kGlobalHeaderV1Magic.begin(), kGlobalHeaderV1Magic.end())) {
+        throw InvalidArgument("wrong global header magic (old BSEAL01\\0 format is not supported)");
+    }
+
+    h.format_major    = r.read_u16_le();
+    h.format_minor    = r.read_u16_le();
+    h.global_header_len = r.read_u32_le();
+    h.shard_header_len  = r.read_u32_le();
+    h.frame_header_len  = r.read_u16_le();
+    h.global_flags      = r.read_u16_le();
+
+    h.archive_id = read_array<32>(r, "archive_id");
+
+    h.aead_alg_id = r.read_u16_le();
+    h.kdf_alg_id  = r.read_u16_le();
+    h.hash_alg_id = r.read_u16_le();
+    h.mac_alg_id  = r.read_u16_le();
+
+    h.kdf_salt = read_array<32>(r, "kdf_salt");
+
+    h.argon2_version     = r.read_u32_le();
+    h.argon2_memory_kib  = r.read_u32_le();
+    h.argon2_iterations  = r.read_u32_le();
+    h.argon2_parallelism = r.read_u32_le();
+
+    h.chunk_plain_size          = r.read_u32_le();
+    h.shard_count               = r.read_u32_le();
+    h.global_chunk_count        = r.read_u64_le();
+    h.padded_plaintext_size     = r.read_u64_le();
+    h.final_plaintext_chunk_len = r.read_u32_le();
+    h.padding_policy_id         = r.read_u16_le();
+    h.reserved0                 = r.read_u16_le();
+
+    h.padding_policy_value       = r.read_u64_le();
+    h.max_shard_payload_len      = r.read_u64_le();
+    h.required_feature_flags     = r.read_u64_le();
+
+    h.reserved1 = read_array<24>(r, "reserved1");
+
+    // -----------------------------------------------------------------------
+    // Rejection rules (FORMAT.md §rejection)
+    // -----------------------------------------------------------------------
+
+    if (h.format_major != 1 || h.format_minor != 0) {
+        throw InvalidArgument("unsupported format version");
+    }
+    if (h.global_header_len != static_cast<std::uint32_t>(kGlobalPublicHeaderV1Size)) {
+        throw InvalidArgument("global_header_len mismatch");
+    }
+    if (h.shard_header_len != static_cast<std::uint32_t>(kShardPublicHeaderV1Size)) {
+        throw InvalidArgument("shard_header_len mismatch in global header");
+    }
+    if (h.frame_header_len != static_cast<std::uint16_t>(kChunkFrameHeaderV1Size)) {
+        throw InvalidArgument("frame_header_len mismatch in global header");
+    }
+    if (h.global_flags != 0) {
+        throw InvalidArgument("non-zero global_flags");
+    }
+    if (h.aead_alg_id != kAeadAlgIdXChaCha20Poly1305 && h.aead_alg_id != kAeadAlgIdAes256Gcm) {
+        throw InvalidArgument("unknown aead_alg_id");
+    }
+    if (h.kdf_alg_id != kKdfAlgIdArgon2idHkdf) {
+        throw InvalidArgument("unknown kdf_alg_id");
+    }
+    if (h.hash_alg_id != kHashAlgIdBlake3) {
+        throw InvalidArgument("unknown hash_alg_id");
+    }
+    if (h.mac_alg_id != kMacAlgIdHmacSha256) {
+        throw InvalidArgument("unknown mac_alg_id");
+    }
+    if (h.shard_count == 0) {
+        throw InvalidArgument("shard_count is zero");
+    }
+    if (h.global_chunk_count == 0) {
+        throw InvalidArgument("global_chunk_count is zero");
+    }
+    if (h.padded_plaintext_size == 0) {
+        throw InvalidArgument("padded_plaintext_size is zero");
+    }
+    if (!is_power_of_two(h.chunk_plain_size) ||
+        h.chunk_plain_size < 65536u ||
+        h.chunk_plain_size > 67108864u) {
+        throw InvalidArgument("chunk_plain_size is not a power of two in [65536, 67108864]");
+    }
+    if (h.final_plaintext_chunk_len == 0) {
+        throw InvalidArgument("final_plaintext_chunk_len is zero");
+    }
+    if (h.final_plaintext_chunk_len > h.chunk_plain_size) {
+        throw InvalidArgument("final_plaintext_chunk_len > chunk_plain_size");
+    }
+    {
+        // padded_plaintext_size == (global_chunk_count-1)*chunk_plain_size + final_plaintext_chunk_len
+        const std::uint64_t expected_size =
+            (h.global_chunk_count - 1u) * static_cast<std::uint64_t>(h.chunk_plain_size)
+            + static_cast<std::uint64_t>(h.final_plaintext_chunk_len);
+        if (h.padded_plaintext_size != expected_size) {
+            throw InvalidArgument("padded_plaintext_size is inconsistent with chunk counts");
+        }
+    }
+    if (h.shard_count > h.global_chunk_count) {
+        throw InvalidArgument("shard_count > global_chunk_count");
+    }
+    if (h.max_shard_payload_len == 0) {
+        throw InvalidArgument("max_shard_payload_len is zero");
+    }
+    if (h.required_feature_flags != 0) {
+        throw InvalidArgument("non-zero required_feature_flags");
+    }
+    if (h.reserved0 != 0) {
+        throw InvalidArgument("non-zero reserved0 in global header");
+    }
+    if (!all_zero(ConstByteSpan{h.reserved1.data(), h.reserved1.size()})) {
+        throw InvalidArgument("non-zero reserved1 in global header");
+    }
+
+    return h;
+}
+
+// ---------------------------------------------------------------------------
+// ShardPublicHeaderV1 serialisation
+// ---------------------------------------------------------------------------
+
+Bytes serialize_shard_public_header(const ShardPublicHeaderV1& h) {
+    Bytes out;
+    out.reserve(kShardPublicHeaderV1Size);
+
+    append_bytes(out, ConstByteSpan{h.shard_magic.data(), h.shard_magic.size()});  // 8
+    append_u32_le(out, h.shard_header_len);                                         // 4
+    append_u32_le(out, h.shard_index);                                              // 4
+    append_u64_le(out, h.first_global_chunk_index);                                 // 8
+    append_u64_le(out, h.shard_chunk_count);                                        // 8
+    append_u64_le(out, h.shard_payload_len);                                        // 8
+    append_bytes(out, ConstByteSpan{h.header_mac.data(), h.header_mac.size()});    // 32
+    append_u64_le(out, h.reserved0);                                                // 8
+    // total: 80
+
+    if (out.size() != kShardPublicHeaderV1Size) {
         throw Error("internal shard header size mismatch");
     }
     return out;
 }
 
-Bytes serialize_shard_header_v1_for_mac(const ShardHeaderV1& header) {
-    ShardHeaderV1 canonical = header;
+Bytes serialize_shard_public_header_for_mac(const ShardPublicHeaderV1& h) {
+    ShardPublicHeaderV1 canonical = h;
     canonical.header_mac.fill(Byte{0});
-    return serialize_shard_header_v1(canonical);
+    return serialize_shard_public_header(canonical);
 }
 
-ShardHeaderV1 parse_shard_header_v1(ConstByteSpan bytes) {
-    if (bytes.size() < kShardHeaderV1Size) {
-        throw InvalidArgument("truncated shard header");
+ShardPublicHeaderV1 parse_shard_public_header(ConstByteSpan bytes) {
+    if (bytes.size() < kShardPublicHeaderV1Size) {
+        throw InvalidArgument("truncated shard public header");
     }
 
-    Reader reader(bytes.first(kShardHeaderV1Size), "truncated shard header");
+    Reader r(bytes.first(kShardPublicHeaderV1Size), "truncated shard public header");
+    ShardPublicHeaderV1 h;
 
-    auto magic = reader.read_bytes(kShardHeaderV1Magic.size());
-    if (!std::equal(magic.begin(), magic.end(), kShardHeaderV1Magic.begin(), kShardHeaderV1Magic.end())) {
-        throw InvalidArgument("wrong shard magic");
-    }
-
-    const auto version = reader.read_u16_le();
-    if (version != kShardHeaderV1Version) {
-        throw InvalidArgument("unsupported shard file version");
+    h.shard_magic = read_array<8>(r, "shard_magic");
+    if (!std::equal(h.shard_magic.begin(), h.shard_magic.end(),
+                    kShardHeaderV1Magic.begin(), kShardHeaderV1Magic.end())) {
+        throw InvalidArgument("wrong shard header magic");
     }
 
-    ShardHeaderV1 header;
-    header.suite_id = reader.read_u16_le();
+    h.shard_header_len         = r.read_u32_le();
+    h.shard_index              = r.read_u32_le();
+    h.first_global_chunk_index = r.read_u64_le();
+    h.shard_chunk_count        = r.read_u64_le();
+    h.shard_payload_len        = r.read_u64_le();
+    h.header_mac               = read_array<32>(r, "header_mac");
+    h.reserved0                = r.read_u64_le();
 
-    const auto header_len = reader.read_u32_le();
-    if (header_len != kShardHeaderV1Size) {
-        throw InvalidArgument("unsupported shard header length");
+    // Rejection rules for shard header fields.
+    if (h.shard_header_len != static_cast<std::uint32_t>(kShardPublicHeaderV1Size)) {
+        throw InvalidArgument("shard_header_len mismatch");
     }
-
-    header.archive_id = to_array<16>(reader.read_bytes(16), "truncated shard archive_id");
-    header.shard_index = reader.read_u32_le();
-    header.shard_count = reader.read_u32_le();
-    header.flags = reader.read_u32_le();
-
-    const auto reserved0 = reader.read_u32_le();
-    if (reserved0 != 0) {
-        throw InvalidArgument("unsupported non-zero shard header reserved field");
+    if (h.shard_chunk_count == 0) {
+        throw InvalidArgument("shard_chunk_count is zero");
     }
-
-    header.chunk_plain_size = reader.read_u64_le();
-    header.first_chunk_index = reader.read_u64_le();
-    header.chunk_count = reader.read_u64_le();
-    header.total_chunk_count = reader.read_u64_le();
-    header.shard_payload_len = reader.read_u64_le();
-    header.shard_payload_offset = reader.read_u64_le();
-    header.public_header_hash = to_array<32>(reader.read_bytes(32), "truncated shard public_header_hash");
-    header.header_mac = to_array<32>(reader.read_bytes(32), "truncated shard header_mac");
-
-    if (header.suite_id == 0) {
-        throw InvalidArgument("invalid shard suite_id");
+    if (h.shard_payload_len == 0) {
+        throw InvalidArgument("shard_payload_len is zero");
     }
-    if (header.shard_count == 0) {
-        throw InvalidArgument("invalid shard_count");
-    }
-    if (header.shard_index >= header.shard_count) {
-        throw InvalidArgument("shard_index out of range");
-    }
-    if ((header.flags & ~kShardHeaderV1FlagFinalShard) != 0) {
-        throw InvalidArgument("unsupported shard header flags");
-    }
-    if (header.chunk_plain_size == 0) {
-        throw InvalidArgument("invalid shard chunk_plain_size");
-    }
-    if (header.chunk_count == 0) {
-        throw InvalidArgument("invalid empty shard file");
-    }
-    if (header.total_chunk_count == kUnknownTotalChunkCount || header.total_chunk_count == 0) {
-        throw InvalidArgument("unfinalized shard file");
-    }
-    if (header.shard_payload_len == 0) {
-        throw InvalidArgument("invalid shard payload length");
-    }
-    if (header.shard_payload_offset == 0) {
-        throw InvalidArgument("invalid shard payload offset");
-    }
-    if (all_zero(ConstByteSpan{header.header_mac.data(), header.header_mac.size()})) {
-        throw InvalidArgument("missing shard header_mac");
-    }
-    if (header.first_chunk_index > std::numeric_limits<std::uint64_t>::max() - header.chunk_count) {
-        throw InvalidArgument("invalid shard chunk range overflow");
-    }
-    if (header.first_chunk_index + header.chunk_count > header.total_chunk_count) {
-        throw InvalidArgument("invalid shard chunk range");
+    if (h.reserved0 != 0) {
+        throw InvalidArgument("non-zero reserved0 in shard header");
     }
 
-    const bool final_flag = (header.flags & kShardHeaderV1FlagFinalShard) != 0;
-    const bool last_index = header.shard_index + 1 == header.shard_count;
-    if (final_flag != last_index) {
-        throw InvalidArgument("inconsistent final-shard marker");
-    }
-
-    return header;
+    return h;
 }
+
+// ---------------------------------------------------------------------------
+// Public header hash (BLAKE3-256 per FORMAT.md §15)
+// ---------------------------------------------------------------------------
+
+std::array<Byte, 32> compute_public_header_hash(
+    const GlobalPublicHeaderV1& global_header,
+    const ShardPublicHeaderV1&  shard_header) {
+    const auto global_bytes = serialize_global_public_header(global_header);
+    const auto shard_bytes  = serialize_shard_public_header_for_mac(shard_header);
+
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
+    blake3_hasher_update(&hasher, kPublicHeaderHashDomain.data(), kPublicHeaderHashDomain.size());
+    blake3_hasher_update(&hasher, global_bytes.data(), global_bytes.size());
+    blake3_hasher_update(&hasher, shard_bytes.data(), shard_bytes.size());
+
+    std::array<Byte, 32> out{};
+    blake3_hasher_finalize(&hasher, out.data(), out.size());
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Shard header MAC (HMAC-SHA256 via OpenSSL)
+// ---------------------------------------------------------------------------
 
 std::array<Byte, 32> compute_shard_header_mac(
-    ConstByteSpan header_authentication_key,
-    ConstByteSpan public_header_bytes,
-    const ShardHeaderV1& header) {
+    ConstByteSpan               header_authentication_key,
+    const GlobalPublicHeaderV1& global_header,
+    const ShardPublicHeaderV1&  shard_header) {
     if (header_authentication_key.empty()) {
         throw InvalidArgument("header authentication key is empty");
     }
 
-    constexpr unsigned char kDomain[] = "BSEAL header mac v1";
+    const auto global_bytes = serialize_global_public_header(global_header);
+    const auto shard_bytes  = serialize_shard_public_header_for_mac(shard_header);
 
-    const auto header_for_mac = serialize_shard_header_v1_for_mac(header);
-
+    // message = domain || global || shard_with_zero_mac
     Bytes message;
-    message.reserve(sizeof(kDomain) + public_header_bytes.size() + header_for_mac.size());
-    message.insert(message.end(), std::begin(kDomain), std::end(kDomain)); // includes trailing NUL
-    message.insert(message.end(), public_header_bytes.begin(), public_header_bytes.end());
-    message.insert(message.end(), header_for_mac.begin(), header_for_mac.end());
+    message.reserve(kHeaderMacDomain.size() + global_bytes.size() + shard_bytes.size());
+    message.insert(message.end(),
+        reinterpret_cast<const Byte*>(kHeaderMacDomain.data()),
+        reinterpret_cast<const Byte*>(kHeaderMacDomain.data()) + kHeaderMacDomain.size());
+    message.insert(message.end(), global_bytes.begin(), global_bytes.end());
+    message.insert(message.end(), shard_bytes.begin(), shard_bytes.end());
 
     std::array<Byte, 32> out{};
     unsigned int out_len = 0;
@@ -271,25 +457,23 @@ std::array<Byte, 32> compute_shard_header_mac(
 }
 
 bool verify_shard_header_mac(
-    ConstByteSpan header_authentication_key,
-    ConstByteSpan public_header_bytes,
-    const ShardHeaderV1& header) {
+    ConstByteSpan               header_authentication_key,
+    const GlobalPublicHeaderV1& global_header,
+    const ShardPublicHeaderV1&  shard_header) {
     const auto expected = compute_shard_header_mac(
-        header_authentication_key,
-        public_header_bytes,
-        header);
+        header_authentication_key, global_header, shard_header);
 
-    return CRYPTO_memcmp(expected.data(), header.header_mac.data(), expected.size()) == 0;
+    return CRYPTO_memcmp(
+        expected.data(),
+        shard_header.header_mac.data(),
+        expected.size()) == 0;
 }
 
-Bytes serialize_shard_file_v1_header(const ShardFileV1Header& header) {
-    return serialize_shard_header_v1(header);
-}
+// ---------------------------------------------------------------------------
+// ChunkFrameHeaderV1 — kept identical to original implementation
+// ---------------------------------------------------------------------------
 
-ShardFileV1Header parse_shard_file_v1_header(ConstByteSpan bytes) {
-    return parse_shard_header_v1(bytes);
-}
-
+namespace {
 
 void validate_chunk_frame_header_v1(const ChunkFrameHeaderV1& header) {
     if ((header.frame_flags & ~kChunkFrameKnownFlags) != 0) {
@@ -305,6 +489,8 @@ void validate_chunk_frame_header_v1(const ChunkFrameHeaderV1& header) {
         throw InvalidArgument("chunk frame tag length too large for this platform");
     }
 }
+
+} // namespace
 
 Bytes serialize_chunk_frame_header_v1(const ChunkFrameHeaderV1& header) {
     validate_chunk_frame_header_v1(header);
@@ -331,37 +517,47 @@ ChunkFrameHeaderV1 parse_chunk_frame_header_v1(ConstByteSpan bytes) {
         throw InvalidArgument("truncated frame header");
     }
 
-    Reader reader(bytes.first(kChunkFrameHeaderV1Size), "truncated frame header");
+    Reader r(bytes.first(kChunkFrameHeaderV1Size), "truncated frame header");
 
-    const auto magic = reader.read_bytes(kChunkFrameV1Magic.size());
-    if (!std::equal(magic.begin(), magic.end(), kChunkFrameV1Magic.begin(), kChunkFrameV1Magic.end())) {
+    const auto magic = r.read_bytes(kChunkFrameV1Magic.size());
+    if (!std::equal(magic.begin(), magic.end(),
+                    kChunkFrameV1Magic.begin(), kChunkFrameV1Magic.end())) {
         throw InvalidArgument("wrong chunk frame magic");
     }
 
-    const auto frame_header_len = reader.read_u16_le();
+    const auto frame_header_len = r.read_u16_le();
     if (frame_header_len != kChunkFrameHeaderV1Size) {
         throw InvalidArgument("unsupported chunk frame header length");
     }
 
     ChunkFrameHeaderV1 header;
-    header.frame_flags = reader.read_u16_le();
-    header.shard_index = reader.read_u32_le();
-    header.global_chunk_index = reader.read_u64_le();
-    header.plaintext_len = reader.read_u32_le();
-    header.ciphertext_len = reader.read_u64_le();
-    header.tag_len = reader.read_u16_le();
+    header.frame_flags         = r.read_u16_le();
+    header.shard_index         = r.read_u32_le();
+    header.global_chunk_index  = r.read_u64_le();
+    header.plaintext_len       = r.read_u32_le();
+    header.ciphertext_len      = r.read_u64_le();
+    header.tag_len             = r.read_u16_le();
 
-    const auto reserved0 = reader.read_u16_le();
+    const auto reserved0 = r.read_u16_le();
     if (reserved0 != 0) {
         throw InvalidArgument("non-zero chunk frame reserved0");
     }
 
-    const auto reserved1 = reader.read_bytes(4);
+    const auto reserved1 = r.read_bytes(4);
     if (!std::all_of(reserved1.begin(), reserved1.end(), [](Byte b) { return b == Byte{0}; })) {
         throw InvalidArgument("non-zero chunk frame reserved1");
     }
 
     validate_chunk_frame_header_v1(header);
+
+    // FORMAT.md rejection: tag_len must be 16, ciphertext_len must equal plaintext_len (v1 AEADs).
+    if (header.tag_len != 16) {
+        throw InvalidArgument("chunk frame tag_len must be 16");
+    }
+    if (header.ciphertext_len != static_cast<std::uint64_t>(header.plaintext_len)) {
+        throw InvalidArgument("chunk frame ciphertext_len must equal plaintext_len for v1 AEADs");
+    }
+
     return header;
 }
 
@@ -380,4 +576,5 @@ std::uint64_t chunk_frame_v1_encoded_size(const ChunkFrameHeaderV1& header) {
 
     return encoded_len;
 }
+
 } // namespace bseal::io

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "archive/RecordFormat.hpp"
 #include "common/Types.hpp"
+#include "io/ShardFrame.hpp"
 
 #include <array>
 #include <cstdint>
@@ -14,30 +14,30 @@
 namespace bseal::io {
 
 struct ShardInfo {
-    std::filesystem::path path;
-    archive::PublicHeaderV1 public_header{};
-    std::uint16_t suite_id{0};
-    std::array<Byte, 16> archive_id{};
-    std::uint32_t shard_index{0};
-    std::uint64_t chunk_plain_size{0};
-    std::uint64_t first_chunk_index{0};
-    std::uint64_t chunk_count{0};
-    std::uint64_t total_chunk_count{0};
-    std::array<Byte, 32> public_header_hash{};
-    std::uint64_t file_size{0};
-    std::uint32_t shard_count{0};
-    std::uint32_t shard_flags{0};
-    std::uint64_t shard_payload_len{0};
-    std::uint64_t shard_payload_offset{0};
-    std::array<Byte, 32> header_mac{};
+    std::filesystem::path  path;
+    GlobalPublicHeaderV1   global_header{};
+    ShardPublicHeaderV1    shard_header{};
+    std::array<Byte, 32>   public_header_hash{};
+    std::uint64_t          file_size{0};
+
+    // Convenience accessors (avoid redundant field access at call-sites).
+    [[nodiscard]] std::uint32_t shard_index()      const noexcept { return shard_header.shard_index; }
+    [[nodiscard]] std::uint64_t first_chunk_index() const noexcept { return shard_header.first_global_chunk_index; }
+    [[nodiscard]] std::uint64_t chunk_count()       const noexcept { return shard_header.shard_chunk_count; }
+    [[nodiscard]] std::uint64_t shard_payload_len() const noexcept { return shard_header.shard_payload_len; }
 };
 
 struct ShardReaderValidation {
-    std::optional<std::uint16_t> suite_id;
-    std::optional<std::array<Byte, 16>> archive_id;
-    std::optional<std::uint64_t> chunk_plain_size;
-    std::optional<std::array<Byte, 32>> public_header_hash;
-    std::optional<std::array<Byte, 32>> header_authentication_key;
+    /// If set, every shard's aead_alg_id is verified against this value.
+    std::optional<std::uint16_t>           suite_id;
+    /// If set, every shard's archive_id is verified against this value.
+    std::optional<std::array<Byte, 32>>    archive_id;
+    /// If set, every shard's chunk_plain_size is verified.
+    std::optional<std::uint64_t>           chunk_plain_size;
+    /// If set, every shard's public_header_hash is verified.
+    std::optional<std::array<Byte, 32>>    public_header_hash;
+    /// If set, per-shard header_mac is verified with this key.
+    std::optional<std::array<Byte, 32>>    header_authentication_key;
 };
 
 struct ChunkRecord {
@@ -46,11 +46,11 @@ struct ChunkRecord {
     std::uint64_t plaintext_size{0};
     std::uint16_t frame_flags{0};
 
-    // Exact 40 bytes from ChunkFrameHeaderV1 as stored on disk.
-    // DecryptPipeline uses these bytes as part of AEAD AAD.
+    /// Exact 40 bytes from ChunkFrameHeaderV1 as stored on disk.
+    /// DecryptPipeline uses these bytes as part of AEAD AAD.
     Bytes frame_header_bytes;
 
-    // Exact frame body: ciphertext || tag.
+    /// Exact frame body: ciphertext || tag.
     Bytes ciphertext;
 };
 
@@ -61,24 +61,26 @@ public:
     static std::vector<ShardInfo> discover(const std::filesystem::path& input_dir);
 
     [[nodiscard]] std::optional<ChunkRecord> read_next_chunk_record();
-    [[nodiscard]] std::optional<Bytes> read_next_cipher_chunk();
+    [[nodiscard]] std::optional<Bytes>       read_next_cipher_chunk();
 
+    /// Returns the public_header_hash of the first (shard index 0) shard.
     [[nodiscard]] const std::array<Byte, 32>& public_header_hash() const {
         return shards_.front().public_header_hash;
     }
+
 private:
     void validate_shards();
     void open_current_shard();
     void close_current_shard_and_check_trailing_garbage();
 
-    std::vector<ShardInfo> shards_;
-    ShardReaderValidation validation_{};
-    std::size_t current_shard_pos_{0};
-    std::uint64_t current_record_in_shard_{0};
-    std::uint64_t expected_total_chunk_count_{0};
-    std::ifstream current_stream_;
-    std::set<std::uint64_t> seen_chunk_indices_;
-    bool saw_final_chunk_{false};
+    std::vector<ShardInfo>   shards_;
+    ShardReaderValidation    validation_{};
+    std::size_t              current_shard_pos_{0};
+    std::uint64_t            current_record_in_shard_{0};
+    std::uint64_t            expected_total_chunk_count_{0};
+    std::ifstream            current_stream_;
+    std::set<std::uint64_t>  seen_chunk_indices_;
+    bool                     saw_final_chunk_{false};
 };
 
 } // namespace bseal::io

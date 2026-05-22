@@ -333,9 +333,9 @@ std::vector<std::string> encrypt_args(const fs::path& input,
         "--keyfile", keyfile_b.string(),
         "--suite", "xchacha20-poly1305",
         "--kdf", "fast",
-        "--chunk-size", "4K",
-        "--shard-size", "16K",
-        "--padding", "chunk",
+        "--chunk-size", "64K",   // minimum valid per FORMAT.md §3 (65536 bytes)
+        "--shard-size", "512K",
+        "--padding", "none",
     };
 }
 
@@ -371,6 +371,30 @@ void create_keyfiles(const fs::path& keyfile_a, const fs::path& keyfile_b) {
                           0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10,
                           0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
                       });
+}
+
+// Patch exactly 4 LE bytes at a fixed byte offset in the first .bin file.
+// Used to tamper with specific fields of GlobalPublicHeaderV1.
+void patch_u32_le_at_offset(const fs::path& sealed_dir, std::size_t byte_offset, std::uint32_t new_value) {
+    const auto files = list_bin_files(sealed_dir);
+    if (files.empty()) {
+        throw std::runtime_error("no .bin file found to patch");
+    }
+    std::fstream stream(files.front(), std::ios::in | std::ios::out | std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error("failed to open .bin file for patching");
+    }
+    stream.seekp(static_cast<std::streamoff>(byte_offset));
+    const std::uint8_t bytes[4] = {
+        static_cast<std::uint8_t>(new_value & 0xFFu),
+        static_cast<std::uint8_t>((new_value >> 8)  & 0xFFu),
+        static_cast<std::uint8_t>((new_value >> 16) & 0xFFu),
+        static_cast<std::uint8_t>((new_value >> 24) & 0xFFu),
+    };
+    stream.write(reinterpret_cast<const char*>(bytes), 4);
+    if (!stream) {
+        throw std::runtime_error("failed to write patched bytes");
+    }
 }
 
 void corrupt_first_bin_file(const fs::path& sealed_dir) {
@@ -460,7 +484,7 @@ TEST(BlackBoxCli, MissingKeyfileFailsBeforeEncryption) {
             "--kdf", "fast",
             "--chunk-size", "4K",
             "--shard-size", "16K",
-            "--padding", "chunk",
+            "--padding", "none",
         },
         "integration-passphrase\n");
 
@@ -646,6 +670,265 @@ TEST(BlackBoxCli, RefusesNonEmptyOutputDirectoryWithoutOverwrite) {
     EXPECT_EQ(restored_files.at("hello.txt"), read_file(input / "hello.txt"));
 }
 
+TEST(BlackBoxCli, PassphraseOnlyEncryptDecryptSucceeds) {
+    TempDir temp("bseal_integration_passphrase_only_roundtrip");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "secret.txt", "top secret contents");
+
+    // No --keyfile arguments.
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(),
+            "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+            "--chunk-size", "64K",
+            "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "passphrase-only\n");
+
+    EXPECT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+    EXPECT_FALSE(list_bin_files(sealed).empty());
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(),
+            "--output", output.string(),
+        },
+        "passphrase-only\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    const auto restored = collect_regular_files(output);
+    EXPECT_EQ(restored.at("secret.txt"), read_file(input / "secret.txt"));
+}
+
+TEST(BlackBoxCli, PassphraseOnlyWrongPassphraseFails) {
+    TempDir temp("bseal_integration_passphrase_only_wrong_pass");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "some data");
+
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(),
+            "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+            "--chunk-size", "64K",
+            "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "correct-passphrase\n");
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(),
+            "--output", output.string(),
+        },
+        "wrong-passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+}
+
+TEST(BlackBoxCli, PassphraseOnlyDecryptWithExtraKeyfileFails) {
+    TempDir temp("bseal_integration_passphrase_only_extra_keyfile");
+
+    const auto input   = temp.subdir("input");
+    const auto sealed  = temp.subdir("sealed");
+    const auto output  = temp.subdir("output");
+    const auto keyfile = temp.subdir("keys") / "extra.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "some data");
+    write_binary_file(keyfile, std::vector<std::uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
+
+    // Encrypt with passphrase only.
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(),
+            "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+            "--chunk-size", "64K",
+            "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "passphrase\n");
+
+    // Decrypt with an extra keyfile that was not used during encryption.
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(),
+            "--output", output.string(),
+            "--keyfile", keyfile.string(),
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+}
+
+TEST(BlackBoxCli, KeyfileArchiveDecryptWithoutKeyfileFails) {
+    TempDir temp("bseal_integration_keyfile_required");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "some data");
+    create_keyfiles(key_a, key_b);
+
+    // Encrypt with two keyfiles.
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        encrypt_args(input, sealed, key_a, key_b),
+        "passphrase\n");
+
+    // Decrypt without any keyfile.
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(),
+            "--output", output.string(),
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+}
+
+// GlobalPublicHeaderV1 KDF field byte offsets (FORMAT.md §5, fixed 192-byte header).
+static constexpr std::size_t kOffsetArgon2MemoryKiB  = 100;
+static constexpr std::size_t kOffsetArgon2Iterations = 104;
+static constexpr std::size_t kOffsetArgon2Parallelism = 108;
+
+TEST(BlackBoxCli, TamperedKdfMemoryFailsAuthentication) {
+    TempDir temp("bseal_integration_tampered_kdf_memory");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key    = temp.subdir("keys") / "key.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "data");
+    write_binary_file(key, {0xAA, 0xBB, 0xCC, 0xDD});
+
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
+        },
+        "passphrase\n");
+
+    // Bump argon2_memory_kib by 1 KiB — changes KDF output, breaks header MAC.
+    patch_u32_le_at_offset(sealed, kOffsetArgon2MemoryKiB, 256u * 1024u + 1u);
+
+    const auto result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string(), "--keyfile", key.string()},
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+}
+
+TEST(BlackBoxCli, TamperedKdfIterationsFailsAuthentication) {
+    TempDir temp("bseal_integration_tampered_kdf_iterations");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key    = temp.subdir("keys") / "key.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "data");
+    write_binary_file(key, {0xAA, 0xBB, 0xCC, 0xDD});
+
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
+        },
+        "passphrase\n");
+
+    // Change iterations from 3 to 2 — different KDF output, header MAC fails.
+    patch_u32_le_at_offset(sealed, kOffsetArgon2Iterations, 2u);
+
+    const auto result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string(), "--keyfile", key.string()},
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+}
+
+TEST(BlackBoxCli, TamperedKdfParallelismFailsAuthentication) {
+    TempDir temp("bseal_integration_tampered_kdf_parallelism");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key    = temp.subdir("keys") / "key.bin";
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "data");
+    write_binary_file(key, {0xAA, 0xBB, 0xCC, 0xDD});
+
+    run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
+        },
+        "passphrase\n");
+
+    // Change parallelism from 4 to 2 — different KDF output, header MAC fails.
+    patch_u32_le_at_offset(sealed, kOffsetArgon2Parallelism, 2u);
+
+    const auto result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string(), "--keyfile", key.string()},
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+}
+
 TEST(BlackBoxCli, EmptyDirectoryCanBeEncryptedAndDecrypted) {
     TempDir temp("bseal_integration_empty_directory");
 
@@ -673,4 +956,245 @@ TEST(BlackBoxCli, EmptyDirectoryCanBeEncryptedAndDecrypted) {
 
     EXPECT_EQ(decrypt_result.exit_code, 0);
     EXPECT_TRUE(collect_regular_files(output).empty());
+}
+
+// ---------------------------------------------------------------------------
+// Padding mode gating tests
+// ---------------------------------------------------------------------------
+
+TEST(BlackBoxCli, PaddingNoneSucceeds) {
+    TempDir temp("bseal_integration_padding_none");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload");
+
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+}
+
+TEST(BlackBoxCli, PaddingChunkRoundTrip) {
+    TempDir temp("bseal_integration_padding_chunk");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload for chunk padding test");
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "chunk",
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    EXPECT_EQ(read_file(output / "data.txt"), "payload for chunk padding test");
+}
+
+TEST(BlackBoxCli, PaddingPower2RoundTrip) {
+    TempDir temp("bseal_integration_padding_power2");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload for power2 padding test");
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "power2",
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    EXPECT_EQ(read_file(output / "data.txt"), "payload for power2 padding test");
+}
+
+TEST(BlackBoxCli, PaddingFixedSizeRoundTrip) {
+    TempDir temp("bseal_integration_padding_fixed_size");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload for fixed-size padding test");
+
+    // 1M is well above the tiny test archive size.
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "fixed-size=1M",
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    EXPECT_EQ(read_file(output / "data.txt"), "payload for fixed-size padding test");
+}
+
+TEST(BlackBoxCli, PaddingFixedSizeTooSmallFails) {
+    TempDir temp("bseal_integration_padding_fixed_too_small");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    // Write a file large enough to exceed a very small fixed-size target.
+    write_file(input / "data.txt", repeated("x", 10000));
+
+    // 1K is smaller than the archive produced from a 10000-byte file.
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "fixed-size=1K",
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+    EXPECT_TRUE(contains_text(result.stderr_text, "smaller than the unpadded archive"))
+        << "expected size-too-small error in stderr: " << result.stderr_text;
+}
+
+TEST(BlackBoxCli, EncryptOutputCleanedUpOnFailure) {
+    // Verify that a failed encryption does not leave stale .bin shards in the output directory.
+    // We trigger failure by passing a non-existent input directory.
+    TempDir temp("bseal_integration_cleanup_on_failure");
+
+    const auto input  = temp.subdir("does-not-exist");  // deliberately absent
+    const auto sealed = temp.subdir("sealed");
+    fs::create_directories(sealed);
+
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+        },
+        "passphrase\n");
+
+    EXPECT_NE(result.exit_code, 0) << "encryption must fail when input does not exist";
+
+    // Verify no .bin shards were left behind.
+    std::error_code ec;
+    bool found_bin = false;
+    for (const auto& entry : fs::directory_iterator(sealed, ec)) {
+        if (entry.path().extension() == ".bin") {
+            found_bin = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(found_bin)
+        << "no .bin shard files should remain in the output directory after a failed encryption";
+}
+
+TEST(BlackBoxCli, LargeFileSingleShardRoundTrip) {
+    // Round-trip a file large enough to span multiple FileBytes records and verify
+    // that the streaming path reconstructs the exact bytes (not just size).
+    TempDir temp("bseal_integration_large_file");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    fs::create_directories(sealed);
+    fs::create_directories(output);
+
+    // 300 KiB — forces multiple FileBytes records at the default 64 KiB payload target.
+    const std::string content = repeated("abcdefghijklmnopqrstuvwxyz0123456789", 8192);
+    write_file(input / "large.bin", content);
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "2M",
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    EXPECT_EQ(read_file(output / "large.bin"), content)
+        << "round-trip must reproduce exact file content";
 }

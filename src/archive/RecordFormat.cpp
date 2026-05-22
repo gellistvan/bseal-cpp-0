@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <sodium.h>
 #include <limits>
 #include <string>
 
@@ -111,41 +110,6 @@ private:
 };
 
 
-constexpr std::string_view kPublicHeaderHashDomain{
-    "BSEAL public header hash v1",
-    sizeof("BSEAL public header hash v1") // include the trailing NUL byte required by FORMAT.md
-};
-
-void ensure_sodium_initialized()
-{
-    static const int rc = sodium_init();
-    if (rc < 0) {
-        throw Error("libsodium initialization failed");
-    }
-}
-
-void hash_update_bytes(crypto_generichash_state& state, ConstByteSpan bytes)
-{
-    if (!bytes.empty()) {
-        crypto_generichash_update(
-            &state,
-            bytes.data(),
-            static_cast<unsigned long long>(bytes.size())
-        );
-    }
-}
-
-void hash_update_text(crypto_generichash_state& state, std::string_view text)
-{
-    if (!text.empty()) {
-        crypto_generichash_update(
-            &state,
-            reinterpret_cast<const unsigned char*>(text.data()),
-            static_cast<unsigned long long>(text.size())
-        );
-    }
-}
-
 bool valid_record_type(std::uint8_t value) {
     switch (static_cast<RecordType>(value)) {
         case RecordType::ArchiveBegin:
@@ -193,111 +157,6 @@ std::string path_to_archive_string(const std::filesystem::path& path) {
 }
 
 } // namespace
-
-Bytes serialize_public_header(const PublicHeaderV1& header) {
-    Bytes out;
-    out.reserve(kPublicHeaderV1SerializedSize);
-
-    append_bytes(out, ConstByteSpan{reinterpret_cast<const Byte*>(header.magic.data()),
-                                    header.magic.size()});
-    append_u16_le(out, header.version);
-    append_u16_le(out, header.suite_id);
-    append_bytes(out, ConstByteSpan{header.archive_id.data(), header.archive_id.size()});
-    append_u32_le(out, header.shard_index);
-    append_u32_le(out, header.header_len == 0
-                           ? static_cast<std::uint32_t>(kPublicHeaderV1SerializedSize)
-                           : header.header_len);
-    append_bytes(out, ConstByteSpan{header.kdf_salt.data(), header.kdf_salt.size()});
-    append_u32_le(out, header.argon2_memory_kib);
-    append_u32_le(out, header.argon2_iterations);
-    append_u32_le(out, header.argon2_parallelism);
-    append_u32_le(out, header.chunk_plain_size);
-    append_u64_le(out, header.shard_payload_size);
-    append_bytes(out, ConstByteSpan{header.header_mac.data(), header.header_mac.size()});
-
-    if (out.size() != kPublicHeaderV1SerializedSize) {
-        throw Error("internal public header size mismatch");
-    }
-    return out;
-}
-
-    Bytes serialize_public_header_for_hash(const PublicHeaderV1& header)
-{
-    PublicHeaderV1 canonical = header;
-
-    // FORMAT.md requires public_header_hash input to exclude header_mac, or
-    // equivalently include it as all-zero bytes. Never let the keyed MAC feed
-    // the unkeyed public-header hash.
-    canonical.header_mac.fill(Byte{0});
-
-    return serialize_public_header(canonical);
-}
-
-    std::array<Byte, 32> compute_public_header_hash(const PublicHeaderV1& header)
-{
-    ensure_sodium_initialized();
-
-    const auto canonical_header = serialize_public_header_for_hash(header);
-
-    std::array<Byte, 32> out{};
-    crypto_generichash_state state{};
-
-    if (crypto_generichash_init(&state, nullptr, 0, out.size()) != 0) {
-        throw Error("public header hash initialization failed");
-    }
-
-    hash_update_text(state, kPublicHeaderHashDomain);
-    hash_update_bytes(
-        state,
-        ConstByteSpan{canonical_header.data(), canonical_header.size()}
-    );
-
-    if (crypto_generichash_final(&state, out.data(), out.size()) != 0) {
-        throw Error("public header hash finalization failed");
-    }
-
-    return out;
-}
-
-PublicHeaderV1 parse_public_header(ConstByteSpan bytes) {
-    if (bytes.size() < kPublicHeaderV1SerializedSize) {
-        throw InvalidArgument("public header is too short");
-    }
-
-    Reader reader(bytes.first(kPublicHeaderV1SerializedSize));
-    PublicHeaderV1 header{};
-
-    const auto magic = reader.bytes(header.magic.size());
-    std::memcpy(header.magic.data(), magic.data(), header.magic.size());
-
-    const std::array<char, 8> expected{'B', 'S', 'E', 'A', 'L', '0', '1', '\0'};
-    if (header.magic != expected) {
-        throw InvalidArgument("invalid BSEAL public header magic");
-    }
-
-    header.version = reader.u16_le();
-    header.suite_id = reader.u16_le();
-    std::ranges::copy(reader.bytes(header.archive_id.size()), header.archive_id.begin());
-    header.shard_index = reader.u32_le();
-    header.header_len = reader.u32_le();
-    std::ranges::copy(reader.bytes(header.kdf_salt.size()), header.kdf_salt.begin());
-    header.argon2_memory_kib = reader.u32_le();
-    header.argon2_iterations = reader.u32_le();
-    header.argon2_parallelism = reader.u32_le();
-    header.chunk_plain_size = reader.u32_le();
-    header.shard_payload_size = reader.u64_le();
-    std::ranges::copy(reader.bytes(header.header_mac.size()), header.header_mac.begin());
-    reader.require_eof("public header");
-
-    if (header.version != 1) {
-        throw InvalidArgument("unsupported BSEAL public header version");
-    }
-    if (header.header_len != kPublicHeaderV1SerializedSize) {
-        throw InvalidArgument("unsupported BSEAL public header length");
-    }
-
-    return header;
-}
 
 Bytes serialize_record(const ArchiveRecord& record) {
     Bytes out;

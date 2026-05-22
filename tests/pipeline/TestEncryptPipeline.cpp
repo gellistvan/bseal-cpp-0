@@ -20,7 +20,7 @@ TEST(EncryptPipeline, ThrowsWhenBackendIsNull) {
     archive::ArchiveWriter archive_writer(
         archive::ArchiveWriterOptions{
             input_root.path(),
-            128,
+            kTestHeaderChunkPlainSize,
             true,
             true,
             false,
@@ -29,7 +29,7 @@ TEST(EncryptPipeline, ThrowsWhenBackendIsNull) {
     io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path()));
 
     EncryptPipeline pipeline(
-        make_encrypt_options(128),
+        make_encrypt_options(),
         nullptr,
         make_test_keys(),
         std::move(archive_writer),
@@ -44,13 +44,13 @@ TEST(EncryptPipeline, ThrowsWhenChunkSizeIsZero) {
 
     create_sample_tree(input_root.path());
 
-    auto options = make_encrypt_options(128);
+    auto options = make_encrypt_options();
     options.chunk_plain_size = 0;
 
     archive::ArchiveWriter archive_writer(
         archive::ArchiveWriterOptions{
             input_root.path(),
-            128,
+            kTestHeaderChunkPlainSize,
             true,
             true,
             false,
@@ -80,7 +80,7 @@ TEST(EncryptPipeline, ThrowsWhenChunkKeySizeDoesNotMatchBackend) {
     archive::ArchiveWriter archive_writer(
         archive::ArchiveWriterOptions{
             input_root.path(),
-            128,
+            kTestHeaderChunkPlainSize,
             true,
             true,
             false,
@@ -89,7 +89,7 @@ TEST(EncryptPipeline, ThrowsWhenChunkKeySizeDoesNotMatchBackend) {
     io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path()));
 
     EncryptPipeline pipeline(
-        make_encrypt_options(128),
+        make_encrypt_options(),
         std::make_unique<TestAeadBackend>(),
         std::move(keys),
         std::move(archive_writer),
@@ -145,23 +145,28 @@ TEST(EncryptPipeline, PropagatesWorkerFailureAndDoesNotHang) {
     TempDir input_root("bseal_encrypt_failure_input");
     TempDir sealed_root("bseal_encrypt_failure_sealed");
 
+    // Write a file large enough to produce at least 2 chunks at kTestHeaderChunkPlainSize.
     create_sample_tree(input_root.path());
+    // 16 * 4097 = 65552 bytes, enough to span 2 chunks at kTestHeaderChunkPlainSize.
+    write_binary_file(
+        input_root.path() / "large.bin",
+        repeated_pattern("ABCDEFGHIJKLMNOP", 4097));
 
     auto backend = std::make_unique<TestAeadBackend>(1);
 
     archive::ArchiveWriter archive_writer(
         archive::ArchiveWriterOptions{
             input_root.path(),
-            128,
+            kTestHeaderChunkPlainSize,
             true,
             true,
             false,
         });
 
-    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path()));
+    io::ShardWriter shard_writer(make_test_shard_writer_options(sealed_root.path()));
 
     EncryptPipeline pipeline(
-        make_encrypt_options(128),
+        make_encrypt_options(),
         std::move(backend),
         make_test_keys(),
         std::move(archive_writer),

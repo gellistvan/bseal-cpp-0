@@ -5,12 +5,13 @@
 #include "common/Errors.hpp"
 
 #include <algorithm>
+#include <argon2.h>
+#include <blake3.h>
 #include <fstream>
 #include <limits>
 #include <memory>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
-#include <sodium.h>
 #include <string>
 #include <string_view>
 
@@ -18,13 +19,6 @@ namespace bseal::crypto {
 namespace {
 
 constexpr std::size_t kIoBufferSize = 1024 * 1024;
-
-void ensure_sodium_initialized() {
-    static const int rc = sodium_init();
-    if (rc < 0) {
-        throw Error("libsodium initialization failed");
-    }
-}
 
 int checked_int_size(std::size_t value, const char* what) {
     if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
@@ -45,42 +39,22 @@ void append_le64(Bytes& out, std::uint64_t value) {
     }
 }
 
-void generic_hash_update_text(crypto_generichash_state& state, std::string_view text) {
-    crypto_generichash_update(
-        &state,
-        reinterpret_cast<const unsigned char*>(text.data()),
-        static_cast<unsigned long long>(text.size())
-    );
+// ---------------------------------------------------------------------------
+// BLAKE3-256 helpers
+// ---------------------------------------------------------------------------
+//
+// Used for keyfile digests and keyfile mix as required by FORMAT.md §6.3 and §8.
+
+/// Feed a null-terminated C string literal including its null terminator.
+/// FORMAT.md §8 domain strings include the trailing '\0'.
+void blake3_update_cstr_with_nul(blake3_hasher& hasher, const char* cstr, std::size_t len_including_nul) {
+    blake3_hasher_update(&hasher, reinterpret_cast<const void*>(cstr), len_including_nul);
 }
 
-void generic_hash_update_bytes(crypto_generichash_state& state, ConstByteSpan bytes) {
+void blake3_update_bytes(blake3_hasher& hasher, ConstByteSpan bytes) {
     if (!bytes.empty()) {
-        crypto_generichash_update(
-            &state,
-            bytes.data(),
-            static_cast<unsigned long long>(bytes.size())
-        );
+        blake3_hasher_update(&hasher, bytes.data(), bytes.size());
     }
-}
-
-std::array<Byte, 32> generic_hash_32(std::string_view domain, ConstByteSpan data) {
-    ensure_sodium_initialized();
-
-    std::array<Byte, 32> out{};
-
-    crypto_generichash_state state{};
-    if (crypto_generichash_init(&state, nullptr, 0, out.size()) != 0) {
-        throw Error("crypto_generichash initialization failed");
-    }
-
-    generic_hash_update_text(state, domain);
-    generic_hash_update_bytes(state, data);
-
-    if (crypto_generichash_final(&state, out.data(), out.size()) != 0) {
-        throw Error("crypto_generichash finalization failed");
-    }
-
-    return out;
 }
 
 SecureBuffer hkdf_sha256(ConstByteSpan ikm,
@@ -147,39 +121,12 @@ SecureBuffer hkdf_sha256(ConstByteSpan ikm,
     return out;
 }
 
-std::array<Byte, crypto_pwhash_SALTBYTES>
-derive_argon2_salt(const std::array<Byte, 32>& kdf_salt,
-                   const std::array<Byte, 16>& archive_id) {
-    Bytes framed;
-    framed.reserve(32 + 16);
-    framed.insert(framed.end(), kdf_salt.begin(), kdf_salt.end());
-    framed.insert(framed.end(), archive_id.begin(), archive_id.end());
-
-    const auto full = generic_hash_32("BSEAL Argon2id salt v1", framed);
-
-    std::array<Byte, crypto_pwhash_SALTBYTES> salt{};
-    std::copy_n(full.begin(), salt.size(), salt.begin());
-
-    secure_memzero(framed.data(), framed.size());
-    return salt;
-}
-
-void require_u32_range( std::uint32_t value, std::uint32_t min_value, std::uint32_t max_value,
+void require_u32_range(std::uint32_t value, std::uint32_t min_value, std::uint32_t max_value,
         const char* name
     ) {
     if (value < min_value || value > max_value) {
         throw InvalidArgument(std::string(name) + " is outside the allowed range");
     }
-}
-
-std::size_t memory_kib_to_bytes(std::uint32_t memory_kib) {
-    constexpr auto max_size = std::numeric_limits<std::size_t>::max();
-
-    if (static_cast<std::size_t>(memory_kib) > max_size / 1024u) {
-        throw InvalidArgument("Argon2id memory_kib is too large for this platform");
-    }
-
-    return static_cast<std::size_t>(memory_kib) * 1024u;
 }
 } // namespace
 
@@ -215,12 +162,6 @@ void validate_kdf_params(const KdfParams& params) {
 
 std::vector<KeyfileDigest>
 hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
-    ensure_sodium_initialized();
-
-    if (keyfiles.empty()) {
-        throw InvalidArgument("at least one keyfile is required");
-    }
-
     std::vector<KeyfileDigest> digests;
     digests.reserve(keyfiles.size());
 
@@ -238,27 +179,28 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
             throw InvalidArgument("failed to open keyfile: " + path.string());
         }
 
-        crypto_generichash_state state{};
-        if (crypto_generichash_init(&state, nullptr, 0, 32) != 0) {
-            throw Error("keyfile hash initialization failed");
-        }
+        // FORMAT.md §8:
+        //   keyfile_digest[i] = BLAKE3-256(
+        //       "BSEAL keyfile digest v1\0" || u64le(keyfile_size) || keyfile_bytes)
+        //
+        // The domain string includes the null terminator as specified.
+        blake3_hasher hasher;
+        blake3_hasher_init(&hasher);
 
-        generic_hash_update_text(state, "BSEAL keyfile digest v1");
+        static constexpr char kDigestDomain[] = "BSEAL keyfile digest v1";
+        // Feed domain including the null terminator (sizeof includes it).
+        blake3_update_cstr_with_nul(hasher, kDigestDomain, sizeof(kDigestDomain));
 
         Bytes size_frame;
         append_le64(size_frame, static_cast<std::uint64_t>(file_size));
-        generic_hash_update_bytes(state, size_frame);
+        blake3_update_bytes(hasher, size_frame);
         secure_memzero(size_frame.data(), size_frame.size());
 
         while (in) {
             in.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
             const auto got = in.gcount();
             if (got > 0) {
-                crypto_generichash_update(
-                    &state,
-                    buffer.data(),
-                    static_cast<unsigned long long>(got)
-                );
+                blake3_hasher_update(&hasher, buffer.data(), static_cast<std::size_t>(got));
             }
         }
 
@@ -267,9 +209,7 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
         }
 
         KeyfileDigest digest{};
-        if (crypto_generichash_final(&state, digest.digest.data(), digest.digest.size()) != 0) {
-            throw Error("keyfile hash finalization failed");
-        }
+        blake3_hasher_finalize(&hasher, digest.digest.data(), BLAKE3_OUT_LEN);
 
         digests.push_back(digest);
     }
@@ -280,40 +220,33 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
 
 std::array<Byte, 32>
 mix_keyfile_digests(const std::vector<KeyfileDigest>& digests) {
-    ensure_sodium_initialized();
+    // FORMAT.md §8: zero-keyfile mode is valid — count=0, no digest bytes fed.
+    //   keyfile_mix = BLAKE3-256(
+    //       "BSEAL keyfile mix v1\0" || u32le(keyfile_count) || keyfile_digest[0] || ...)
+    //
+    // The domain string includes the null terminator as specified.
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
 
-    if (digests.empty()) {
-        throw InvalidArgument("at least one keyfile digest is required");
-    }
-
-    crypto_generichash_state state{};
-    std::array<Byte, 32> out{};
-
-    if (crypto_generichash_init(&state, nullptr, 0, out.size()) != 0) {
-        throw Error("keyfile digest mixer initialization failed");
-    }
-
-    generic_hash_update_text(state, "BSEAL keyfile list v1");
+    static constexpr char kMixDomain[] = "BSEAL keyfile mix v1";
+    // Feed domain including the null terminator (sizeof includes it).
+    blake3_update_cstr_with_nul(hasher, kMixDomain, sizeof(kMixDomain));
 
     Bytes count_frame;
     append_le32(count_frame, static_cast<std::uint32_t>(digests.size()));
-    generic_hash_update_bytes(state, count_frame);
+    blake3_update_bytes(hasher, count_frame);
     secure_memzero(count_frame.data(), count_frame.size());
 
     for (const auto& digest : digests) {
-        generic_hash_update_bytes(state, ConstByteSpan{digest.digest.data(), digest.digest.size()});
+        blake3_update_bytes(hasher, ConstByteSpan{digest.digest.data(), digest.digest.size()});
     }
 
-    if (crypto_generichash_final(&state, out.data(), out.size()) != 0) {
-        throw Error("keyfile digest mixer finalization failed");
-    }
-
+    std::array<Byte, 32> out{};
+    blake3_hasher_finalize(&hasher, out.data(), out.size());
     return out;
 }
 
 SecureBuffer derive_master_seed(const KdfInput& input) {
-    ensure_sodium_initialized();
-
     if (input.passphrase_utf8.empty()) {
         throw InvalidArgument("passphrase must not be empty");
     }
@@ -323,28 +256,24 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
     const auto keyfile_digests = hash_keyfiles_blake3(input.keyfiles);
     auto keyfile_mix = mix_keyfile_digests(keyfile_digests);
 
-    const auto argon2_salt = derive_argon2_salt(input.salt, input.archive_id);
-
     SecureBuffer pass_key(input.params.output_bytes);
 
-    const std::size_t memlimit = memory_kib_to_bytes(input.params.memory_kib);
-    const unsigned long long opslimit = static_cast<unsigned long long>(input.params.iterations);
-
-    // libsodium crypto_pwhash() does not expose Argon2 parallelism directly. The parameter remains
-    // in the archive header for compatibility with implementations that use libargon2 directly.
-    const int rc = crypto_pwhash(
-        pass_key.data(),
-        static_cast<unsigned long long>(pass_key.size()),
+    // FORMAT.md §8: pass_key = Argon2id(password, salt=kdf_salt, memory, iterations, parallelism)
+    // The salt is the 32-byte kdf_salt directly; all three cost parameters are honored.
+    const int rc = argon2id_hash_raw(
+        input.params.iterations,       // t_cost
+        input.params.memory_kib,       // m_cost (KiB — libargon2 takes KiB, not bytes)
+        input.params.parallelism,      // lanes/threads
         input.passphrase_utf8.data(),
-        static_cast<unsigned long long>(input.passphrase_utf8.size()),
-        argon2_salt.data(),
-        opslimit,
-        memlimit,
-        crypto_pwhash_ALG_ARGON2ID13
+        input.passphrase_utf8.size(),
+        input.salt.data(),             // 32-byte kdf_salt per FORMAT.md §8
+        input.salt.size(),
+        pass_key.data(),
+        pass_key.size()
     );
 
-    if (rc != 0) {
-        throw Error("Argon2id derivation failed; memory limit may be too high for this system");
+    if (rc != ARGON2_OK) {
+        throw Error(std::string("Argon2id derivation failed: ") + argon2_error_message(rc));
     }
 
     Bytes ikm;

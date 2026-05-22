@@ -1,0 +1,6 @@
+[submodule "submodules/blake3"]
+	path = submodules/blake3
+	url = https://github.com/BLAKE3-team/BLAKE3
+[submodule "submodules/argon2"]
+	path = submodules/argon2
+	url = https://github.com/P-H-C/phc-winner-argon2
