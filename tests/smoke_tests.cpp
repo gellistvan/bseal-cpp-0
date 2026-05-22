@@ -45,7 +45,7 @@ int main() {
     auto features = bseal::platform::detect_cpu_features();
     (void)features;
 
-    const char* argv[] = {"bseal", "encrypt", "--input", "in", "--output", "out", "--keyfile", "k.bin", "--passphrase-prompt", "--suite", "xchacha20-poly1305", "--kdf", "strong", "--chunk-size", "16M", "--shard-size", "4G", "--padding", "power2"};
+    const char* argv[] = {"bseal", "encrypt", "--input", "in", "--output", "out", "--keyfile", "k.bin", "--passphrase-prompt", "--suite", "xchacha20-poly1305", "--kdf", "strong", "--chunk-size", "16M", "--shard-size", "4G", "--padding", "none"};
     auto parsed = bseal::cli::parse_args(static_cast<int>(sizeof(argv) / sizeof(argv[0])), const_cast<char**>(argv));
     check(parsed.command == bseal::cli::Command::Encrypt, "CLI command parse failed");
     check(parsed.encrypt.keyfiles.size() == 1, "CLI keyfile parse failed");

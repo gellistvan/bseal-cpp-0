@@ -335,7 +335,7 @@ std::vector<std::string> encrypt_args(const fs::path& input,
         "--kdf", "fast",
         "--chunk-size", "64K",   // minimum valid per FORMAT.md §3 (65536 bytes)
         "--shard-size", "512K",
-        "--padding", "chunk",
+        "--padding", "none",
     };
 }
 
@@ -484,7 +484,7 @@ TEST(BlackBoxCli, MissingKeyfileFailsBeforeEncryption) {
             "--kdf", "fast",
             "--chunk-size", "4K",
             "--shard-size", "16K",
-            "--padding", "chunk",
+            "--padding", "none",
         },
         "integration-passphrase\n");
 
@@ -691,7 +691,7 @@ TEST(BlackBoxCli, PassphraseOnlyEncryptDecryptSucceeds) {
             "--kdf", "fast",
             "--chunk-size", "64K",
             "--shard-size", "512K",
-            "--padding", "chunk",
+            "--padding", "none",
         },
         "passphrase-only\n");
 
@@ -733,7 +733,7 @@ TEST(BlackBoxCli, PassphraseOnlyWrongPassphraseFails) {
             "--kdf", "fast",
             "--chunk-size", "64K",
             "--shard-size", "512K",
-            "--padding", "chunk",
+            "--padding", "none",
         },
         "correct-passphrase\n");
 
@@ -772,7 +772,7 @@ TEST(BlackBoxCli, PassphraseOnlyDecryptWithExtraKeyfileFails) {
             "--kdf", "fast",
             "--chunk-size", "64K",
             "--shard-size", "512K",
-            "--padding", "chunk",
+            "--padding", "none",
         },
         "passphrase\n");
 
@@ -846,7 +846,7 @@ TEST(BlackBoxCli, TamperedKdfMemoryFailsAuthentication) {
             "--input", input.string(), "--output", sealed.string(),
             "--keyfile", key.string(),
             "--suite", "xchacha20-poly1305",
-            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "chunk",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
         },
         "passphrase\n");
 
@@ -880,7 +880,7 @@ TEST(BlackBoxCli, TamperedKdfIterationsFailsAuthentication) {
             "--input", input.string(), "--output", sealed.string(),
             "--keyfile", key.string(),
             "--suite", "xchacha20-poly1305",
-            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "chunk",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
         },
         "passphrase\n");
 
@@ -914,7 +914,7 @@ TEST(BlackBoxCli, TamperedKdfParallelismFailsAuthentication) {
             "--input", input.string(), "--output", sealed.string(),
             "--keyfile", key.string(),
             "--suite", "xchacha20-poly1305",
-            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "chunk",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
         },
         "passphrase\n");
 
@@ -956,4 +956,107 @@ TEST(BlackBoxCli, EmptyDirectoryCanBeEncryptedAndDecrypted) {
 
     EXPECT_EQ(decrypt_result.exit_code, 0);
     EXPECT_TRUE(collect_regular_files(output).empty());
+}
+
+// ---------------------------------------------------------------------------
+// Padding mode gating tests
+// ---------------------------------------------------------------------------
+
+TEST(BlackBoxCli, PaddingNoneSucceeds) {
+    TempDir temp("bseal_integration_padding_none");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload");
+
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+}
+
+TEST(BlackBoxCli, PaddingChunkRejected) {
+    TempDir temp("bseal_integration_padding_chunk_rejected");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload");
+
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "chunk",
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+    EXPECT_TRUE(contains_text(result.stderr_text, "not yet implemented"))
+        << "expected 'not yet implemented' in stderr: " << result.stderr_text;
+}
+
+TEST(BlackBoxCli, PaddingPower2Rejected) {
+    TempDir temp("bseal_integration_padding_power2_rejected");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload");
+
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "power2",
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+    EXPECT_TRUE(contains_text(result.stderr_text, "not yet implemented"))
+        << "expected 'not yet implemented' in stderr: " << result.stderr_text;
+}
+
+TEST(BlackBoxCli, PaddingFixedSizeRejected) {
+    TempDir temp("bseal_integration_padding_fixed_size_rejected");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload");
+
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "fixed-size=1M",
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+    EXPECT_TRUE(contains_text(result.stderr_text, "not yet implemented"))
+        << "expected 'not yet implemented' in stderr: " << result.stderr_text;
 }

@@ -295,7 +295,7 @@ std::vector<std::string> encrypt_args(const fs::path& input,
       "--kdf", "fast",
       "--chunk-size", "64K",   // minimum valid per FORMAT.md §3 (65536 bytes)
       "--shard-size", "64K",   // 64K < one frame (65592 bytes) → forces a new shard per chunk
-      "--padding", "chunk",
+      "--padding", "none",
   };
 }
 
