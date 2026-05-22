@@ -4,7 +4,7 @@ BSEAL is an experimental C++20 command-line tool for sealing a directory into ra
 
 The project has moved beyond the original skeleton: the CLI, application layer, archive record stream, AEAD chunk pipeline, KDF/key schedule, keyed public-header authentication, shard I/O, and black-box round-trip tests are now wired together.
 
-It is still **not production-ready cryptography**. Treat the repository as a hardening/refactoring project until the container format, shard discovery rules, padding semantics, compatibility policy, and overall design have been reviewed and stabilized.
+It is still **not production-ready cryptography**. Treat the repository as a hardening/refactoring project until the container format, shard discovery rules, compatibility policy, and overall design have been reviewed and stabilized.
 
 ## Current status
 
@@ -23,7 +23,9 @@ Implemented today:
 * Public header metadata such as suite id, archive id, KDF salt, chunk size, shard size, and shard index is authenticated through canonical public-header serialization.
 * Archive records cover archive begin/end, directories, regular files, file bytes, file end markers, symlinks in the record format, and random padding records.
 * All four padding policies are implemented end-to-end: `none`, `chunk` (pad to next chunk-size multiple), `power2` (pad to next power-of-two total), and `fixed-size=N` (pad to exact byte count). Padding is represented as encrypted `RandomPadding` archive records so it is authenticated by AEAD and indistinguishable from real data.
-* Chunk encryption binds the immutable public-header hash and chunk index into AEAD associated data.
+* Archive serialization is streaming: `ArchiveWriter` plans the total plaintext size from filesystem metadata alone before reading any file content, then streams file bytes directly into the encryption pipeline. No full-archive plaintext buffer is held in memory. File content is bounded only by chunk and buffer sizes, so large archives do not require proportional RAM.
+* A per-file size check detects source-file changes between planning and reading: if a file grows or shrinks while being streamed, encryption fails immediately. If the pipeline fails partway through, all partially written `.bin` shards are removed from the output directory.
+* Chunk encryption binds the immutable per-shard BLAKE3-256 public-header hash and global chunk index into AEAD associated data.
 * Shards use explicit per-shard headers and chunk records. Decrypt scans `*.bin`
   files, parses shard headers from file contents, rejects malformed garbage
   `.bin` files, duplicate or missing shard indexes, archive ID mismatches, and
@@ -35,7 +37,6 @@ Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
 * The archive/container format is not stable and has no compatibility guarantee.
-* Padding is functional but the archive/container format has not been externally audited.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 * Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
 
@@ -195,10 +196,8 @@ The current design uses:
 * Early header MAC verification during decrypt, before any chunk is decrypted.
 * Per-chunk AEAD encryption.
 * Deterministic chunk nonce derivation from domain-separated key material and global chunk index.
-* Public-header hashing as associated data for encrypted chunks.
-* Authenticated per-shard headers bind each shard to an archive ID, shard index,
-    shard count, chunk range, public-header hash, and payload offset/length, so
-    randomized filenames do not influence decrypt ordering.
+* A per-shard BLAKE3-256 binding hash over the global and shard public headers, included as AEAD associated data for every chunk in that shard.
+* Authenticated per-shard headers (HMAC-SHA-256 MAC) bind each shard to an archive ID, shard index, shard count, chunk range, public-header hash, and payload offset/length, so randomized filenames do not influence decrypt ordering.
 * Safe path validation during archive record parsing and extraction.
 * Temporary extraction state that is promoted only after the archive stream finishes.
 
@@ -223,7 +222,7 @@ Those fields are now authenticated with a real keyed MAC:
 
 This gives early detection for wrong passphrases, wrong keyfiles, and public-header tampering. It also prevents unauthenticated changes to fields such as suite id, archive id, KDF salt, chunk size, shard size, and shard index.
 
-`public_header_hash` is still useful as a stable public-header binding value for chunk AEAD associated data, but it is not a MAC and must not be treated as one.
+`public_header_hash` is a BLAKE3-256 digest of the global header concatenated with the per-shard header (with `header_mac` zeroed). It is computed once per shard, included as AEAD associated data for every chunk in that shard, and is therefore covered by each chunk's authentication tag. It is not a MAC and must not be treated as one — its role is to bind each ciphertext chunk to its public shard context.
 
 ## Project layout
 
@@ -265,9 +264,10 @@ When changing crypto/container code:
 ## High-value next work
 
 1. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
-2. Decide the compatibility policy for archive format version 1.
-3. Add benchmarks after correctness and format-hardening work settles.
-4. Prepare the codebase for external cryptographic review.
+2. Retire the legacy `archive::PublicHeaderAuth` compatibility layer; consolidate all header MAC and hash operations on the `io/ShardFrame` functions.
+3. Decide the compatibility policy for archive format version 1.
+4. Add benchmarks after correctness and format-hardening work settles.
+5. Prepare the codebase for external cryptographic review.
 
 ## Related docs
 

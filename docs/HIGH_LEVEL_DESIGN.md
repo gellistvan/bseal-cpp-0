@@ -46,7 +46,6 @@ The implementation should still be treated as work in progress. It is not yet su
 - finalizing and auditing the public container/shard header layer;
 - making shard discovery fully header-driven and authenticated;
 - consolidating public-header serialization, authentication, and binding-hash logic into one canonical implementation;
-- deciding and testing exact padding semantics;
 - eliminating any fallback path that does not use the project cryptographic-randomness wrapper;
 - defining compatibility guarantees only after the file format is stable;
 - completing external cryptographic and implementation review.
@@ -141,7 +140,7 @@ flowchart LR
 | `cli::Command` | `cli/` | Represents the selected top-level command | `main.cpp` |
 | `app::encrypt` | `app/` | Application-level encryption orchestration | CLI options, crypto, archive, I/O, pipeline |
 | `app::decrypt` | `app/` | Application-level decryption orchestration | CLI options, crypto, archive, I/O, pipeline |
-| `ArchiveOpenContext` | `app/` | Internal context carrying suite, KDF parameters, salt, archive identifier, public-header binding, and chunk size | KDF, backend selection, decrypt setup |
+| `ArchiveOpenContext` | `app/` | Internal context carrying suite, KDF parameters, salt, archive identifier, `GlobalPublicHeaderV1`, and chunk size | KDF, backend selection, decrypt setup |
 
 The application layer currently performs several responsibilities that should remain carefully bounded: input validation, passphrase acquisition, keyfile validation, KDF parameter setup, backend selection, construction of archive and shard components, and pipeline invocation.
 
@@ -167,7 +166,7 @@ The key schedule separates roles such as chunk encryption, manifest or metadata 
 
 | Class or structure | Module | Purpose | Collaborators |
 |---|---|---|---|
-| `archive::ArchiveWriter` | `archive/` | Converts an input directory tree into serialized archive records | `EncryptPipeline` producer |
+| `archive::ArchiveWriter` | `archive/` | Converts an input directory tree into serialized archive records; `plan_plaintext_size()` computes the total from filesystem metadata without reading file content; `set_trailing_padding_record()` registers the padding record to emit after `ArchiveEnd`; `bytes_produced()` tracks produced bytes for plan verification | `EncryptPipeline` producer |
 | `archive::ArchiveWriterOptions` | `archive/` | Configuration for archive serialization | `app::encrypt` |
 | `archive::ArchiveReader` | `archive/` | Consumes authenticated plaintext records and restores filesystem objects | `DecryptPipeline` consumer |
 | `archive::ArchiveReaderOptions` | `archive/` | Restore configuration, including output directory and overwrite behavior | `app::decrypt` |
@@ -175,8 +174,7 @@ The key schedule separates roles such as chunk encryption, manifest or metadata 
 | `archive::RecordType` | `archive/` | Identifies record kinds such as archive begin/end, directories, files, symlinks, file bytes, and padding | Archive reader/writer |
 | `archive::Metadata` | `archive/` | Represents selected filesystem metadata to preserve | Archive records |
 | `archive::PathSanitizer` | `archive/` | Prevents unsafe paths from escaping the restore directory | `ArchiveReader` |
-| `archive::PublicHeaderV1` | `archive/` | Current public header representation used by shard/container handling | `ShardWriter`, `ShardReader`, app context |
-| `archive::PublicHeaderAuth` utilities | `archive/` | Canonicalizes, authenticates, finalizes, and hashes public headers where present | App and I/O header flow |
+| `archive::PublicHeaderAuth` utilities | `archive/` | Legacy compatibility wrappers for `PublicHeaderV1` MAC and binding-hash operations; current call sites are transitioning to `io::ShardFrame` functions | App and I/O header flow |
 
 The archive layer treats filenames, directory structure, file sizes, symlink targets, and metadata as plaintext that must enter the encrypted domain before being written externally. The physical `.bin` shard layout should not expose the original filesystem structure.
 
@@ -184,6 +182,10 @@ The archive layer treats filenames, directory structure, file sizes, symlink tar
 
 | Class or structure | Module | Purpose | Collaborators |
 |---|---|---|---|
+| `io::GlobalPublicHeaderV1` | `io/` | 192-byte global public header written at the start of every shard file; carries magic, format version, algorithm IDs, KDF parameters, archive identifier, chunk/shard counts, and padding policy | `ShardWriter`, `ShardReader`, `app::encrypt`, `ArchiveOpenContext` |
+| `io::ShardPublicHeaderV1` | `io/` | 80-byte per-shard public header following the global header; carries shard index, first global chunk index, shard chunk count, payload length, and `header_mac` | `ShardWriter`, `ShardReader` |
+| `io::compute_public_header_hash` | `io/` | BLAKE3-256 hash of the global and shard public headers under domain separation (`"BSEAL public header hash v1\0"`); used as AAD binding in AEAD encryption | Pipeline workers, `app::encrypt` |
+| `io::compute_shard_header_mac` / `io::verify_shard_header_mac` | `io/` | HMAC-SHA-256 MAC over the shard header (with `header_mac` zeroed), keyed with the header authentication key; guards against public-header tampering | `ShardWriter`, `ShardReader` |
 | `io::ShardWriter` | `io/` | Writes encrypted frames into randomized `.bin` shard files | `EncryptPipeline` ordered writer |
 | `io::ShardWriterOptions` | `io/` | Configures output directory, shard size, extension, and public header | `app::encrypt` |
 | `io::ShardReader` | `io/` | Discovers and reads shard files and encrypted frames | `DecryptPipeline` |
@@ -203,7 +205,7 @@ The current materials show an important transition: newer format/design material
 | Class or structure | Module | Purpose | Collaborators |
 |---|---|---|---|
 | `pipeline::EncryptPipeline` | `pipeline/` | Coordinates archive serialization, chunking, parallel encryption, and ordered shard writing | `ArchiveWriter`, `CryptoBackend`, `ExpandedKeys`, `ShardWriter` |
-| `pipeline::EncryptPipelineOptions` | `pipeline/` | Configures chunk size, workers, queue depth, archive id, header hash, AAD shard index, and final-chunk behavior | `app::encrypt` |
+| `pipeline::EncryptPipelineOptions` | `pipeline/` | Configures chunk size, workers, queue depth, archive id, per-shard header hashes, AAD shard index, final-chunk behavior, and `expected_plaintext_bytes` (validates that the archive writer produced exactly the planned byte count) | `app::encrypt` |
 | `pipeline::DecryptPipeline` | `pipeline/` | Coordinates shard reading, parallel decryption, ordering, and archive restoration | `ShardReader`, `CryptoBackend`, `ExpandedKeys`, `ArchiveReader` |
 | `pipeline::DecryptPipelineOptions` | `pipeline/` | Configures decryption chunk size, workers, queue depth, archive id, header binding, and AAD parameters | `app::decrypt` |
 | `pipeline::WorkQueue` | `pipeline/` | Bounded producer-consumer queue for moving chunks between stages | Producer, workers, writer/consumer |
@@ -300,13 +302,13 @@ Encryption begins with:
 
 - an input directory;
 - an output directory;
-- one or more keyfiles;
 - a passphrase from the terminal prompt or standard input;
+- zero or more keyfiles (passphrase-only mode is valid; keyfiles are optional);
 - an AEAD suite selection;
 - a KDF preset;
 - a chunk size;
 - a shard size;
-- a padding policy, where supported.
+- a padding policy (none, chunk, power2, or fixed-size=N).
 
 ### 8.2 App Setup
 
@@ -326,16 +328,21 @@ The important generated or derived values are:
 
 ### 8.3 Archive Serialization
 
-`ArchiveWriter` traverses the input directory and emits a logical stream of archive records. These records represent:
+`ArchiveWriter` first calls `plan_plaintext_size()`, which traverses the input directory using filesystem metadata only — no file content is read at this stage — and computes the exact number of plaintext bytes the stream will produce. This plan drives padding calculation, chunk count, shard layout, and public header fields before any file content is touched.
+
+If a padding record is required, the application builds a `RandomPadding` record filled with cryptographically random bytes and registers it via `set_trailing_padding_record()`. The writer emits it after `ArchiveEnd` as the last record in the stream.
+
+The writer then streams records on demand through `next_record_bytes()`:
 
 - archive start;
 - directories;
-- regular file entries;
-- file content bytes;
-- symlinks, where supported;
-- metadata;
+- regular file entries with metadata;
+- file content bytes, split into bounded payloads;
+- symlinks, where enabled;
 - archive end;
-- padding records, where required.
+- trailing padding record, if registered.
+
+As file content is streamed, the writer tracks the number of bytes read per file. At `FileEnd`, it validates that the read count matches the file size captured at plan time. A size mismatch (file grew or shrank between planning and reading) throws immediately. The pipeline additionally validates that the total `bytes_produced()` equals the planned padded plaintext size.
 
 At this stage, filenames, paths, file sizes, symlink targets, and metadata are still plaintext. They must not be written directly to public output.
 
@@ -359,9 +366,11 @@ Once the next expected encrypted chunk is available, the writer converts it into
 
 ### 8.7 Shard Writing
 
-`ShardWriter` writes encrypted frames into randomized `.bin` files. It opens a new shard when the current shard would exceed its configured payload limit. Each shard receives public interpretation data at the beginning, followed by encrypted frames.
+`ShardWriter` writes encrypted frames into randomized `.bin` files. It opens a new shard when the current shard would exceed its configured payload limit. Each shard file begins with a `GlobalPublicHeaderV1` (192 bytes) followed by a `ShardPublicHeaderV1` (80 bytes), then the encrypted frame payload. The shard header carries an HMAC-SHA-256 `header_mac` that binds the shard metadata to the secret key.
 
-Shard filenames are generated randomly and should not encode input names, ordering, size, timestamps, or metadata. The intended design is that shard ordering and interpretation come from authenticated shard/header data, not filenames.
+Shard filenames are generated randomly and should not encode input names, ordering, size, timestamps, or metadata. Shard ordering and interpretation come from authenticated header fields, not filenames.
+
+If the pipeline fails for any reason after shard writing has started, the application removes all `.bin` files written to the output directory. This prevents leaving a partial and untrustworthy archive on disk.
 
 ### 8.8 Encryption Flow Diagram
 
@@ -406,8 +415,8 @@ Decryption begins with:
 
 - an input directory containing `.bin` shards;
 - an output directory;
-- one or more keyfiles;
 - a passphrase from the terminal prompt or standard input;
+- zero or more keyfiles (must match what was used during encryption);
 - overwrite policy.
 
 Unlike encryption, the cryptographic suite, KDF parameters, salt, archive identifier, and chunk size are read from the archive’s public interpretation data. Those public values must be treated as untrusted until authenticated.
@@ -556,9 +565,11 @@ The CLI currently distinguishes at least general failure from authentication/cor
 
 ## 12. Current Format and Compatibility Position
 
-The repository materials include a BSEAL-F1 shard-format specification. That specification defines a direction for the first real encrypted archive format, including global public headers, per-shard public headers, encrypted chunk frames, KDF parameters, nonce derivation, associated data, padding policy, and validation order.
+The current implementation follows the BSEAL-F1 shard-format specification. Every `.bin` shard file begins with a `GlobalPublicHeaderV1` (192 bytes) and a `ShardPublicHeaderV1` (80 bytes), followed by encrypted chunk frames. The global header carries algorithm IDs, KDF parameters, archive identifier, chunk size, total chunk count, padded plaintext size, padding policy, and a shard count. The shard header carries the shard index, its chunk range, and an HMAC-SHA-256 MAC that authenticates the header contents.
 
-At the same time, the current implementation-status notes state that the file format and container orchestration are not yet stable enough for production use. This means the practical compatibility position is:
+The shard-level binding hash (`compute_public_header_hash`) is a BLAKE3-256 digest of the combined global and shard headers and is included in the AEAD associated data of every chunk in that shard, cryptographically binding each ciphertext chunk to its public header context.
+
+Despite this structure being in place, the format and container orchestration are not yet stable enough for production use. The practical compatibility position is:
 
 - current demo outputs should not be treated as long-term archival format commitments;
 - future format changes may intentionally reject older prototype outputs;
@@ -573,7 +584,11 @@ The following areas deserve special attention from maintainers:
 
 ### 13.1 Header Layer
 
-The public header layer is security-critical because it defines how ciphertext is interpreted. Any public value that affects interpretation must be authenticated. The current project materials show active work around public-header authentication and binding hashes, but this area still needs final consolidation and tests.
+The public header layer is security-critical because it defines how ciphertext is interpreted. Any public value that affects interpretation must be authenticated.
+
+The current state: `compute_public_header_hash` (in `io/ShardFrame`) now correctly uses BLAKE3-256 with the domain-separated prefix `"BSEAL public header hash v1\0"` over the global header concatenated with the per-shard header (with `header_mac` zeroed). Deterministic test vectors in `tests/io/TestShardFrameHash.cpp` pin this hash value and guard against algorithm substitution. Shard header integrity is protected by a separate HMAC-SHA-256 `header_mac`.
+
+Remaining work: `archive::PublicHeaderAuth` contains legacy compatibility wrappers for an older header representation (`PublicHeaderV1`) that is no longer the primary format. This legacy layer should be removed or consolidated once all call sites have migrated to the `io/ShardFrame` functions.
 
 ### 13.2 Shard Discovery
 
@@ -581,7 +596,14 @@ The intended design is that shard ordering does not depend on filenames. The lat
 
 ### 13.3 Padding Semantics
 
-Padding is security-relevant because it controls size leakage. CLI options already expose padding policies, but exact behavior and tests must be completed before making strong privacy claims.
+Padding is security-relevant because it controls size leakage. All four padding policies are now implemented and tested end-to-end:
+
+- `none` — no padding, plaintext size is unobfuscated;
+- `chunk` — pad to the next multiple of `chunk_plain_size`;
+- `power2` — pad to the next power-of-two total plaintext size;
+- `fixed-size=N` — pad to exactly N bytes; rejects archives already larger than N, or where the gap is too small to hold a `RandomPadding` record prefix.
+
+Padding is applied as a single `RandomPadding` archive record filled with cryptographically random bytes. The record is pre-built in `app::encrypt`, registered with `ArchiveWriter.set_trailing_padding_record()`, and streamed out after `ArchiveEnd` without buffering. Integration round-trip tests cover all four policies. This is no longer an open concern for basic functionality, but size-leakage analysis and claims about effective anonymity set size have not been formally reviewed.
 
 ### 13.4 Random Filename Generation
 
@@ -627,14 +649,16 @@ Before treating this document as release-grade, maintainers should verify the fo
 - KDF behavior matches the documented key schedule;
 - public headers are serialized canonically;
 - public headers are authenticated before being trusted;
-- `public_header_hash` or equivalent binding data is computed consistently;
+- `public_header_hash` is a BLAKE3-256 digest computed by `io::compute_public_header_hash` with domain separation; pinned by deterministic test vectors;
+- shard header `header_mac` is an HMAC-SHA-256 over the shard header (with `header_mac` zeroed);
 - shard discovery no longer depends on filename ordering;
 - chunk indexes are checked for missing, duplicate, stale, and out-of-range values;
 - all archive records are authenticated before restoration;
 - path traversal and absolute restore paths are rejected;
-- padding behavior matches the documented policy;
+- padding behavior matches the documented policy for all four padding modes (none, chunk, power2, fixed-size=N);
 - output shard filenames are generated using cryptographically secure randomness;
-- tests cover corruption, truncation, wrong secrets, missing shards, duplicate shards, reordered shards, and overwrite behavior.
+- failed encryption cleans up partial `.bin` output;
+- tests cover corruption, truncation, wrong secrets, missing shards, duplicate shards, reordered shards, overwrite behavior, and all padding modes.
 
 ---
 
