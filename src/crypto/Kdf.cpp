@@ -5,6 +5,7 @@
 #include "common/Errors.hpp"
 
 #include <algorithm>
+#include <blake3.h>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -45,6 +46,35 @@ void append_le64(Bytes& out, std::uint64_t value) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// BLAKE3-256 helpers
+// ---------------------------------------------------------------------------
+//
+// These are the only hash functions used for keyfile digests and keyfile mix,
+// as required by FORMAT.md §6.3 and §8.  All other hashing in this file (the
+// Argon2id salt derivation helper) continues to use libsodium crypto_generichash
+// (BLAKE2b) because that helper is internal and not part of the on-disk format.
+
+/// Feed a null-terminated C string literal including its null terminator.
+/// FORMAT.md §8 domain strings include the trailing '\0'.
+void blake3_update_cstr_with_nul(blake3_hasher& hasher, const char* cstr, std::size_t len_including_nul) {
+    blake3_hasher_update(&hasher, reinterpret_cast<const void*>(cstr), len_including_nul);
+}
+
+void blake3_update_bytes(blake3_hasher& hasher, ConstByteSpan bytes) {
+    if (!bytes.empty()) {
+        blake3_hasher_update(&hasher, bytes.data(), bytes.size());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BLAKE2b helpers (libsodium crypto_generichash) — internal use only
+// ---------------------------------------------------------------------------
+//
+// Used only by derive_argon2_salt(), which is an internal helper not reflected
+// in the on-disk format.  Must NOT be used for the on-disk keyfile digest or
+// keyfile mix paths — those require BLAKE3-256.
+
 void generic_hash_update_text(crypto_generichash_state& state, std::string_view text) {
     crypto_generichash_update(
         &state,
@@ -63,7 +93,7 @@ void generic_hash_update_bytes(crypto_generichash_state& state, ConstByteSpan by
     }
 }
 
-std::array<Byte, 32> generic_hash_32(std::string_view domain, ConstByteSpan data) {
+std::array<Byte, 32> blake2b_hash_32(std::string_view domain, ConstByteSpan data) {
     ensure_sodium_initialized();
 
     std::array<Byte, 32> out{};
@@ -155,7 +185,7 @@ derive_argon2_salt(const std::array<Byte, 32>& kdf_salt,
     framed.insert(framed.end(), kdf_salt.begin(), kdf_salt.end());
     framed.insert(framed.end(), archive_id.begin(), archive_id.end());
 
-    const auto full = generic_hash_32("BSEAL Argon2id salt v1", framed);
+    const auto full = blake2b_hash_32("BSEAL Argon2id salt v1", framed);
 
     std::array<Byte, crypto_pwhash_SALTBYTES> salt{};
     std::copy_n(full.begin(), salt.size(), salt.begin());
@@ -215,8 +245,6 @@ void validate_kdf_params(const KdfParams& params) {
 
 std::vector<KeyfileDigest>
 hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
-    ensure_sodium_initialized();
-
     if (keyfiles.empty()) {
         throw InvalidArgument("at least one keyfile is required");
     }
@@ -238,27 +266,28 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
             throw InvalidArgument("failed to open keyfile: " + path.string());
         }
 
-        crypto_generichash_state state{};
-        if (crypto_generichash_init(&state, nullptr, 0, 32) != 0) {
-            throw Error("keyfile hash initialization failed");
-        }
+        // FORMAT.md §8:
+        //   keyfile_digest[i] = BLAKE3-256(
+        //       "BSEAL keyfile digest v1\0" || u64le(keyfile_size) || keyfile_bytes)
+        //
+        // The domain string includes the null terminator as specified.
+        blake3_hasher hasher;
+        blake3_hasher_init(&hasher);
 
-        generic_hash_update_text(state, "BSEAL keyfile digest v1");
+        static constexpr char kDigestDomain[] = "BSEAL keyfile digest v1";
+        // Feed domain including the null terminator (sizeof includes it).
+        blake3_update_cstr_with_nul(hasher, kDigestDomain, sizeof(kDigestDomain));
 
         Bytes size_frame;
         append_le64(size_frame, static_cast<std::uint64_t>(file_size));
-        generic_hash_update_bytes(state, size_frame);
+        blake3_update_bytes(hasher, size_frame);
         secure_memzero(size_frame.data(), size_frame.size());
 
         while (in) {
             in.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
             const auto got = in.gcount();
             if (got > 0) {
-                crypto_generichash_update(
-                    &state,
-                    buffer.data(),
-                    static_cast<unsigned long long>(got)
-                );
+                blake3_hasher_update(&hasher, buffer.data(), static_cast<std::size_t>(got));
             }
         }
 
@@ -267,9 +296,7 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
         }
 
         KeyfileDigest digest{};
-        if (crypto_generichash_final(&state, digest.digest.data(), digest.digest.size()) != 0) {
-            throw Error("keyfile hash finalization failed");
-        }
+        blake3_hasher_finalize(&hasher, digest.digest.data(), BLAKE3_OUT_LEN);
 
         digests.push_back(digest);
     }
@@ -280,34 +307,33 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
 
 std::array<Byte, 32>
 mix_keyfile_digests(const std::vector<KeyfileDigest>& digests) {
-    ensure_sodium_initialized();
-
     if (digests.empty()) {
         throw InvalidArgument("at least one keyfile digest is required");
     }
 
-    crypto_generichash_state state{};
-    std::array<Byte, 32> out{};
+    // FORMAT.md §8:
+    //   keyfile_mix = BLAKE3-256(
+    //       "BSEAL keyfile mix v1\0" || u32le(keyfile_count) || keyfile_digest[0] || ...)
+    //
+    // The domain string includes the null terminator as specified.
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
 
-    if (crypto_generichash_init(&state, nullptr, 0, out.size()) != 0) {
-        throw Error("keyfile digest mixer initialization failed");
-    }
-
-    generic_hash_update_text(state, "BSEAL keyfile list v1");
+    static constexpr char kMixDomain[] = "BSEAL keyfile mix v1";
+    // Feed domain including the null terminator (sizeof includes it).
+    blake3_update_cstr_with_nul(hasher, kMixDomain, sizeof(kMixDomain));
 
     Bytes count_frame;
     append_le32(count_frame, static_cast<std::uint32_t>(digests.size()));
-    generic_hash_update_bytes(state, count_frame);
+    blake3_update_bytes(hasher, count_frame);
     secure_memzero(count_frame.data(), count_frame.size());
 
     for (const auto& digest : digests) {
-        generic_hash_update_bytes(state, ConstByteSpan{digest.digest.data(), digest.digest.size()});
+        blake3_update_bytes(hasher, ConstByteSpan{digest.digest.data(), digest.digest.size()});
     }
 
-    if (crypto_generichash_final(&state, out.data(), out.size()) != 0) {
-        throw Error("keyfile digest mixer finalization failed");
-    }
-
+    std::array<Byte, 32> out{};
+    blake3_hasher_finalize(&hasher, out.data(), out.size());
     return out;
 }
 
