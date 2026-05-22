@@ -108,11 +108,24 @@ private:
     std::exception_ptr first_exception_;
 };
 
+/// Pick the correct public_header_hash for the shard that owns this frame.
+const std::array<Byte, 32>& select_public_header_hash(
+    const EncryptPipelineOptions& options,
+    std::uint32_t shard_index) {
+    if (!options.per_shard_public_header_hashes.empty() &&
+        shard_index < options.per_shard_public_header_hashes.size()) {
+        return options.per_shard_public_header_hashes[shard_index];
+    }
+    return options.public_header_hash;
+}
+
 crypto::ChunkAad make_aad(
     const EncryptPipelineOptions& options,
+    std::uint32_t shard_index,
     ConstByteSpan frame_header_bytes) {
+    const auto& hash = select_public_header_hash(options, shard_index);
     return crypto::ChunkAad{
-        ConstByteSpan{options.public_header_hash.data(), options.public_header_hash.size()},
+        ConstByteSpan{hash.data(), hash.size()},
         frame_header_bytes,
     };
 }
@@ -328,6 +341,7 @@ void encryption_worker_main(
 
             const auto aad = make_aad(
                 options,
+                job->frame_header.shard_index,
                 ConstByteSpan{job->frame_header_bytes.data(), job->frame_header_bytes.size()});
 
             auto ciphertext = backend.encrypt_chunk(crypto::EncryptChunkRequest{
@@ -427,7 +441,7 @@ void ordered_writer_main(
           keys_(std::move(keys)),
           archive_writer_(std::move(archive_writer)),
           shard_writer_(std::move(shard_writer)) {
-    options_.public_header_hash = shard_writer_.public_header_hash();
+    // public_header_hash (fallback) and per_shard_public_header_hashes are set by the caller.
 }
 
 void EncryptPipeline::run() {

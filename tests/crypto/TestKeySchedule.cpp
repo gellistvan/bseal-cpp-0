@@ -46,8 +46,9 @@ Bytes make_master_seed() {
     return seed;
 }
 
-std::array<Byte, 16> make_archive_id(Byte seed) {
-    std::array<Byte, 16> id{};
+// archive_id is 32 bytes per FORMAT.md §3.
+std::array<Byte, 32> make_archive_id(Byte seed) {
+    std::array<Byte, 32> id{};
     for (std::size_t i = 0; i < id.size(); ++i) {
         id[i] = static_cast<Byte>(seed + static_cast<Byte>(i * 3u));
     }

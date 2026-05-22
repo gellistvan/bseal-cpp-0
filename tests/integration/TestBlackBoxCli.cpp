@@ -333,8 +333,8 @@ std::vector<std::string> encrypt_args(const fs::path& input,
         "--keyfile", keyfile_b.string(),
         "--suite", "xchacha20-poly1305",
         "--kdf", "fast",
-        "--chunk-size", "4K",
-        "--shard-size", "16K",
+        "--chunk-size", "64K",   // minimum valid per FORMAT.md §3 (65536 bytes)
+        "--shard-size", "512K",
         "--padding", "chunk",
     };
 }

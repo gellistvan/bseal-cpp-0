@@ -23,12 +23,12 @@ enum class KdfPreset {
 // These are intentionally stricter than "whatever libsodium can accept".
 // Public archive headers are attacker-controlled before authentication, so
 // decrypt must reject absurd costs before allocation or crypto_pwhash().
-inline constexpr std::uint32_t kArgon2MemoryKiBMin = 64u;                 // Keeps existing small unit KDF params valid.
-inline constexpr std::uint32_t kArgon2MemoryKiBMax = 2u * 1024u * 1024u;  // 2 GiB, matches paranoid preset.
+inline constexpr std::uint32_t kArgon2MemoryKiBMin = 65536u;              // 64 MiB — FORMAT.md §7 lower bound.
+inline constexpr std::uint32_t kArgon2MemoryKiBMax = 4194304u;            // 4 GiB  — FORMAT.md §7 upper bound.
 inline constexpr std::uint32_t kArgon2IterationsMin = 1u;
-inline constexpr std::uint32_t kArgon2IterationsMax = 8u;
+inline constexpr std::uint32_t kArgon2IterationsMax = 10u;                // FORMAT.md §7 max.
 inline constexpr std::uint32_t kArgon2ParallelismMin = 1u;
-inline constexpr std::uint32_t kArgon2ParallelismMax = 8u;
+inline constexpr std::uint32_t kArgon2ParallelismMax = 32u;               // FORMAT.md §7 max.
 inline constexpr std::uint32_t kArgon2OutputBytesMin = 32u;
 inline constexpr std::uint32_t kArgon2OutputBytesMax = 64u;
 inline constexpr std::uint32_t kArgon2OutputBytesDefault = 32u;
@@ -45,7 +45,7 @@ struct KdfInput {
     std::string passphrase_utf8;
     std::vector<std::filesystem::path> keyfiles;
     std::array<Byte, 32> salt{};
-    std::array<Byte, 16> archive_id{};
+    std::array<Byte, 32> archive_id{};  // Extended to 32 bytes per FORMAT.md §3.
     KdfParams params{};
 };
 

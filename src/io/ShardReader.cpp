@@ -18,7 +18,7 @@ bool has_bin_extension(const std::filesystem::path& path) {
 
 Bytes read_exact(
     std::istream& stream,
-    std::size_t count,
+    std::size_t   count,
     const std::filesystem::path& path,
     const std::string& message) {
     if (count > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
@@ -63,6 +63,7 @@ std::uint64_t checked_frame_body_size(const ChunkFrameHeaderV1& frame_header) {
     return body_len;
 }
 
+/// Parse one shard file and return a ShardInfo.
 ShardInfo read_shard_info(const std::filesystem::path& path) {
     const auto file_size = std::filesystem::file_size(path);
 
@@ -71,61 +72,56 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
         throw Error("failed to open shard file: " + path.string());
     }
 
-    const auto public_bytes = read_exact(
-        stream,
-        archive::kPublicHeaderV1SerializedSize,
-        path,
-        "truncated public header");
-    const auto public_header = archive::parse_public_header(
-        ConstByteSpan{public_bytes.data(), public_bytes.size()});
+    // Read 192-byte global header.
+    const auto global_bytes = read_exact(
+        stream, kGlobalPublicHeaderV1Size, path, "truncated global public header");
+    const auto global_header = parse_global_public_header(
+        ConstByteSpan{global_bytes.data(), global_bytes.size()});
 
-    const auto shard_header_bytes = read_exact(
-        stream,
-        kShardHeaderV1Size,
-        path,
-        "truncated shard header");
-    const auto shard_header = parse_shard_header_v1(
-        ConstByteSpan{shard_header_bytes.data(), shard_header_bytes.size()});
+    // Read 80-byte shard header.
+    const auto shard_bytes = read_exact(
+        stream, kShardPublicHeaderV1Size, path, "truncated shard public header");
+    const auto shard_header = parse_shard_public_header(
+        ConstByteSpan{shard_bytes.data(), shard_bytes.size()});
 
-    if (public_header.suite_id != shard_header.suite_id) {
-        throw InvalidArgument("suite_id mismatch between public header and shard header: " + path.string());
-    }
-    if (!equal_array(public_header.archive_id, shard_header.archive_id)) {
-        throw InvalidArgument("archive_id mismatch between public header and shard header: " + path.string());
-    }
-    if (public_header.chunk_plain_size != shard_header.chunk_plain_size) {
-        throw InvalidArgument("chunk_plain_size mismatch between public header and shard header: " + path.string());
+    // Validate shard_index < shard_count (global header knows total shard count).
+    if (shard_header.shard_index >= global_header.shard_count) {
+        throw InvalidArgument(
+            "shard_index " + std::to_string(shard_header.shard_index)
+            + " >= shard_count " + std::to_string(global_header.shard_count)
+            + ": " + path.string());
     }
 
-    const auto expected_hash = archive::compute_public_header_hash(public_header);
-    if (!equal_array(expected_hash, shard_header.public_header_hash)) {
-        throw InvalidArgument("public_header_hash mismatch: " + path.string());
+    // Validate file size: must be exactly 192 + 80 + shard_payload_len.
+    const std::uint64_t expected_file_size =
+        static_cast<std::uint64_t>(kGlobalPublicHeaderV1Size)
+        + static_cast<std::uint64_t>(kShardPublicHeaderV1Size)
+        + shard_header.shard_payload_len;
+
+    if (file_size != expected_file_size) {
+        throw InvalidArgument(
+            "file size mismatch (expected "
+            + std::to_string(expected_file_size)
+            + ", got " + std::to_string(file_size)
+            + "): " + path.string());
     }
 
-    const auto expected_payload_offset = archive::kPublicHeaderV1SerializedSize + kShardHeaderV1Size;
-    if (shard_header.shard_payload_offset != expected_payload_offset) {
-        throw InvalidArgument("invalid shard payload offset: " + path.string());
-    }
+    // Compute public_header_hash for this shard.
+    const auto phash = compute_public_header_hash(global_header, shard_header);
 
     return ShardInfo{
-        .path = path,
-        .public_header = public_header,
-        .suite_id = shard_header.suite_id,
-        .archive_id = shard_header.archive_id,
-        .shard_index = shard_header.shard_index,
-        .chunk_plain_size = shard_header.chunk_plain_size,
-        .first_chunk_index = shard_header.first_chunk_index,
-        .chunk_count = shard_header.chunk_count,
-        .total_chunk_count = shard_header.total_chunk_count,
-        .public_header_hash = shard_header.public_header_hash,
-        .file_size = file_size,
-        .shard_count = shard_header.shard_count,
-        .shard_flags = shard_header.flags,
-        .shard_payload_len = shard_header.shard_payload_len,
-        .shard_payload_offset = shard_header.shard_payload_offset,
-        .header_mac = shard_header.header_mac,
+        .path              = path,
+        .global_header     = global_header,
+        .shard_header      = shard_header,
+        .public_header_hash = phash,
+        .file_size         = file_size,
     };
 }
+
+/// Payload starts at offset 192 + 80.
+constexpr std::uint64_t kPayloadOffset =
+    static_cast<std::uint64_t>(kGlobalPublicHeaderV1Size)
+    + static_cast<std::uint64_t>(kShardPublicHeaderV1Size);
 
 } // namespace
 
@@ -146,14 +142,15 @@ std::vector<ShardInfo> ShardReader::discover(const std::filesystem::path& input_
     }
 
     if (shards.empty()) {
-        throw InvalidArgument("no framed .bin shard files found in input directory: " + input_dir.string());
+        throw InvalidArgument(
+            "no framed .bin shard files found in input directory: " + input_dir.string());
     }
 
     std::sort(
         shards.begin(),
         shards.end(),
         [](const ShardInfo& a, const ShardInfo& b) {
-            return a.shard_index < b.shard_index;
+            return a.shard_index() < b.shard_index();
         });
 
     return shards;
@@ -161,7 +158,7 @@ std::vector<ShardInfo> ShardReader::discover(const std::filesystem::path& input_
 
 ShardReader::ShardReader(
     std::vector<ShardInfo> shards,
-    ShardReaderValidation validation)
+    ShardReaderValidation  validation)
     : shards_(std::move(shards)),
       validation_(std::move(validation)) {
     validate_shards();
@@ -173,138 +170,103 @@ void ShardReader::validate_shards() {
     }
 
     std::set<std::uint32_t> shard_indices;
-    std::optional<std::uint16_t> common_suite_id;
-    std::optional<std::array<Byte, 16>> common_archive_id;
-    std::optional<std::uint64_t> common_chunk_plain_size;
-    std::optional<std::array<Byte, 32>> common_public_header_hash;
-    std::optional<std::uint64_t> common_total_chunk_count;
-    std::optional<std::uint32_t> common_shard_count;
+
+    // All shards must have identical global headers (byte-for-byte).
+    // We compare by re-serialising; this also catches any reserved-byte drift.
+    const auto reference_global_bytes =
+        serialize_global_public_header(shards_.front().global_header);
 
     for (const auto& shard : shards_) {
-        if (!shard_indices.insert(shard.shard_index).second) {
-            throw InvalidArgument("duplicate shard index: " + std::to_string(shard.shard_index));
+        if (!shard_indices.insert(shard.shard_index()).second) {
+            throw InvalidArgument(
+                "duplicate shard index: " + std::to_string(shard.shard_index()));
         }
 
-        if (validation_.suite_id && shard.suite_id != *validation_.suite_id) {
-            throw InvalidArgument("incompatible shard suite_id");
-        }
-        if (validation_.archive_id && !equal_array(shard.archive_id, *validation_.archive_id)) {
-            throw InvalidArgument("archive_id mismatch");
-        }
-        if (validation_.chunk_plain_size && shard.chunk_plain_size != *validation_.chunk_plain_size) {
-            throw InvalidArgument("chunk_plain_size mismatch");
-        }
-        if (validation_.public_header_hash &&
-            !equal_array(shard.public_header_hash, *validation_.public_header_hash)) {
-            throw InvalidArgument("public_header_hash mismatch");
+        // Global header must be byte-for-byte identical across all shards.
+        const auto this_global_bytes =
+            serialize_global_public_header(shard.global_header);
+        if (this_global_bytes != reference_global_bytes) {
+            throw InvalidArgument(
+                "global header mismatch across shards: " + shard.path.string());
         }
 
-        if (common_suite_id && shard.suite_id != *common_suite_id) {
-            throw InvalidArgument("mixed suite_id values across shards");
+        // Explicit validation checks.
+        if (validation_.suite_id) {
+            if (shard.global_header.aead_alg_id != *validation_.suite_id) {
+                throw InvalidArgument("incompatible shard aead_alg_id");
+            }
         }
-        if (common_archive_id && !equal_array(shard.archive_id, *common_archive_id)) {
-            throw InvalidArgument("archive_id mismatch across shards");
+        if (validation_.archive_id) {
+            if (!equal_array(shard.global_header.archive_id, *validation_.archive_id)) {
+                throw InvalidArgument("archive_id mismatch");
+            }
         }
-        if (common_chunk_plain_size && shard.chunk_plain_size != *common_chunk_plain_size) {
-            throw InvalidArgument("chunk_plain_size mismatch across shards");
+        if (validation_.chunk_plain_size) {
+            if (shard.global_header.chunk_plain_size != *validation_.chunk_plain_size) {
+                throw InvalidArgument("chunk_plain_size mismatch");
+            }
         }
-        if (common_public_header_hash && !equal_array(shard.public_header_hash, *common_public_header_hash)) {
-            throw InvalidArgument("public_header_hash mismatch across shards");
+        if (validation_.public_header_hash) {
+            // Note: this check is only meaningful for single-shard archives; for
+            // multi-shard archives each shard has a different public_header_hash.
+            // The per-shard hash integrity is enforced by AEAD authentication on
+            // every chunk frame. Skip this check if more than one shard is present.
+            if (shards_.size() == 1u &&
+                !equal_array(shard.public_header_hash, *validation_.public_header_hash)) {
+                throw InvalidArgument("public_header_hash mismatch");
+            }
         }
-        if (common_total_chunk_count && shard.total_chunk_count != *common_total_chunk_count) {
-            throw InvalidArgument("total_chunk_count mismatch across shards");
-        }
-
         if (validation_.header_authentication_key) {
-            const auto public_bytes = archive::serialize_public_header(shard.public_header);
-
-            ShardHeaderV1 header_for_mac;
-            header_for_mac.suite_id = shard.suite_id;
-            header_for_mac.archive_id = shard.archive_id;
-            header_for_mac.shard_index = shard.shard_index;
-            header_for_mac.shard_count = shard.shard_count;
-            header_for_mac.flags = shard.shard_flags;
-            header_for_mac.chunk_plain_size = shard.chunk_plain_size;
-            header_for_mac.first_chunk_index = shard.first_chunk_index;
-            header_for_mac.chunk_count = shard.chunk_count;
-            header_for_mac.total_chunk_count = shard.total_chunk_count;
-            header_for_mac.shard_payload_len = shard.shard_payload_len;
-            header_for_mac.shard_payload_offset = shard.shard_payload_offset;
-            header_for_mac.public_header_hash = shard.public_header_hash;
-            header_for_mac.header_mac = shard.header_mac;
-
             if (!verify_shard_header_mac(
                     ConstByteSpan{
                         validation_.header_authentication_key->data(),
                         validation_.header_authentication_key->size()},
-                    ConstByteSpan{public_bytes.data(), public_bytes.size()},
-                    header_for_mac)) {
+                    shard.global_header,
+                    shard.shard_header)) {
                 throw InvalidArgument("shard header_mac verification failed");
             }
         }
-
-        if (common_shard_count && shard.shard_count != *common_shard_count) {
-            throw InvalidArgument("shard_count mismatch across shards");
-        }
-
-        common_shard_count = shard.shard_count;
-        common_suite_id = shard.suite_id;
-        common_archive_id = shard.archive_id;
-        common_chunk_plain_size = shard.chunk_plain_size;
-        common_public_header_hash = shard.public_header_hash;
-        common_total_chunk_count = shard.total_chunk_count;
     }
 
-    if (!common_shard_count || *common_shard_count == 0) {
-        throw InvalidArgument("missing shard_count");
-    }
-    if (shards_.size() != *common_shard_count) {
-        throw InvalidArgument("missing shard index");
+    const auto& global = shards_.front().global_header;
+    const std::uint32_t shard_count = global.shard_count;
+
+    if (shards_.size() != static_cast<std::size_t>(shard_count)) {
+        throw InvalidArgument("shard count does not match global_header.shard_count");
     }
 
-    for (std::uint32_t i = 0; i < *common_shard_count; ++i) {
+    // Verify all shard indices 0..shard_count-1 are present.
+    for (std::uint32_t i = 0; i < shard_count; ++i) {
         if (!shard_indices.contains(i)) {
             throw InvalidArgument("missing shard index: " + std::to_string(i));
         }
     }
 
+    // Sort by shard_index for sequential reading.
     std::sort(
         shards_.begin(),
         shards_.end(),
         [](const ShardInfo& a, const ShardInfo& b) {
-            return a.shard_index < b.shard_index;
+            return a.shard_index() < b.shard_index();
         });
 
+    // Verify contiguous, non-overlapping chunk ranges.
     std::uint64_t expected_first_chunk = 0;
-    for (std::size_t i = 0; i < shards_.size(); ++i) {
-        const auto& shard = shards_[i];
-
-        if (shard.shard_index != i) {
-            throw InvalidArgument("missing shard index: " + std::to_string(i));
-        }
-
-        const bool final_flag = (shard.shard_flags & kShardHeaderV1FlagFinalShard) != 0;
-        const bool should_be_final = (i + 1 == shards_.size());
-        if (final_flag != should_be_final) {
-            throw InvalidArgument("invalid final-shard marker");
-        }
-
-        const auto end = checked_range_end(shard.first_chunk_index, shard.chunk_count);
-        if (shard.first_chunk_index < expected_first_chunk) {
-            throw InvalidArgument("duplicate chunk index range across shards");
-        }
-        if (shard.first_chunk_index > expected_first_chunk) {
-            throw InvalidArgument("missing chunk index before shard " + std::to_string(shard.shard_index));
+    for (const auto& shard : shards_) {
+        const auto end = checked_range_end(
+            shard.first_chunk_index(), shard.chunk_count());
+        if (shard.first_chunk_index() != expected_first_chunk) {
+            throw InvalidArgument(
+                "chunk index gap/overlap before shard "
+                + std::to_string(shard.shard_index()));
         }
         expected_first_chunk = end;
     }
 
-    expected_total_chunk_count_ = *common_total_chunk_count;
-    if (expected_total_chunk_count_ == kUnknownTotalChunkCount) {
-        throw InvalidArgument("unknown total_chunk_count in finalized archive");
-    }
+    expected_total_chunk_count_ = global.global_chunk_count;
     if (expected_first_chunk != expected_total_chunk_count_) {
-        throw InvalidArgument("missing chunk index: shard set does not cover total_chunk_count");
+        throw InvalidArgument(
+            "shard set does not cover global_chunk_count");
     }
 }
 
@@ -322,9 +284,11 @@ void ShardReader::open_current_shard() {
         throw Error("failed to open shard for reading: " + shard.path.string());
     }
 
-    current_stream_.seekg(static_cast<std::streamoff>(shard.shard_payload_offset), std::ios::beg);
+    // Seek to payload start (192 + 80 = 272).
+    current_stream_.seekg(
+        static_cast<std::streamoff>(kPayloadOffset), std::ios::beg);
     if (!current_stream_) {
-        throw InvalidArgument("truncated shard header: " + shard.path.string());
+        throw InvalidArgument("truncated shard file: " + shard.path.string());
     }
     current_record_in_shard_ = 0;
 }
@@ -337,17 +301,20 @@ void ShardReader::close_current_shard_and_check_trailing_garbage() {
     const auto& shard = shards_[current_shard_pos_];
     const auto pos = current_stream_.tellg();
     if (pos < std::streampos{0}) {
-        throw InvalidArgument("failed to read shard position: " + shard.path.string());
+        throw InvalidArgument(
+            "failed to read shard position: " + shard.path.string());
     }
 
-    const auto expected_end = checked_range_end(shard.shard_payload_offset, shard.shard_payload_len);
+    const auto expected_end = kPayloadOffset + shard.shard_payload_len();
     if (static_cast<std::uint64_t>(pos) != expected_end) {
-        throw InvalidArgument("shard payload length mismatch: " + shard.path.string());
+        throw InvalidArgument(
+            "shard payload length mismatch: " + shard.path.string());
     }
 
     const auto next = current_stream_.peek();
     if (next != std::char_traits<char>::eof()) {
-        throw InvalidArgument("trailing garbage after declared chunk frames: " + shard.path.string());
+        throw InvalidArgument(
+            "trailing garbage after declared chunk frames: " + shard.path.string());
     }
 
     current_stream_.close();
@@ -360,7 +327,7 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
         const auto& shard = shards_[current_shard_pos_];
         open_current_shard();
 
-        if (current_record_in_shard_ >= shard.chunk_count) {
+        if (current_record_in_shard_ >= shard.chunk_count()) {
             close_current_shard_and_check_trailing_garbage();
             continue;
         }
@@ -374,11 +341,13 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
         const auto frame_header = parse_chunk_frame_header_v1(
             ConstByteSpan{header_bytes.data(), header_bytes.size()});
 
-        if (frame_header.shard_index != shard.shard_index) {
-            throw InvalidArgument("chunk frame shard_index does not match enclosing shard");
+        if (frame_header.shard_index != shard.shard_index()) {
+            throw InvalidArgument(
+                "chunk frame shard_index does not match enclosing shard");
         }
 
-        const auto expected_chunk_index = shard.first_chunk_index + current_record_in_shard_;
+        const auto expected_chunk_index =
+            shard.first_chunk_index() + current_record_in_shard_;
         if (frame_header.global_chunk_index != expected_chunk_index) {
             if (frame_header.global_chunk_index < expected_chunk_index) {
                 throw InvalidArgument("duplicate or reordered chunk index");
@@ -393,14 +362,15 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
         if (frame_header.tag_len != 16) {
             throw InvalidArgument("invalid chunk frame tag length");
         }
-        if (frame_header.plaintext_len > shard.chunk_plain_size) {
+        if (frame_header.plaintext_len > shard.global_header.chunk_plain_size) {
             throw InvalidArgument("invalid chunk frame plaintext_len");
         }
         if (frame_header.ciphertext_len != frame_header.plaintext_len) {
             throw InvalidArgument("invalid ciphertext_length");
         }
 
-        const bool is_final = (frame_header.frame_flags & kChunkFrameFlagFinalChunk) != 0;
+        const bool is_final =
+            (frame_header.frame_flags & kChunkFrameFlagFinalChunk) != 0;
         const bool should_be_final =
             expected_total_chunk_count_ != 0 &&
             frame_header.global_chunk_index == expected_total_chunk_count_ - 1;
@@ -413,7 +383,7 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
                 throw InvalidArgument("duplicate final chunk marker");
             }
             saw_final_chunk_ = true;
-        } else if (frame_header.plaintext_len != shard.chunk_plain_size) {
+        } else if (frame_header.plaintext_len != shard.global_header.chunk_plain_size) {
             throw InvalidArgument("non-final chunk has partial plaintext length");
         }
 
@@ -421,16 +391,17 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
 
         const auto after_header_pos = current_stream_.tellg();
         if (after_header_pos < std::streampos{0}) {
-            throw InvalidArgument("failed to read shard position: " + shard.path.string());
+            throw InvalidArgument(
+                "failed to read shard position: " + shard.path.string());
         }
-        const auto expected_payload_end = checked_range_end(
-            shard.shard_payload_offset,
-            shard.shard_payload_len);
-        const auto after_header_offset = static_cast<std::uint64_t>(after_header_pos);
+        const auto expected_payload_end = kPayloadOffset + shard.shard_payload_len();
+        const auto after_header_offset =
+            static_cast<std::uint64_t>(after_header_pos);
 
         if (after_header_offset > expected_payload_end ||
             body_len_u64 > expected_payload_end - after_header_offset) {
-            throw InvalidArgument("chunk frame exceeds declared shard payload");
+            throw InvalidArgument(
+                "chunk frame exceeds declared shard payload");
         }
 
         const auto ciphertext = read_exact(
@@ -442,12 +413,12 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
         ++current_record_in_shard_;
 
         return ChunkRecord{
-            .chunk_index = frame_header.global_chunk_index,
-            .shard_index = frame_header.shard_index,
-            .plaintext_size = frame_header.plaintext_len,
-            .frame_flags = frame_header.frame_flags,
+            .chunk_index       = frame_header.global_chunk_index,
+            .shard_index       = frame_header.shard_index,
+            .plaintext_size    = frame_header.plaintext_len,
+            .frame_flags       = frame_header.frame_flags,
             .frame_header_bytes = header_bytes,
-            .ciphertext = ciphertext,
+            .ciphertext        = ciphertext,
         };
     }
 

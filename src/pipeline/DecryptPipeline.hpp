@@ -9,6 +9,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace bseal::pipeline {
 
@@ -22,10 +23,17 @@ namespace bseal::pipeline {
         std::size_t queue_depth{0};
 
         // Must match the archive_id from the public header.
-        std::array<Byte, 16> archive_id{};
+        std::array<Byte, 32> archive_id{};  // Extended to 32 bytes per FORMAT.md §3.
 
         // Must be the same public-header hash used during encryption.
+        // Used as the fallback hash when per_shard_public_header_hashes is empty.
         std::array<Byte, 32> public_header_hash{};
+
+        // Per-shard public header hashes, indexed by shard_index.
+        // When non-empty, overrides public_header_hash for the corresponding shard.
+        // Must be populated with the exact hashes used during encryption
+        // (i.e. computed from fill_per_shard_hashes() with the actual planned layout).
+        std::vector<std::array<Byte, 32>> per_shard_public_header_hashes;
 
         // See EncryptPipelineOptions::aad_shard_index.
         std::uint32_t aad_shard_index{0};

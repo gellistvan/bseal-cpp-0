@@ -18,7 +18,7 @@ struct ExpandedKeys {
 
 struct NonceContext {
     CipherSuite suite{CipherSuite::XChaCha20Poly1305};
-    std::array<Byte, 16> archive_id{};
+    std::array<Byte, 32> archive_id{};  // Extended to 32 bytes per FORMAT.md §3.
 };
 
 // Expands a 32-byte master seed into domain-separated keys.
