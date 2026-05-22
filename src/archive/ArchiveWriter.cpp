@@ -32,6 +32,9 @@ void append_u32_le(Bytes& out, std::uint32_t value) {
 
 } // namespace
 
+ArchiveWriter::ArchiveWriter(Bytes replay_buffer)
+    : replay_mode_(true), replay_buffer_(std::move(replay_buffer)) {}
+
 ArchiveWriter::ArchiveWriter(ArchiveWriterOptions options) : options_(std::move(options)) {
     if (options_.input_root.empty()) {
         throw InvalidArgument("ArchiveWriter input root must not be empty");
@@ -82,6 +85,18 @@ ArchiveWriter::ArchiveWriter(ArchiveWriterOptions options) : options_(std::move(
 }
 
 std::optional<Bytes> ArchiveWriter::next_record_bytes() {
+    if (replay_mode_) {
+        if (replay_pos_ >= replay_buffer_.size()) return std::nullopt;
+        const ConstByteSpan remaining{
+            replay_buffer_.data() + replay_pos_,
+            replay_buffer_.size() - replay_pos_};
+        const auto size = encoded_record_size_if_complete(remaining);
+        if (!size) return std::nullopt;
+        Bytes rec_bytes(remaining.begin(), remaining.begin() + static_cast<std::ptrdiff_t>(*size));
+        replay_pos_ += *size;
+        return rec_bytes;
+    }
+
     if (!emitted_begin_) {
         emitted_begin_ = true;
 

@@ -986,16 +986,17 @@ TEST(BlackBoxCli, PaddingNoneSucceeds) {
     EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
 }
 
-TEST(BlackBoxCli, PaddingChunkRejected) {
-    TempDir temp("bseal_integration_padding_chunk_rejected");
+TEST(BlackBoxCli, PaddingChunkRoundTrip) {
+    TempDir temp("bseal_integration_padding_chunk");
 
     const auto input  = temp.subdir("input");
     const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
 
     fs::create_directories(input);
-    write_file(input / "data.txt", "payload");
+    write_file(input / "data.txt", "payload for chunk padding test");
 
-    const auto result = run_bseal(
+    const auto encrypt_result = run_bseal(
         temp.subdir("encrypt-run"),
         {
             "encrypt",
@@ -1006,21 +1007,32 @@ TEST(BlackBoxCli, PaddingChunkRejected) {
         },
         "passphrase\n");
 
-    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
-    EXPECT_TRUE(contains_text(result.stderr_text, "not yet implemented"))
-        << "expected 'not yet implemented' in stderr: " << result.stderr_text;
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    EXPECT_EQ(read_file(output / "data.txt"), "payload for chunk padding test");
 }
 
-TEST(BlackBoxCli, PaddingPower2Rejected) {
-    TempDir temp("bseal_integration_padding_power2_rejected");
+TEST(BlackBoxCli, PaddingPower2RoundTrip) {
+    TempDir temp("bseal_integration_padding_power2");
 
     const auto input  = temp.subdir("input");
     const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
 
     fs::create_directories(input);
-    write_file(input / "data.txt", "payload");
+    write_file(input / "data.txt", "payload for power2 padding test");
 
-    const auto result = run_bseal(
+    const auto encrypt_result = run_bseal(
         temp.subdir("encrypt-run"),
         {
             "encrypt",
@@ -1031,21 +1043,33 @@ TEST(BlackBoxCli, PaddingPower2Rejected) {
         },
         "passphrase\n");
 
-    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
-    EXPECT_TRUE(contains_text(result.stderr_text, "not yet implemented"))
-        << "expected 'not yet implemented' in stderr: " << result.stderr_text;
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    EXPECT_EQ(read_file(output / "data.txt"), "payload for power2 padding test");
 }
 
-TEST(BlackBoxCli, PaddingFixedSizeRejected) {
-    TempDir temp("bseal_integration_padding_fixed_size_rejected");
+TEST(BlackBoxCli, PaddingFixedSizeRoundTrip) {
+    TempDir temp("bseal_integration_padding_fixed_size");
 
     const auto input  = temp.subdir("input");
     const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
 
     fs::create_directories(input);
-    write_file(input / "data.txt", "payload");
+    write_file(input / "data.txt", "payload for fixed-size padding test");
 
-    const auto result = run_bseal(
+    // 1M is well above the tiny test archive size.
+    const auto encrypt_result = run_bseal(
         temp.subdir("encrypt-run"),
         {
             "encrypt",
@@ -1056,7 +1080,44 @@ TEST(BlackBoxCli, PaddingFixedSizeRejected) {
         },
         "passphrase\n");
 
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+        },
+        "passphrase\n");
+
+    ASSERT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+
+    EXPECT_EQ(read_file(output / "data.txt"), "payload for fixed-size padding test");
+}
+
+TEST(BlackBoxCli, PaddingFixedSizeTooSmallFails) {
+    TempDir temp("bseal_integration_padding_fixed_too_small");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    // Write a file large enough to exceed a very small fixed-size target.
+    write_file(input / "data.txt", repeated("x", 10000));
+
+    // 1K is smaller than the archive produced from a 10000-byte file.
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "fixed-size=1K",
+        },
+        "passphrase\n");
+
     EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
-    EXPECT_TRUE(contains_text(result.stderr_text, "not yet implemented"))
-        << "expected 'not yet implemented' in stderr: " << result.stderr_text;
+    EXPECT_TRUE(contains_text(result.stderr_text, "smaller than the unpadded archive"))
+        << "expected size-too-small error in stderr: " << result.stderr_text;
 }
