@@ -304,7 +304,7 @@ ArchiveOpenContext make_encrypt_context(const bseal::cli::EncryptOptions& option
     gh.argon2_parallelism = context.kdf_params.parallelism;
     gh.chunk_plain_size  = static_cast<std::uint32_t>(options.chunk_size);
     gh.max_shard_payload_len = options.shard_size;
-    // padding_policy_id and padding_policy_value are set after plaintext buffering.
+    // padding_policy_id and padding_policy_value are filled in after layout planning below.
     gh.padding_policy_id    = 0;
     gh.reserved0            = 0;
     gh.padding_policy_value = 0;
@@ -449,7 +449,7 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     const auto header_authentication_key = copy_secret_32(keys.header_authentication_key);
 
     // -----------------------------------------------------------------------
-    // Two-pass: buffer all plaintext records from ArchiveWriter first.
+    // Streaming: plan layout from filesystem metadata, then stream file bytes.
     // -----------------------------------------------------------------------
     bseal::archive::ArchiveWriter archive_writer(bseal::archive::ArchiveWriterOptions{
         options.input,
@@ -459,22 +459,11 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         false,
     });
 
-    // Collect all serialized archive records into one flat buffer.
-    Bytes plaintext_buffer;
-    while (true) {
-        auto rec = archive_writer.next_record_bytes();
-        if (!rec) {
-            break;
-        }
-        plaintext_buffer.insert(plaintext_buffer.end(), rec->begin(), rec->end());
-    }
-
-    const std::uint64_t raw_plaintext_size =
-        static_cast<std::uint64_t>(plaintext_buffer.size());
+    const std::uint64_t raw_plaintext_size = archive_writer.plan_plaintext_size();
     const std::uint64_t chunk_plain_size = context.chunk_plain_size;
     const std::uint16_t tag_len = 16; // All v1 AEADs use a 16-byte tag.
 
-    // Apply padding policy: append RandomPadding record if needed.
+    // Apply padding policy: build RandomPadding record and register with the writer.
     const auto pad = compute_padding(raw_plaintext_size, chunk_plain_size, options.padding);
     if (pad.target_size > raw_plaintext_size) {
         const std::uint64_t gap = pad.target_size - raw_plaintext_size;
@@ -483,12 +472,10 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         padding_rec.type    = bseal::archive::RecordType::RandomPadding;
         padding_rec.payload = bseal::platform::secure_random_bytes(
             static_cast<std::size_t>(payload_size));
-        auto rec_bytes = bseal::archive::serialize_record(padding_rec);
-        plaintext_buffer.insert(plaintext_buffer.end(), rec_bytes.begin(), rec_bytes.end());
+        archive_writer.set_trailing_padding_record(bseal::archive::serialize_record(padding_rec));
     }
 
-    const std::uint64_t padded_plaintext_size =
-        static_cast<std::uint64_t>(plaintext_buffer.size());
+    const std::uint64_t padded_plaintext_size = pad.target_size;
 
     // Compute global chunk counts.
     std::uint64_t global_chunk_count = 0;
@@ -560,10 +547,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     bseal::io::ShardWriter shard_writer(std::move(shard_options));
 
-    // Replay the padded plaintext buffer in pass 2 (avoids re-reading disk and
-    // ensures the pipeline encrypts exactly the same bytes we planned around).
-    bseal::archive::ArchiveWriter replay_writer(std::move(plaintext_buffer));
-
     bseal::pipeline::EncryptPipelineOptions pipeline_options;
     pipeline_options.chunk_plain_size               = options.chunk_size;
     pipeline_options.worker_count                   = 0;
@@ -574,15 +557,27 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
                                                           : per_shard_hashes[0];
     pipeline_options.per_shard_public_header_hashes = per_shard_hashes;
     pipeline_options.emit_final_chunk_when_empty     = true;
+    pipeline_options.expected_plaintext_bytes        = padded_plaintext_size;
 
     bseal::pipeline::EncryptPipeline pipeline(
         pipeline_options,
         make_backend(context.suite),
         std::move(keys),
-        std::move(replay_writer),
+        std::move(archive_writer),
         std::move(shard_writer));
 
-    pipeline.run();
+    try {
+        pipeline.run();
+    } catch (...) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(options.output, ec)) {
+            if (!ec && entry.is_regular_file() && entry.path().extension() == ".bin") {
+                std::filesystem::remove(entry.path(), ec);
+            }
+        }
+        throw;
+    }
+
     return 0;
 }
 

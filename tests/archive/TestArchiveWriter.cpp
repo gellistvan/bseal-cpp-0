@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <fstream>
 #include <map>
 #include <string>
 #include <vector>
@@ -149,4 +150,107 @@ TEST(TestArchiveWriter, RejectsNonDirectoryInputRoot) {
         ArchiveWriter writer(options);
         (void)writer;
     }));
+}
+
+// ---------------------------------------------------------------------------
+// plan_plaintext_size() tests
+// ---------------------------------------------------------------------------
+
+TEST(TestArchiveWriter, PlanPlaintextSizeMatchesBytesProduced) {
+    TemporaryDirectory input;
+
+    write_text_file(input.path() / "a.txt", "hello");
+    write_text_file(input.path() / "b.txt", std::string(120 * 1024, 'x'));
+    std::filesystem::create_directories(input.path() / "subdir");
+    write_text_file(input.path() / "subdir" / "c.txt", "world");
+
+    ArchiveWriterOptions options;
+    options.input_root = input.path();
+    options.chunk_plain_size = 64 * 1024;
+
+    ArchiveWriter writer(options);
+    const std::uint64_t planned = writer.plan_plaintext_size();
+
+    while (writer.next_record_bytes()) {}
+
+    EXPECT_EQ(writer.bytes_produced(), planned)
+        << "plan_plaintext_size() must equal the sum of bytes actually returned by next_record_bytes()";
+}
+
+TEST(TestArchiveWriter, PlanPlaintextSizeIsStableAcrossMultipleCalls) {
+    TemporaryDirectory input;
+    write_text_file(input.path() / "file.txt", "stable");
+
+    ArchiveWriterOptions options;
+    options.input_root = input.path();
+
+    ArchiveWriter writer(options);
+    EXPECT_EQ(writer.plan_plaintext_size(), writer.plan_plaintext_size());
+}
+
+// ---------------------------------------------------------------------------
+// File-change-detection tests
+// ---------------------------------------------------------------------------
+
+TEST(TestArchiveWriter, ThrowsWhenFileShrinksDuringStreaming) {
+    TemporaryDirectory input;
+    const auto file_path = input.path() / "shrink.txt";
+
+    // Write a file with enough data to produce at least one FileBytes record.
+    write_text_file(file_path, std::string(1024, 'A'));
+
+    ArchiveWriterOptions options;
+    options.input_root = input.path();
+    options.chunk_plain_size = 64 * 1024;
+
+    ArchiveWriter writer(options);
+
+    // Drain ArchiveBegin and FileEntry records, then truncate the file.
+    bool truncated = false;
+    bool threw = false;
+
+    try {
+        while (auto rec = writer.next_record_bytes()) {
+            const auto parsed = parse_record(ConstByteSpan{rec->data(), rec->size()});
+            if (parsed.type == RecordType::FileEntry && !truncated) {
+                // Truncate to 0 bytes — the writer will read 0 bytes but expect 1024.
+                std::ofstream trunc(file_path, std::ios::trunc | std::ios::binary);
+                truncated = true;
+            }
+        }
+    } catch (const InvalidArgument&) {
+        threw = true;
+    }
+
+    EXPECT_TRUE(truncated) << "file must have been truncated before end of stream";
+    EXPECT_TRUE(threw) << "writer must throw InvalidArgument when file shrinks during streaming";
+}
+
+TEST(TestArchiveWriter, TrailingPaddingRecordIsEmittedAfterArchiveEnd) {
+    TemporaryDirectory input;
+    write_text_file(input.path() / "file.txt", "payload");
+
+    ArchiveWriterOptions options;
+    options.input_root = input.path();
+
+    ArchiveWriter writer(options);
+
+    const std::uint64_t planned = writer.plan_plaintext_size();
+
+    // Build a minimal RandomPadding record (kRecordPrefixSize bytes: type + 8-byte zero length).
+    ArchiveRecord padding_rec;
+    padding_rec.type    = RecordType::RandomPadding;
+    padding_rec.payload = Bytes{};
+    auto padding_bytes = serialize_record(padding_rec);
+
+    writer.set_trailing_padding_record(padding_bytes);
+
+    const auto records = collect_writer_records(writer);
+
+    ASSERT_FALSE(records.empty());
+    EXPECT_EQ(static_cast<int>(records.back().type), static_cast<int>(RecordType::RandomPadding))
+        << "trailing padding record must be the last record emitted";
+
+    // Verify bytes_produced includes the padding.
+    EXPECT_EQ(writer.bytes_produced(), planned + padding_bytes.size());
 }

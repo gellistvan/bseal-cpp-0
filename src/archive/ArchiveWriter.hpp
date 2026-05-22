@@ -23,9 +23,14 @@ namespace bseal::archive {
     public:
         explicit ArchiveWriter(ArchiveWriterOptions options);
 
-        // Replay constructor: replays a pre-built serialized archive buffer verbatim.
-        // Used when the caller has already buffered and potentially padded the stream.
-        explicit ArchiveWriter(Bytes replay_buffer);
+        // Compute the total plaintext stream size from filesystem metadata only.
+        // No file contents are read. Call before plan_shards / set_trailing_padding_record.
+        [[nodiscard]] std::uint64_t plan_plaintext_size() const;
+
+        // Register a pre-built trailing record (RandomPadding) to be emitted after ArchiveEnd.
+        // The caller is responsible for generating the record with the correct byte count so
+        // that plan_plaintext_size() + record_bytes.size() == padded_plaintext_size.
+        void set_trailing_padding_record(Bytes record_bytes);
 
         // Returns the next encoded plaintext archive record.
         //
@@ -34,15 +39,13 @@ namespace bseal::archive {
         // padding if required.
         [[nodiscard]] std::optional<Bytes> next_record_bytes();
 
+        // Total bytes returned by next_record_bytes() so far.
+        [[nodiscard]] std::uint64_t bytes_produced() const noexcept { return bytes_produced_; }
+
     private:
         [[nodiscard]] std::optional<Bytes> next_file_bytes_or_end();
         [[nodiscard]] EntryMetadata metadata_for(const std::filesystem::directory_entry& entry) const;
         [[nodiscard]] Bytes make_record(RecordType type, Bytes payload = {}) const;
-
-        // Replay mode state (used when constructed with a pre-built buffer).
-        bool replay_mode_{false};
-        Bytes replay_buffer_;
-        std::size_t replay_pos_{0};
 
         ArchiveWriterOptions options_;
         std::vector<std::filesystem::directory_entry> entries_;
@@ -56,6 +59,18 @@ namespace bseal::archive {
 
         // FileBytes record payload target. Kept bounded so ArchiveReader can stream safely.
         std::size_t file_bytes_payload_size_{1024ull * 1024ull};
+
+        // Trailing record (e.g. RandomPadding) emitted after ArchiveEnd.
+        std::optional<Bytes> trailing_padding_record_;
+        bool trailing_padding_emitted_{false};
+
+        // Per-file change detection: set when a file is opened, validated at FileEnd.
+        std::filesystem::path current_file_path_;
+        std::uint64_t current_file_expected_bytes_{0};
+        std::uint64_t current_file_bytes_read_{0};
+
+        // Running total of bytes returned by next_record_bytes().
+        std::uint64_t bytes_produced_{0};
     };
 
 } // namespace bseal::archive

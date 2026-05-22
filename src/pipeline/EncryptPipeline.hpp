@@ -43,6 +43,10 @@ struct EncryptPipelineOptions {
 
     // Ensures even an otherwise empty archive emits one authenticated fixed-size chunk.
     bool emit_final_chunk_when_empty{true};
+
+    // When non-zero, the pipeline validates that ArchiveWriter produced exactly this many
+    // plaintext bytes.  Set to plan_plaintext_size() + padding to catch file changes mid-stream.
+    std::uint64_t expected_plaintext_bytes{0};
 };
 
 class EncryptPipeline {

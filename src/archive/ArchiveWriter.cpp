@@ -32,9 +32,6 @@ void append_u32_le(Bytes& out, std::uint32_t value) {
 
 } // namespace
 
-ArchiveWriter::ArchiveWriter(Bytes replay_buffer)
-    : replay_mode_(true), replay_buffer_(std::move(replay_buffer)) {}
-
 ArchiveWriter::ArchiveWriter(ArchiveWriterOptions options) : options_(std::move(options)) {
     if (options_.input_root.empty()) {
         throw InvalidArgument("ArchiveWriter input root must not be empty");
@@ -84,26 +81,65 @@ ArchiveWriter::ArchiveWriter(ArchiveWriterOptions options) : options_(std::move(
     });
 }
 
-std::optional<Bytes> ArchiveWriter::next_record_bytes() {
-    if (replay_mode_) {
-        if (replay_pos_ >= replay_buffer_.size()) return std::nullopt;
-        const ConstByteSpan remaining{
-            replay_buffer_.data() + replay_pos_,
-            replay_buffer_.size() - replay_pos_};
-        const auto size = encoded_record_size_if_complete(remaining);
-        if (!size) return std::nullopt;
-        Bytes rec_bytes(remaining.begin(), remaining.begin() + static_cast<std::ptrdiff_t>(*size));
-        replay_pos_ += *size;
-        return rec_bytes;
+std::uint64_t ArchiveWriter::plan_plaintext_size() const {
+    // ArchiveBegin: prefix(9) + u32 version(4)
+    std::uint64_t total = static_cast<std::uint64_t>(kRecordPrefixSize) + 4u;
+
+    for (const auto& entry : entries_) {
+        std::error_code ec;
+
+        if (entry.is_symlink(ec)) {
+            if (!options_.include_symlinks) continue;
+            const auto meta_size = serialize_entry_metadata(metadata_for(entry)).size();
+            total += kRecordPrefixSize + meta_size; // SymlinkEntry
+            continue;
+        }
+
+        if (entry.is_directory(ec)) {
+            const auto meta_size = serialize_entry_metadata(metadata_for(entry)).size();
+            total += kRecordPrefixSize + meta_size; // DirectoryEntry
+            continue;
+        }
+
+        if (entry.is_regular_file(ec)) {
+            const auto meta = metadata_for(entry);
+            const auto meta_size = serialize_entry_metadata(meta).size();
+            total += kRecordPrefixSize + meta_size; // FileEntry
+
+            const std::uint64_t file_size = meta.original_size;
+            if (file_size > 0) {
+                const std::uint64_t n_records =
+                    (file_size + static_cast<std::uint64_t>(file_bytes_payload_size_) - 1u) /
+                    static_cast<std::uint64_t>(file_bytes_payload_size_);
+                // Each FileBytes record: prefix(9) + payload; total payload == file_size.
+                total += n_records * kRecordPrefixSize + file_size;
+            }
+            total += kRecordPrefixSize; // FileEnd (0-byte payload)
+        }
+        // Sockets, FIFOs, device nodes: skipped by next_record_bytes() too.
     }
 
+    // ArchiveEnd: prefix(9), no payload
+    total += kRecordPrefixSize;
+
+    return total;
+}
+
+void ArchiveWriter::set_trailing_padding_record(Bytes record_bytes) {
+    trailing_padding_record_ = std::move(record_bytes);
+    trailing_padding_emitted_ = false;
+}
+
+std::optional<Bytes> ArchiveWriter::next_record_bytes() {
     if (!emitted_begin_) {
         emitted_begin_ = true;
 
         Bytes payload;
         append_u32_le(payload, kArchiveFormatVersion);
 
-        return make_record(RecordType::ArchiveBegin, std::move(payload));
+        auto rec = make_record(RecordType::ArchiveBegin, std::move(payload));
+        bytes_produced_ += rec.size();
+        return rec;
     }
 
     if (current_file_open_) {
@@ -119,16 +155,22 @@ std::optional<Bytes> ArchiveWriter::next_record_bytes() {
                 continue;
             }
 
-            return make_record(RecordType::SymlinkEntry,
-                               serialize_entry_metadata(metadata_for(entry)));
+            auto rec = make_record(RecordType::SymlinkEntry,
+                                   serialize_entry_metadata(metadata_for(entry)));
+            bytes_produced_ += rec.size();
+            return rec;
         }
 
         if (entry.is_directory(ec)) {
-            return make_record(RecordType::DirectoryEntry,
-                               serialize_entry_metadata(metadata_for(entry)));
+            auto rec = make_record(RecordType::DirectoryEntry,
+                                   serialize_entry_metadata(metadata_for(entry)));
+            bytes_produced_ += rec.size();
+            return rec;
         }
 
         if (entry.is_regular_file(ec)) {
+            const auto meta = metadata_for(entry);
+
             current_file_.open(entry.path(), std::ios::binary);
             if (!current_file_) {
                 throw InvalidArgument("cannot open input file for archive: " +
@@ -136,9 +178,13 @@ std::optional<Bytes> ArchiveWriter::next_record_bytes() {
             }
 
             current_file_open_ = true;
+            current_file_path_ = entry.path();
+            current_file_expected_bytes_ = meta.original_size;
+            current_file_bytes_read_ = 0;
 
-            return make_record(RecordType::FileEntry,
-                               serialize_entry_metadata(metadata_for(entry)));
+            auto rec = make_record(RecordType::FileEntry, serialize_entry_metadata(meta));
+            bytes_produced_ += rec.size();
+            return rec;
         }
 
         // Sockets, device nodes, FIFOs, and other special files are intentionally skipped.
@@ -147,7 +193,15 @@ std::optional<Bytes> ArchiveWriter::next_record_bytes() {
 
     if (!emitted_end_) {
         emitted_end_ = true;
-        return make_record(RecordType::ArchiveEnd);
+        auto rec = make_record(RecordType::ArchiveEnd);
+        bytes_produced_ += rec.size();
+        return rec;
+    }
+
+    if (trailing_padding_record_ && !trailing_padding_emitted_) {
+        trailing_padding_emitted_ = true;
+        bytes_produced_ += trailing_padding_record_->size();
+        return *trailing_padding_record_;
     }
 
     return std::nullopt;
@@ -162,18 +216,30 @@ std::optional<Bytes> ArchiveWriter::next_file_bytes_or_end() {
     const auto read_count = current_file_.gcount();
 
     if (read_count > 0) {
+        current_file_bytes_read_ += static_cast<std::uint64_t>(read_count);
         payload.resize(static_cast<std::size_t>(read_count));
-        return make_record(RecordType::FileBytes, std::move(payload));
+        auto rec = make_record(RecordType::FileBytes, std::move(payload));
+        bytes_produced_ += rec.size();
+        return rec;
     }
 
     if (!current_file_.eof()) {
         throw InvalidArgument("error while reading input file for archive");
     }
 
+    if (current_file_bytes_read_ != current_file_expected_bytes_) {
+        throw InvalidArgument("file changed size during encryption: '" +
+                              current_file_path_.string() + "' expected " +
+                              std::to_string(current_file_expected_bytes_) + " bytes but read " +
+                              std::to_string(current_file_bytes_read_));
+    }
+
     current_file_.close();
     current_file_open_ = false;
 
-    return make_record(RecordType::FileEnd);
+    auto rec = make_record(RecordType::FileEnd);
+    bytes_produced_ += rec.size();
+    return rec;
 }
 
 EntryMetadata ArchiveWriter::metadata_for(const std::filesystem::directory_entry& entry) const {
