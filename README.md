@@ -173,6 +173,9 @@ Encrypt-only options:
 Decrypt-only options:
 
 * `--overwrite`, allows restoring into an existing non-empty output directory
+* `--max-kdf-memory SIZE` — reject archives whose Argon2id memory cost exceeds SIZE (default: `2G`; covers all built-in KDF presets including `paranoid`)
+* `--max-kdf-iterations N` — reject archives whose Argon2id iteration count exceeds N (default: `4`)
+* `--max-kdf-parallelism N` — reject archives whose Argon2id parallelism exceeds N (default: `8`)
 
 Current exit codes:
 

@@ -28,6 +28,9 @@ using bseal::crypto::hash_keyfiles_blake3;
 using bseal::crypto::mix_keyfile_digests;
 using bseal::crypto::preset_params;
 using bseal::crypto::validate_kdf_params;
+using bseal::crypto::validate_kdf_resource_policy;
+using bseal::crypto::check_kdf_params_against_policy;
+using bseal::crypto::KdfResourcePolicy;
 
 template <typename ExceptionT, typename Fn>
 bool throws_exception(Fn&& fn) {
@@ -394,6 +397,114 @@ TEST(KdfParamValidation, AcceptsValidPresetParams) {
     EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Fast)));
     EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Strong)));
     EXPECT_NO_THROW(validate_kdf_params(preset_params(KdfPreset::Paranoid)));
+}
+
+// ---------------------------------------------------------------------------
+// KdfResourcePolicy validation tests
+// ---------------------------------------------------------------------------
+
+TEST(KdfResourcePolicy, DefaultPolicyAcceptsAllBuiltinPresets) {
+    KdfResourcePolicy policy{};
+    EXPECT_NO_THROW(check_kdf_params_against_policy(preset_params(KdfPreset::Fast), policy));
+    EXPECT_NO_THROW(check_kdf_params_against_policy(preset_params(KdfPreset::Strong), policy));
+    EXPECT_NO_THROW(check_kdf_params_against_policy(preset_params(KdfPreset::Paranoid), policy));
+}
+
+TEST(KdfResourcePolicy, ValidateRejectsZeroMemory) {
+    KdfResourcePolicy policy{};
+    policy.max_memory_kib = 0;
+    EXPECT_THROW(validate_kdf_resource_policy(policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, ValidateRejectsZeroIterations) {
+    KdfResourcePolicy policy{};
+    policy.max_iterations = 0;
+    EXPECT_THROW(validate_kdf_resource_policy(policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, ValidateRejectsZeroParallelism) {
+    KdfResourcePolicy policy{};
+    policy.max_parallelism = 0;
+    EXPECT_THROW(validate_kdf_resource_policy(policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, ValidateRejectsMemoryAboveFormatMax) {
+    KdfResourcePolicy policy{};
+    policy.max_memory_kib = bseal::crypto::kArgon2MemoryKiBMax + 1u;
+    EXPECT_THROW(validate_kdf_resource_policy(policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, ValidateRejectsIterationsAboveFormatMax) {
+    KdfResourcePolicy policy{};
+    policy.max_iterations = bseal::crypto::kArgon2IterationsMax + 1u;
+    EXPECT_THROW(validate_kdf_resource_policy(policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, ValidateRejectsParallelismAboveFormatMax) {
+    KdfResourcePolicy policy{};
+    policy.max_parallelism = bseal::crypto::kArgon2ParallelismMax + 1u;
+    EXPECT_THROW(validate_kdf_resource_policy(policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, ValidateAcceptsDefaultPolicy) {
+    EXPECT_NO_THROW(validate_kdf_resource_policy(KdfResourcePolicy{}));
+}
+
+TEST(KdfResourcePolicy, CheckRejectsParamsExceedingMemoryLimit) {
+    KdfResourcePolicy policy{};
+    policy.max_memory_kib = bseal::crypto::kArgon2MemoryKiBMin; // 64 MiB
+
+    auto params = small_test_kdf_params();
+    params.memory_kib = bseal::crypto::kArgon2MemoryKiBMin + 1024u; // one extra MiB
+
+    EXPECT_THROW(check_kdf_params_against_policy(params, policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, CheckRejectsParamsExceedingIterationsLimit) {
+    KdfResourcePolicy policy{};
+    policy.max_iterations = 2;
+
+    auto params = small_test_kdf_params();
+    params.iterations = 3;
+
+    EXPECT_THROW(check_kdf_params_against_policy(params, policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, CheckRejectsParamsExceedingParallelismLimit) {
+    KdfResourcePolicy policy{};
+    policy.max_parallelism = 2;
+
+    auto params = small_test_kdf_params();
+    params.parallelism = 3;
+
+    EXPECT_THROW(check_kdf_params_against_policy(params, policy), InvalidArgument);
+}
+
+TEST(KdfResourcePolicy, CheckAcceptsParamsAtExactLimit) {
+    KdfResourcePolicy policy{};
+    policy.max_memory_kib = bseal::crypto::kArgon2MemoryKiBMin;
+    policy.max_iterations = 1;
+    policy.max_parallelism = 1;
+
+    auto params = small_test_kdf_params();
+    EXPECT_NO_THROW(check_kdf_params_against_policy(params, policy));
+}
+
+TEST(KdfResourcePolicy, CheckErrorMessageMentionsOverrideFlag) {
+    KdfResourcePolicy policy{};
+    policy.max_memory_kib = bseal::crypto::kArgon2MemoryKiBMin;
+
+    auto params = small_test_kdf_params();
+    params.memory_kib = bseal::crypto::kArgon2MemoryKiBMin + 1024u;
+
+    try {
+        check_kdf_params_against_policy(params, policy);
+        FAIL() << "expected InvalidArgument to be thrown";
+    } catch (const InvalidArgument& e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("--max-kdf-memory"), std::string::npos)
+            << "error message must mention --max-kdf-memory: " << msg;
+    }
 }
 
 // ---------------------------------------------------------------------------

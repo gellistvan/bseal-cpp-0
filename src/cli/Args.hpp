@@ -49,6 +49,9 @@ struct EncryptOptions : CommonOptions {
 
 struct DecryptOptions : CommonOptions {
     bool overwrite{false};
+    /// Runtime KDF resource policy; overridable via --max-kdf-memory / --max-kdf-iterations /
+    /// --max-kdf-parallelism.  Defaults cover every built-in CLI preset.
+    crypto::KdfResourcePolicy kdf_policy{};
 };
 
 struct ParsedArgs {

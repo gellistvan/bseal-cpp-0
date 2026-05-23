@@ -609,6 +609,9 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
     auto shards  = bseal::io::ShardReader::discover(options.input);
     auto context = make_decrypt_context_from_shards(shards);
 
+    // Reject before running Argon2 if the archive KDF cost exceeds the local policy.
+    bseal::crypto::check_kdf_params_against_policy(context.kdf_params, options.kdf_policy);
+
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
     auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
 

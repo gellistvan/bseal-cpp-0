@@ -41,6 +41,23 @@ struct KdfParams {
     std::uint32_t output_bytes{kArgon2OutputBytesDefault};
 };
 
+// Runtime decrypt-side resource policy.  Archives whose Argon2id parameters
+// exceed these limits are rejected before the KDF is invoked.  Default limits
+// are calibrated to cover every built-in CLI preset (Fast/Strong/Paranoid)
+// without allowing arbitrary attacker-controlled cost.
+//
+// These are separate from the format-level absolute bounds (kArgon2*Min/Max).
+// Users may raise limits via --max-kdf-memory / --max-kdf-iterations /
+// --max-kdf-parallelism.  Setting a limit to 0 rejects all archives.
+struct KdfResourcePolicy {
+    // 2 GiB — covers the Paranoid preset (the most expensive built-in).
+    std::uint32_t max_memory_kib{2u * 1024u * 1024u};
+    // 4 iterations — matches the Paranoid preset.
+    std::uint32_t max_iterations{4u};
+    // 8 threads — matches the Paranoid preset.
+    std::uint32_t max_parallelism{8u};
+};
+
 struct KdfInput {
     std::string passphrase_utf8;
     std::vector<std::filesystem::path> keyfiles;
@@ -56,6 +73,16 @@ struct KeyfileDigest {
 // Validate public KDF parameters before any allocation based on them and
 // before calling crypto_pwhash().
 void validate_kdf_params(const KdfParams& params);
+
+// Validate that a KdfResourcePolicy is internally consistent.
+// Throws InvalidArgument if any limit is zero or exceeds the format maximum.
+void validate_kdf_resource_policy(const KdfResourcePolicy& policy);
+
+// Check archive KDF parameters against the local runtime resource policy.
+// Throws InvalidArgument (exit code 1, not 3) if any parameter exceeds its
+// policy limit; the error message names the override CLI flag.
+void check_kdf_params_against_policy(const KdfParams& params,
+                                     const KdfResourcePolicy& policy);
 
 /// Hash each keyfile with BLAKE3-256 using the domain-separated framing defined in FORMAT.md §8:
 ///

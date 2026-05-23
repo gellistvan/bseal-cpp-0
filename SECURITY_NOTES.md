@@ -158,6 +158,36 @@ would require `openat(2)`-family traversal throughout, which has no portable C++
   the final `rename()` stays on the same filesystem. Cross-device moves (different mount points)
   are not handled and will fail, not silently write partial output.
 
+## KDF resource policy
+
+Argon2id parameters (memory, iteration count, parallelism) are stored unencrypted in the public
+header so the decryptor can reconstruct the key. A malicious sender can craft a header with extreme
+KDF costs to cause a denial-of-service on the recipient's machine.
+
+Two layers of protection defend against this:
+
+1. **Format-level bounds** (enforced unconditionally in `validate_kdf_params`): memory 64 MiB–4 GiB,
+   iterations 1–10, parallelism 1–32. These prevent values that would never appear in any legitimate
+   archive and are checked before any key derivation.
+
+2. **Runtime resource policy** (`KdfResourcePolicy` in `src/crypto/Kdf.hpp`): stricter per-operator
+   limits checked after format validation but *before* Argon2id is invoked. The defaults are set to
+   cover every built-in CLI preset (including `paranoid`: 2 GiB / 4 iterations / 8 threads):
+
+   | Limit | Default | Built-in preset ceiling |
+   |---|---|---|
+   | `max_memory_kib` | 2 GiB | `paranoid` = 2 GiB |
+   | `max_iterations` | 4 | `paranoid` = 4 |
+   | `max_parallelism` | 8 | `paranoid` = 8 |
+
+   Operators deploying BSEAL on constrained hosts should lower these limits using the CLI flags
+   `--max-kdf-memory`, `--max-kdf-iterations`, and `--max-kdf-parallelism`. Policy violations
+   produce exit code 1 (not 3) and the error message names the flag that can override the limit,
+   so users can distinguish a policy rejection from an authentication failure.
+
+The default limits are **not** derived from available RAM at runtime to remain reproducible and
+predictable across environments. Operators must set them explicitly if lower limits are required.
+
 ## Error messages
 
 Authentication failures should not distinguish between:
