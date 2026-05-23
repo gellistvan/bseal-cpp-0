@@ -45,9 +45,14 @@ ArchiveReader::ArchiveReader(ArchiveReaderOptions options) : options_(std::move(
 
     temp_root_ = options_.output_root / ".bseal-extract-tmp";
 
-    if (std::filesystem::exists(temp_root_)) {
-        throw InvalidArgument("temporary extraction directory already exists: " +
-                              temp_root_.string());
+    // Use symlink_status (lstat) so broken symlinks and symlinks-to-directories are both caught.
+    {
+        std::error_code status_ec;
+        const auto tmp_status = std::filesystem::symlink_status(temp_root_, status_ec);
+        if (!status_ec && tmp_status.type() != std::filesystem::file_type::not_found) {
+            throw InvalidArgument("temporary extraction directory already exists: " +
+                                  temp_root_.string());
+        }
     }
 
     std::filesystem::create_directory(temp_root_, ec);
@@ -387,20 +392,53 @@ void ArchiveReader::commit_temp_tree() {
             continue;
         }
 
-        if (std::filesystem::exists(dst, ec)) {
-            if (!options_.overwrite_existing) {
-                throw InvalidArgument("output path already exists: " + dst.string());
-            }
+        // Use symlink_status (lstat) so existing symlinks in output_root are detected without
+        // following them — prevents treating a dangling symlink as "not present".
+        {
+            std::error_code status_ec;
+            const auto dst_status = std::filesystem::symlink_status(dst, status_ec);
+            const bool dst_present =
+                !status_ec && dst_status.type() != std::filesystem::file_type::not_found;
 
-            std::filesystem::remove_all(dst, ec);
-            if (ec) {
-                throw InvalidArgument("cannot remove existing output path: " + ec.message());
+            if (dst_present) {
+                if (!options_.overwrite_existing) {
+                    throw InvalidArgument("output path already exists: " + dst.string());
+                }
+
+                // Remove the entry at dst without following it. Use remove() for symlinks so we
+                // unlink the symlink itself and never touch whatever it points to.
+                if (dst_status.type() == std::filesystem::file_type::symlink) {
+                    std::filesystem::remove(dst, ec);
+                } else {
+                    std::filesystem::remove_all(dst, ec);
+                }
+                if (ec) {
+                    throw InvalidArgument("cannot remove existing output path: " + ec.message());
+                }
             }
         }
 
         std::filesystem::create_directories(dst.parent_path(), ec);
         if (ec) {
             throw InvalidArgument("cannot create final parent directory: " + ec.message());
+        }
+
+        // Guard against a pre-existing symlink at an intermediate path component redirecting the
+        // rename outside output_root (e.g. output_root/subdir → /external). Canonicalize the
+        // resolved parent and verify it is within output_root.
+        // Note: a TOCTOU race remains if an attacker can modify the filesystem between this check
+        // and rename(). Full mitigation requires openat(2)-style traversal; see SECURITY_NOTES.md.
+        {
+            std::error_code canon_ec;
+            const auto real_parent = std::filesystem::canonical(dst.parent_path(), canon_ec);
+            if (!canon_ec) {
+                const auto rel_to_root =
+                    real_parent.lexically_relative(options_.output_root);
+                if (!rel_to_root.empty() && *rel_to_root.begin() == "..") {
+                    throw InvalidArgument(
+                        "output path escapes output root via symlink: " + dst.string());
+                }
+            }
         }
 
         // This is atomic for individual files/symlinks on the same filesystem. The temporary root
