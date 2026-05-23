@@ -1,6 +1,6 @@
 # BSEAL Implementation Guide
 
-This guide is written for a future human or AI agent implementing the skeleton.
+This guide records design rules, the implementation order used to build BSEAL, and testing requirements.
 
 ## Non-negotiable rules
 
@@ -23,7 +23,9 @@ The skeleton avoids hard dependencies so it can compile anywhere. Recommended pr
 - Keyfile hashing: official BLAKE3 implementation.
 - HKDF: audited SHA-256/HKDF implementation.
 
-## Suggested implementation order
+## Implementation order
+
+The following order was used to build BSEAL. It remains the recommended order for fresh ports or significant refactors.
 
 1. `platform/Random` using the OS CSPRNG.
 2. `crypto/SecureBuffer` memory locking and explicit wipe verification.
@@ -35,7 +37,7 @@ The skeleton avoids hard dependencies so it can compile anywhere. Recommended pr
 8. `io/ShardWriter` and `io/ShardReader` simple sequential implementation.
 9. `archive/ArchiveWriter` and `archive/ArchiveReader` streaming records.
 10. `pipeline/EncryptPipeline` and `pipeline/DecryptPipeline` with bounded queues.
-11. Add parallel I/O, CPU feature selection, AES-GCM backend, benchmarks.
+11. Parallel I/O, CPU feature selection, AES-GCM backend, AEAD throughput and KDF latency benchmarks.
 12. Optional GPU backend only after CPU backend is correct and benchmarked.
 
 ## Chunk encryption contract
@@ -89,7 +91,7 @@ Implement these policies:
 
 ## Testing requirements
 
-Before considering the tool usable, add tests for:
+The following cases all have named tests in the current test suite:
 
 - wrong passphrase fails;
 - wrong keyfile fails;
@@ -105,14 +107,14 @@ Before considering the tool usable, add tests for:
 
 ## Benchmarks
 
-Add a benchmark target that measures:
+`tests/perf/TestAeadThroughput.cpp` measures in-memory AEAD encrypt/decrypt throughput for both backends. `tests/perf/TestKdfLatency.cpp` measures KDF latency and correctness properties for the Fast preset. Both run as part of `bseal_perf_gtests`.
 
-- raw read speed;
-- raw write speed;
-- AEAD encrypt GB/s;
-- AEAD decrypt GB/s;
+Still missing from the perf suite:
+
+- raw storage read speed;
+- raw storage write speed;
 - end-to-end encrypt directory GB/s;
-- end-to-end decrypt GB/s.
+- end-to-end decrypt directory GB/s.
 
 The design goal is that end-to-end encryption/decryption is limited by storage throughput, not crypto.
 
