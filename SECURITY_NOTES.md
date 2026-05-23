@@ -155,6 +155,12 @@ When the hardened backend is active, `SafeOutputTree` traverses path components 
   existing symlink is removed via `unlinkat(parent_fd, name, 0)` (which unlinks the symlink entry
   itself and never follows or touches its target) before the rename.
 
+**Temp directory creation (hardened POSIX path)**: the per-run temp directory is created via
+`mkdirat(root_fd, name, 0700)`, where `root_fd` was opened with `O_NOFOLLOW` against the output
+root. `mkdirat` fails with `EEXIST` if any entry (file, directory, or symlink) already exists at
+`name`, eliminating the lstat→mkdir TOCTOU window and ensuring a pre-placed symlink at the chosen
+temp name cannot redirect directory creation.
+
 **Protection scope**: hardened mode eliminates the TOCTOU window for intermediate directory
 components between path verification and file promotion. It does not protect against an attacker
 who can replace the **output root** itself, or manipulate the source (temp) tree.
@@ -171,9 +177,11 @@ immediately with exit code 1 on Windows.
 
 ### Portable backend (always used on non-POSIX; also `--hardened-extract=off`)
 
-- **Temp root creation** rejects any pre-existing entry at `.bseal-extract-tmp` using `lstat`
-  (symlink-aware stat), so a broken symlink or a live symlink-to-directory at that path is caught
-  before anything is written.
+- **Temp root creation** uses a per-run randomized name (`.bseal-extract-tmp.<16 base62 chars>`)
+  generated from the OS CSPRNG. The lstat-then-mkdir sequence rejects any pre-existing entry at
+  the chosen name using `lstat` (symlink-aware stat), so a broken symlink or a
+  symlink-to-directory at that exact path is caught before anything is written. The randomized
+  name makes a targeted pre-placement collision negligible in practice.
 - **Overwrite destination check** uses `lstat` so a dangling symlink in `output_root` is treated
   as present, not absent.
 - **Symlink removal** at overwrite time uses `remove()` (POSIX `unlink`), which removes the
@@ -192,9 +200,9 @@ immediately with exit code 1 on Windows.
 - **Filesystem-level denial of service**: an attacker with write access to `output_root` can cause
   extraction to fail (e.g. by creating conflicting entries). Extraction failures leave `output_root`
   unchanged except for the cleaned-up temp directory.
-- **Cross-device rename**: temp files are placed inside `output_root/.bseal-extract-tmp` so that
-  the final `rename()` stays on the same filesystem. Cross-device moves (different mount points)
-  are not handled and will fail, not silently write partial output.
+- **Cross-device rename**: temp files are placed inside `output_root/.bseal-extract-tmp.<random>`
+  so that the final `rename()` stays on the same filesystem. Cross-device moves (different mount
+  points) are not handled and will fail, not silently write partial output.
 - **Symlink extraction disabled by default** (`allow_symlinks = false`). When enabled, symlink
   targets are validated as safe relative paths (no `..` components, no absolute paths).
 
