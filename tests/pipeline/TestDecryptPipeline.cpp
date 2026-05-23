@@ -153,7 +153,8 @@ TEST(DecryptPipeline, PropagatesAuthenticationFailureAndDoesNotFinishRestore) {
 
     auto discovered_shards = io::ShardReader::discover(sealed_root.path());
 
-    io::ShardReader shard_reader(std::move(discovered_shards));
+    io::ShardReader shard_reader(
+        std::move(discovered_shards), io::UnsafeSkipHeaderAuthenticationForTests{});
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{
@@ -188,7 +189,8 @@ TEST(DecryptPipeline, FailsWhenCiphertextIsModified) {
 
     auto discovered_shards = io::ShardReader::discover(sealed_root.path());
 
-    io::ShardReader shard_reader(std::move(discovered_shards));
+    io::ShardReader shard_reader(
+        std::move(discovered_shards), io::UnsafeSkipHeaderAuthenticationForTests{});
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{

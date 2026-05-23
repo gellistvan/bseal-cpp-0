@@ -596,7 +596,8 @@ inline io::ShardReader make_valid_test_shard_reader(
     pipeline.run();
 
     auto discovered_shards = io::ShardReader::discover(sealed_dir);
-    return io::ShardReader(std::move(discovered_shards));
+    return io::ShardReader(
+        std::move(discovered_shards), io::UnsafeSkipHeaderAuthenticationForTests{});
 }
 
 inline DecryptionRunResult run_test_decryption(
@@ -608,7 +609,8 @@ inline DecryptionRunResult run_test_decryption(
     auto* backend_raw = backend.get();
 
     auto discovered_shards = io::ShardReader::discover(sealed_dir);
-    io::ShardReader shard_reader(std::move(discovered_shards));
+    io::ShardReader shard_reader(
+        std::move(discovered_shards), io::UnsafeSkipHeaderAuthenticationForTests{});
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{

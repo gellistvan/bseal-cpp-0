@@ -620,13 +620,14 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
 
     // Build validation struct using new format fields.
     bseal::io::ShardReaderValidation validation{};
-    validation.suite_id    = suite_to_aead_alg_id(context.suite);
-    validation.archive_id  = context.archive_id;
+    validation.suite_id         = suite_to_aead_alg_id(context.suite);
+    validation.archive_id       = context.archive_id;
     validation.chunk_plain_size = context.chunk_plain_size;
-    validation.header_authentication_key =
-        copy_secret_32(keys.header_authentication_key);
 
-    bseal::io::ShardReader shard_reader(std::move(shards), validation);
+    bseal::io::ShardReader shard_reader(
+        std::move(shards),
+        copy_secret_32(keys.header_authentication_key),
+        validation);
 
     bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{
         options.output,

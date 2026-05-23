@@ -206,7 +206,8 @@ TEST(TestShardWriter, WritesMultipleChunkFramesIntoOneShard) {
     ASSERT_EQ(files.size(), 1u);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     auto r0 = reader.read_next_chunk_record();
     ASSERT_TRUE(r0.has_value());
@@ -256,7 +257,8 @@ TEST(TestShardWriter, SplitsChunkFramesAcrossMultipleShards) {
     auto shards = bseal::io::ShardReader::discover(dir);
     ASSERT_EQ(shards.size(), 3u);
 
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     auto r0 = reader.read_next_chunk_record();
     auto r1 = reader.read_next_chunk_record();
