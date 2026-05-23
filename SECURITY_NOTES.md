@@ -110,6 +110,44 @@ The only way to skip `header_mac` verification is to pass the
 by accident, making the bypass explicit and easy to grep for. Never pass this tag in
 production code. All-zero keys are also rejected at the constructor level.
 
+## Extraction filesystem safety
+
+### Local-attacker assumptions
+
+The extractor assumes a **trusted local filesystem** for the output directory: no concurrent
+attacker is modifying directory entries, replacing symlinks, or injecting entries between BSEAL's
+own operations. BSEAL does **not** defend against a local attacker who can race the filesystem
+after a path check and before a write (TOCTOU race). Defending against local filesystem races
+would require `openat(2)`-family traversal throughout, which has no portable C++ equivalent.
+
+### What is hardened
+
+- **Temp root creation** rejects any pre-existing entry at `.bseal-extract-tmp` using `lstat`
+  (symlink-aware stat), so a broken symlink or a live symlink-to-directory at that path is caught
+  before anything is written.
+- **Overwrite destination check** uses `lstat` so a dangling symlink in `output_root` is treated
+  as present, not absent.
+- **Symlink removal** at overwrite time uses `remove()` (POSIX `unlink`), which removes the
+  symlink entry itself and never touches the symlink target.
+- **Intermediate directory symlink guard**: before each `rename()` into `output_root`, the
+  canonical (resolved) parent path is verified to remain under `output_root`. If a pre-existing
+  symlink at an intermediate component (e.g. `output_root/subdir → /external`) would redirect
+  the write, the extraction is aborted.
+- **Symlink extraction disabled by default** (`allow_symlinks = false`). When enabled, symlink
+  targets are validated as safe relative paths (no `..` components, no absolute paths).
+
+### Remaining non-goals
+
+- **TOCTOU races**: a concurrent local process that replaces a directory with a symlink *between*
+  BSEAL's `canonical()` check and the subsequent `rename()` can still redirect a write. This is a
+  known limitation documented here.
+- **Filesystem-level denial of service**: an attacker with write access to `output_root` can cause
+  extraction to fail (e.g. by creating conflicting entries). Extraction failures leave `output_root`
+  unchanged except for the cleaned-up temp directory.
+- **Cross-device rename**: temp files are placed inside `output_root/.bseal-extract-tmp` so that
+  the final `rename()` stays on the same filesystem. Cross-device moves (different mount points)
+  are not handled and will fail, not silently write partial output.
+
 ## Error messages
 
 Authentication failures should not distinguish between:
