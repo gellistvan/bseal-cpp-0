@@ -29,6 +29,18 @@ target_link_libraries(bseal_platform_gtests PRIVATE bseal::core ${BSEAL_GTEST_LI
 bseal_set_project_warnings(bseal_platform_gtests)
 bseal_enable_sanitizers_if_requested(bseal_platform_gtests)
 
+# ---------------------------------------------------------------------------
+# Config header: fixture directory path for format-v1 KAT tests
+# ---------------------------------------------------------------------------
+file(GENERATE
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/format-v1-kat/$<CONFIG>/FormatV1KatConfig.hpp"
+        CONTENT
+        "#pragma once
+inline constexpr const char* BSEAL_FORMAT_FIXTURES_DIR =
+    R\"bseal_path(${CMAKE_CURRENT_SOURCE_DIR}/fixtures/format-v1)bseal_path\";
+"
+)
+
 add_executable(bseal_io_gtests
         io/TestAsyncReader.cpp
         io/TestAsyncWriter.cpp
@@ -36,6 +48,12 @@ add_executable(bseal_io_gtests
         io/TestShardFrameHash.cpp
         io/TestShardReader.cpp
         io/TestShardWriter.cpp
+        io/TestFormatV1Kat.cpp
+)
+
+target_include_directories(bseal_io_gtests
+        PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/format-v1-kat/$<CONFIG>"
 )
 
 target_link_libraries(bseal_io_gtests PRIVATE bseal::core blake3::blake3 ${BSEAL_GTEST_LIBS})
@@ -135,6 +153,7 @@ inline constexpr const char* BSEAL_BINARY_PATH = R\"bseal_path($<TARGET_FILE:bse
 add_executable(bseal_integration_gtests
         integration/TestBlackBoxCli.cpp
         integration/TestCliRegression.cpp
+        integration/TestFormatV1Archive.cpp
 )
 
 add_dependencies(bseal_integration_gtests bseal)
@@ -142,6 +161,7 @@ add_dependencies(bseal_integration_gtests bseal)
 target_include_directories(bseal_integration_gtests
         PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated/integration/$<CONFIG>"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/format-v1-kat/$<CONFIG>"
 )
 
 target_link_libraries(bseal_integration_gtests PRIVATE ${BSEAL_GTEST_LIBS})

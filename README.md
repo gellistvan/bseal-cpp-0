@@ -8,7 +8,15 @@ It is still **not production-ready cryptography**. Treat the repository as a har
 
 ## Current status
 
-Implemented today:
+### Format stability
+
+The BSEAL-F1 on-disk format is now **frozen** at the byte level. `docs/FORMAT.md` is the normative specification. Any serialization, key derivation, or nonce derivation change that silently alters the byte output is caught by the known-answer tests in `tests/io/TestFormatV1Kat.cpp`. The fixture files in `tests/fixtures/format-v1/` are committed ground truth.
+
+This means archives produced by the current build will continue to decrypt correctly with future builds, as long as no breaking format change is made. Breaking changes require bumping `format_major`.
+
+No external cryptographic audit has been performed. Do not rely on this for production secrets until after an audit.
+
+### Implemented features
 
 * `bseal encrypt` and `bseal decrypt` are wired through the CLI and app layer.
 * Directory trees can be archived into encrypted shard files and restored.

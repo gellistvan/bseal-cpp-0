@@ -1,6 +1,6 @@
 # BSEAL archive shard format
 
-Status: normative specification for the first real BSEAL encrypted archive format.
+Status: **normative and frozen**. This document is the authoritative specification for the BSEAL-F1 archive format. The serialization, algorithm IDs, key derivation contract, and validation rules defined here are locked. Any implementation change that silently produces different bytes for the same inputs is a breaking change and must be caught by the known-answer tests in `tests/io/TestFormatV1Kat.cpp`.
 
 This document defines the on-disk format for a BSEAL encrypted archive stored as one or more randomized `.bin` shard files. Filenames are not part of the format and are never used for shard ordering, chunk ordering, authentication, or decryption.
 
@@ -280,14 +280,35 @@ master_seed = HKDF-SHA256(
 
 If no keyfiles are supplied, `keyfile_count` is `0` and `keyfile_mix` is still computed from the domain string and the zero count.
 
-The expanded keys are:
+The expanded keys are derived with an **empty HKDF salt** and each info string has the two-byte little-endian AEAD algorithm ID appended for domain separation across cipher suites:
 
 ```text
-chunk_encryption_key = HKDF-SHA256(master_seed, salt = archive_id, info = "BSEAL chunk encryption key v1", L = AEAD key length)
-manifest_key = HKDF-SHA256(master_seed, salt = archive_id, info = "BSEAL manifest key v1", L = 32)
-header_authentication_key = HKDF-SHA256(master_seed, salt = archive_id, info = "BSEAL header authentication key v1", L = 32)
-nonce_derivation_key = HKDF-SHA256(master_seed, salt = archive_id, info = "BSEAL nonce derivation key v1", L = 32)
+chunk_encryption_key = HKDF-SHA256(
+    ikm  = master_seed,
+    salt = {},
+    info = "BSEAL chunk encryption key v1" || u16le(aead_alg_id),
+    L    = AEAD key length)
+
+manifest_key = HKDF-SHA256(
+    ikm  = master_seed,
+    salt = {},
+    info = "BSEAL manifest key v1" || u16le(aead_alg_id),
+    L    = 32)
+
+header_authentication_key = HKDF-SHA256(
+    ikm  = master_seed,
+    salt = {},
+    info = "BSEAL header authentication key v1" || u16le(aead_alg_id),
+    L    = 32)
+
+nonce_derivation_key = HKDF-SHA256(
+    ikm  = master_seed,
+    salt = {},
+    info = "BSEAL nonce derivation key v1" || u16le(aead_alg_id),
+    L    = 32)
 ```
+
+`{}` denotes an empty salt; per RFC 5869 §2.2, when the salt is not provided, HKDF uses a string of `HashLen` zero bytes internally. Unlike `master_seed` derivation, these four calls do not bind `archive_id` in the salt — archive binding happens through the nonce prefix and the AEAD AAD, not through the key expansion step. The `|| u16le(aead_alg_id)` suffix ensures that XChaCha20-Poly1305 and AES-256-GCM archives produce different expanded keys from the same master seed.
 
 The `manifest_key` is reserved for encrypted archive-record metadata authentication in higher-level archive code. It is derived here for domain separation, even when this shard format does not use it directly.
 
@@ -737,3 +758,42 @@ required_feature_flags
 ```
 
 A reader that does not explicitly implement that future revision MUST fail closed.
+
+## 23. Compatibility promise and known-answer tests
+
+### 23.1 Stability guarantee
+
+The following aspects of the BSEAL-F1 format are now **frozen** and MUST NOT change without bumping the format version:
+
+- All field offsets and byte widths in `GlobalPublicHeaderV1`, `ShardPublicHeaderV1`, and `ChunkFrameHeaderV1`.
+- All magic byte sequences.
+- The exact domain strings used in `public_header_hash` and `header_mac` computations (including their NUL terminators).
+- The key derivation contract in §8, including the Argon2id usage, BLAKE3 keyfile framing, HKDF call structure, and the exact info strings with their `u16le(aead_alg_id)` suffixes.
+- The nonce derivation formula in §17.
+- The AEAD AAD construction in §18.
+
+### 23.2 Known-answer tests
+
+The test file `tests/io/TestFormatV1Kat.cpp` contains known-answer tests (KATs) that verify:
+
+1. `GlobalPublicHeaderV1` serializes to the exact 192-byte sequence stored in `tests/fixtures/format-v1/global_header.bin`.
+2. `ShardPublicHeaderV1` serializes to the exact 80-byte sequence stored in `tests/fixtures/format-v1/shard_header.bin`.
+3. `ChunkFrameHeaderV1` serializes to the exact 40-byte sequence stored in `tests/fixtures/format-v1/chunk_frame_header.bin`.
+4. `compute_public_header_hash` produces the exact 32 bytes in `tests/fixtures/format-v1/public_header_hash.bin`.
+5. `compute_shard_header_mac` produces the exact 32 bytes in `tests/fixtures/format-v1/header_mac.bin`.
+6. `expand_keys` (XChaCha20-Poly1305) produces the exact chunk key in `tests/fixtures/format-v1/xchacha20_chunk_key.bin`.
+7. `derive_chunk_nonce` (XChaCha20-Poly1305, chunks 0 and 1) produces the exact nonces in `tests/fixtures/format-v1/xchacha20_nonce_chunk{0,1}.bin`.
+8. `expand_keys` (AES-256-GCM) and `derive_chunk_nonce` (AES-256-GCM, chunks 0 and 1) produce the corresponding AES-GCM fixtures.
+9. `serialize_chunk_aad_v1` produces the exact bytes in `tests/fixtures/format-v1/chunk_aad.bin`.
+
+The fixture files are committed to source control. The test binary fails immediately when any computed value deviates from the stored fixture, making format drift detectable in CI.
+
+### 23.3 Fixture regeneration
+
+Running the test binary with the environment variable `BSEAL_REGENERATE_FIXTURES=1` overwrites all fixture files with the values computed by the current implementation. Use this only after a deliberate, reviewed format change and after verifying the new vectors against an independent implementation. Commit the updated fixtures alongside the code change.
+
+The deterministic test inputs used for all KAT fixtures are documented in `tests/fixtures/format-v1/README.md`.
+
+### 23.4 Pre-release caveat
+
+Despite the format now being frozen at the byte level, **no external cryptographic audit has been performed**. The design should not yet be relied upon for production secrets, long-term backups, or irreplaceable data. Format stability and security are independent properties: the former means the bytes won't change silently; the latter requires an audit.

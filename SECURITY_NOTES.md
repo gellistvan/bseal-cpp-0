@@ -218,6 +218,19 @@ Two layers of protection defend against this:
 The default limits are **not** derived from available RAM at runtime to remain reproducible and
 predictable across environments. Operators must set them explicitly if lower limits are required.
 
+## Format freeze vs. cryptographic audit
+
+The BSEAL-F1 on-disk format is now frozen at the byte level and protected by known-answer tests (`tests/io/TestFormatV1Kat.cpp`). Format stability means the serialization, key schedule, and nonce derivation will not change silently.
+
+Format stability is **not** the same as cryptographic soundness. The following review work has not yet been done:
+
+- No external cryptographic audit of the key schedule, nonce design, or AEAD AAD construction.
+- No formal proof of the multi-key security reduction.
+- No review of the Argon2id parameter selection relative to current hardware costs.
+- No review of side-channel exposure in key handling, AEAD invocations, or header MAC verification.
+
+Until an audit is completed, this implementation should be treated as a research and educational tool, not a production secret-protection system.
+
 ## Error messages
 
 Authentication failures should not distinguish between:
