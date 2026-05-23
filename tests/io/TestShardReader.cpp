@@ -93,6 +93,12 @@ bseal::io::GlobalPublicHeaderV1 make_test_global_header(
     return h;
 }
 
+std::array<bseal::Byte, 32> fake_shard_hash(std::uint32_t shard_index) {
+    std::array<bseal::Byte, 32> h{};
+    h.fill(static_cast<bseal::Byte>((shard_index + 1u) & 0xFFu));
+    return h;
+}
+
 bseal::io::ShardWriterOptions make_writer_options(
     const std::filesystem::path& dir,
     std::uint64_t max_payload_size,
@@ -106,6 +112,10 @@ bseal::io::ShardWriterOptions make_writer_options(
     options.global_header         = make_test_global_header(
         max_payload_size, chunk_plain_size, shard_count, global_chunk_count);
     options.header_authentication_key = test_header_authentication_key();
+    options.per_shard_public_header_hashes.reserve(shard_count);
+    for (std::uint32_t i = 0; i < shard_count; ++i) {
+        options.per_shard_public_header_hashes.push_back(fake_shard_hash(i));
+    }
     return options;
 }
 

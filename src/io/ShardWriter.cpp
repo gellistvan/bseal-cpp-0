@@ -40,6 +40,17 @@ std::uint64_t checked_frame_body_size(std::uint64_t ciphertext_len, std::uint16_
 ShardWriter::ShardWriter(ShardWriterOptions options)
     : options_(std::move(options)) {
     validate_and_normalize_options();
+    validate_shard_hash_vector();
+    std::filesystem::create_directories(options_.output_dir);
+    if (all_zero(ConstByteSpan{options_.header_authentication_key.data(),
+                               options_.header_authentication_key.size()})) {
+        throw InvalidArgument("ShardWriter header_authentication_key is missing");
+    }
+}
+
+ShardWriter::ShardWriter(ShardWriterOptions options, UnsafeAllowMissingShardAadForTests)
+    : options_(std::move(options)) {
+    validate_and_normalize_options();
     std::filesystem::create_directories(options_.output_dir);
     if (all_zero(ConstByteSpan{options_.header_authentication_key.data(),
                                options_.header_authentication_key.size()})) {
@@ -68,6 +79,30 @@ void ShardWriter::validate_and_normalize_options() {
     // global_header.chunk_plain_size is used for planners; validate it is set.
     if (options_.global_header.chunk_plain_size == 0) {
         throw InvalidArgument("ShardWriter global_header.chunk_plain_size is missing");
+    }
+}
+
+void ShardWriter::validate_shard_hash_vector() {
+    const auto& hashes = options_.per_shard_public_header_hashes;
+
+    if (hashes.empty()) {
+        throw InvalidArgument(
+            "ShardWriter per_shard_public_header_hashes must not be empty: "
+            "every chunk must be bound to its shard's public_header_hash via AEAD AAD");
+    }
+
+    if (hashes.size() != static_cast<std::size_t>(options_.global_header.shard_count)) {
+        throw InvalidArgument(
+            "ShardWriter per_shard_public_header_hashes size does not match "
+            "global_header.shard_count");
+    }
+
+    for (std::size_t i = 0; i < hashes.size(); ++i) {
+        if (all_zero(ConstByteSpan{hashes[i].data(), hashes[i].size()})) {
+            throw InvalidArgument(
+                "ShardWriter per_shard_public_header_hashes contains an all-zero "
+                "hash at shard index " + std::to_string(i));
+        }
     }
 }
 

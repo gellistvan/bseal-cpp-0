@@ -305,6 +305,64 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
     return master;
 }
 
+void validate_kdf_resource_policy(const KdfResourcePolicy& policy) {
+    if (policy.max_memory_kib == 0) {
+        throw InvalidArgument("KDF resource policy max_memory_kib must not be zero");
+    }
+    if (policy.max_memory_kib > kArgon2MemoryKiBMax) {
+        throw InvalidArgument(
+            "KDF resource policy max_memory_kib (" +
+            std::to_string(policy.max_memory_kib) +
+            ") exceeds the format maximum (" +
+            std::to_string(kArgon2MemoryKiBMax) + ")");
+    }
+    if (policy.max_iterations == 0) {
+        throw InvalidArgument("KDF resource policy max_iterations must not be zero");
+    }
+    if (policy.max_iterations > kArgon2IterationsMax) {
+        throw InvalidArgument(
+            "KDF resource policy max_iterations (" +
+            std::to_string(policy.max_iterations) +
+            ") exceeds the format maximum (" +
+            std::to_string(kArgon2IterationsMax) + ")");
+    }
+    if (policy.max_parallelism == 0) {
+        throw InvalidArgument("KDF resource policy max_parallelism must not be zero");
+    }
+    if (policy.max_parallelism > kArgon2ParallelismMax) {
+        throw InvalidArgument(
+            "KDF resource policy max_parallelism (" +
+            std::to_string(policy.max_parallelism) +
+            ") exceeds the format maximum (" +
+            std::to_string(kArgon2ParallelismMax) + ")");
+    }
+}
+
+void check_kdf_params_against_policy(const KdfParams& params,
+                                     const KdfResourcePolicy& policy) {
+    if (params.memory_kib > policy.max_memory_kib) {
+        throw InvalidArgument(
+            "archive Argon2id memory_kib (" + std::to_string(params.memory_kib) +
+            " KiB) exceeds the local KDF resource policy limit (" +
+            std::to_string(policy.max_memory_kib) +
+            " KiB); use --max-kdf-memory to override");
+    }
+    if (params.iterations > policy.max_iterations) {
+        throw InvalidArgument(
+            "archive Argon2id iterations (" + std::to_string(params.iterations) +
+            ") exceed the local KDF resource policy limit (" +
+            std::to_string(policy.max_iterations) +
+            "); use --max-kdf-iterations to override");
+    }
+    if (params.parallelism > policy.max_parallelism) {
+        throw InvalidArgument(
+            "archive Argon2id parallelism (" + std::to_string(params.parallelism) +
+            ") exceeds the local KDF resource policy limit (" +
+            std::to_string(policy.max_parallelism) +
+            "); use --max-kdf-parallelism to override");
+    }
+}
+
 KdfParams preset_params(KdfPreset preset) {
     switch (preset) {
         case KdfPreset::Fast:

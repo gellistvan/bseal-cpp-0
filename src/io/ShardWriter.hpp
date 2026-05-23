@@ -24,10 +24,9 @@ struct ShardWriterOptions {
     std::array<Byte, 32> header_authentication_key{};
 
     /// Per-shard public_header_hash (pre-computed by caller before encryption starts).
-    /// Indexed by shard_index. Populated lazily from global_header and shard headers.
-    /// The caller must supply this map so AEAD AAD is correct.
-    /// If empty the writer will compute hashes itself at finalize time (no-AAD-binding mode,
-    /// only valid for tools that don't care about per-shard AAD).
+    /// Indexed by shard_index. Must be non-empty and sized exactly to shard_count.
+    /// No chunk may be encrypted without a known, non-zero per-shard public_header_hash
+    /// bound into its AEAD associated data.
     std::vector<std::array<Byte, 32>> per_shard_public_header_hashes;
 };
 
@@ -43,9 +42,14 @@ struct PlannedChunkFrame {
     Bytes              header_bytes;
 };
 
+/// Tag type for tests that need to bypass mandatory per-shard AAD hash validation.
+/// Never pass this from app/ or production pipeline code.
+struct UnsafeAllowMissingShardAadForTests {};
+
 class ShardWriter {
 public:
     explicit ShardWriter(ShardWriterOptions options);
+    explicit ShardWriter(ShardWriterOptions options, UnsafeAllowMissingShardAadForTests);
     ~ShardWriter();
 
     ShardWriter(const ShardWriter&) = delete;
@@ -78,6 +82,7 @@ private:
     };
 
     void validate_and_normalize_options();
+    void validate_shard_hash_vector();
     void open_next_shard(std::uint64_t first_chunk_index);
     void close_current_shard();
     void rewrite_shard_header(

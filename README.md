@@ -173,6 +173,9 @@ Encrypt-only options:
 Decrypt-only options:
 
 * `--overwrite`, allows restoring into an existing non-empty output directory
+* `--max-kdf-memory SIZE` — reject archives whose Argon2id memory cost exceeds SIZE (default: `2G`; covers all built-in KDF presets including `paranoid`)
+* `--max-kdf-iterations N` — reject archives whose Argon2id iteration count exceeds N (default: `4`)
+* `--max-kdf-parallelism N` — reject archives whose Argon2id parallelism exceeds N (default: `8`)
 
 Current exit codes:
 
@@ -223,6 +226,8 @@ Those fields are now authenticated with a real keyed MAC:
 This gives early detection for wrong passphrases, wrong keyfiles, and public-header tampering. It also prevents unauthenticated changes to fields such as suite id, archive id, KDF salt, chunk size, shard size, and shard index.
 
 `public_header_hash` is a BLAKE3-256 digest of the global header concatenated with the per-shard header (with `header_mac` zeroed). It is computed once per shard, included as AEAD associated data for every chunk in that shard, and is therefore covered by each chunk's authentication tag. It is not a MAC and must not be treated as one — its role is to bind each ciphertext chunk to its public shard context.
+
+**Invariant:** No production chunk may be encrypted unless its shard's `public_header_hash` is known and provided to the AEAD call as associated data. `ShardWriter` enforces this at construction time: `per_shard_public_header_hashes` must be fully populated (non-empty, sized to match `shard_count`, and free of all-zero entries) before any chunk is written.
 
 ## Project layout
 

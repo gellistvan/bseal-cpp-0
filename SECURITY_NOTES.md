@@ -85,6 +85,16 @@ rewrites both the global header bytes and the shard header MAC (using the final 
 every finalized shard before returning. Do not skip `finish()`, and do not reopen shard files
 between `finish()` returning and the reader verifying `header_mac`.
 
+## Mandatory per-shard public_header_hash binding
+
+Every encrypted chunk must be bound to its shard's `public_header_hash` through AEAD associated data before it is written to disk. This invariant is enforced at construction time in `ShardWriter`:
+
+- `ShardWriterOptions::per_shard_public_header_hashes` must be non-empty.
+- Its size must equal `global_header.shard_count`.
+- No entry may be all-zero.
+
+The hashes are computed by `fill_per_shard_hashes()` in `BsealApp::encrypt()` during the two-pass shard planning phase, before the first chunk is encrypted. There is no "no-AAD-binding mode" in production code. Tests that exercise low-level `ShardWriter` mechanics without real hash values must use the `UnsafeAllowMissingShardAadForTests{}` constructor tag — never in `app/` or pipeline code.
+
 ## Shard filenames
 
 Shard filenames are **random labels only** — they are not authenticated metadata and carry no
@@ -147,6 +157,36 @@ would require `openat(2)`-family traversal throughout, which has no portable C++
 - **Cross-device rename**: temp files are placed inside `output_root/.bseal-extract-tmp` so that
   the final `rename()` stays on the same filesystem. Cross-device moves (different mount points)
   are not handled and will fail, not silently write partial output.
+
+## KDF resource policy
+
+Argon2id parameters (memory, iteration count, parallelism) are stored unencrypted in the public
+header so the decryptor can reconstruct the key. A malicious sender can craft a header with extreme
+KDF costs to cause a denial-of-service on the recipient's machine.
+
+Two layers of protection defend against this:
+
+1. **Format-level bounds** (enforced unconditionally in `validate_kdf_params`): memory 64 MiB–4 GiB,
+   iterations 1–10, parallelism 1–32. These prevent values that would never appear in any legitimate
+   archive and are checked before any key derivation.
+
+2. **Runtime resource policy** (`KdfResourcePolicy` in `src/crypto/Kdf.hpp`): stricter per-operator
+   limits checked after format validation but *before* Argon2id is invoked. The defaults are set to
+   cover every built-in CLI preset (including `paranoid`: 2 GiB / 4 iterations / 8 threads):
+
+   | Limit | Default | Built-in preset ceiling |
+   |---|---|---|
+   | `max_memory_kib` | 2 GiB | `paranoid` = 2 GiB |
+   | `max_iterations` | 4 | `paranoid` = 4 |
+   | `max_parallelism` | 8 | `paranoid` = 8 |
+
+   Operators deploying BSEAL on constrained hosts should lower these limits using the CLI flags
+   `--max-kdf-memory`, `--max-kdf-iterations`, and `--max-kdf-parallelism`. Policy violations
+   produce exit code 1 (not 3) and the error message names the flag that can override the limit,
+   so users can distinguish a policy rejection from an authentication failure.
+
+The default limits are **not** derived from available RAM at runtime to remain reproducible and
+predictable across environments. Operators must set them explicitly if lower limits are required.
 
 ## Error messages
 

@@ -233,7 +233,9 @@ They are still untrusted until `header_mac` verifies. The only allowed v1 KDF pa
 | `argon2_parallelism` | `1..32`, inclusive |
 | Argon2id output length | exactly 32 bytes; not stored in the file |
 
-A decryptor MUST reject values outside these limits before allocating Argon2 memory. A decryptor MAY also fail closed if local policy sets a lower maximum memory or parallelism limit; that failure is an unsupported-parameters failure, not a successful password check.
+A decryptor MUST reject values outside these limits before allocating Argon2 memory. A decryptor MAY also fail closed if local policy sets a lower maximum memory or parallelism limit; that failure is an unsupported-parameters failure (exit code 1), not a successful password check (exit code 3).
+
+The BSEAL CLI exposes a runtime KDF resource policy — separate from the format-level bounds above — through the decrypt flags `--max-kdf-memory`, `--max-kdf-iterations`, and `--max-kdf-parallelism`. The defaults cover all built-in CLI presets (`paranoid` is the ceiling: 2 GiB / 4 iterations / 8 threads). Operators on constrained hosts should lower these limits. Policy violations are reported with the name of the flag that can override the limit.
 
 All three cost parameters — `argon2_memory_kib`, `argon2_iterations`, and `argon2_parallelism` — MUST be honored exactly by both the encryptor and decryptor. These parameters are not advisory or best-effort; they determine the Argon2id output and therefore the entire derived key schedule. Changing any one of them changes the master seed and all expanded keys.
 

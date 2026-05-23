@@ -397,6 +397,55 @@ void patch_u32_le_at_offset(const fs::path& sealed_dir, std::size_t byte_offset,
     }
 }
 
+// Corrupt the stored header_mac of the first shard file.
+// ShardPublicHeaderV1.header_mac starts at local offset +40 within the shard header,
+// which follows kGlobalPublicHeaderV1Size (192) bytes, so absolute offset = 232.
+// Flipping a bit in the stored MAC means the recomputed MAC will never match it,
+// yielding authentication exit code 3 without triggering any format range checks.
+static constexpr std::size_t kShardHeaderMacOffset = 192 + 40;
+
+void flip_byte_at(const fs::path& path, std::size_t offset) {
+    std::fstream stream(path, std::ios::in | std::ios::out | std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error("failed to open file: " + path.string());
+    }
+    stream.seekg(static_cast<std::streamoff>(offset));
+    char byte = 0;
+    stream.read(&byte, 1);
+    if (!stream) {
+        throw std::runtime_error("failed to read byte for flip");
+    }
+    byte = static_cast<char>(byte ^ 0x01);
+    stream.seekp(static_cast<std::streamoff>(offset));
+    stream.write(&byte, 1);
+    if (!stream) {
+        throw std::runtime_error("failed to write flipped byte");
+    }
+}
+
+// Read all bytes of a file into a vector.
+std::vector<std::uint8_t> read_binary(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("failed to open for reading: " + path.string());
+    }
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// Write bytes to a file at a given offset, leaving bytes before the offset intact.
+void write_bytes_at(const fs::path& path, std::size_t offset, const std::vector<std::uint8_t>& data) {
+    std::fstream stream(path, std::ios::in | std::ios::out | std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error("failed to open for writing: " + path.string());
+    }
+    stream.seekp(static_cast<std::streamoff>(offset));
+    stream.write(reinterpret_cast<const char*>(data.data()),
+                 static_cast<std::streamsize>(data.size()));
+    if (!stream) {
+        throw std::runtime_error("failed to write bytes at offset");
+    }
+}
+
 void corrupt_first_bin_file(const fs::path& sealed_dir) {
     const auto files = list_bin_files(sealed_dir);
 
@@ -1224,4 +1273,506 @@ TEST(BlackBoxCli, LargeFileSingleShardRoundTrip) {
 
     EXPECT_EQ(read_file(output / "large.bin"), content)
         << "round-trip must reproduce exact file content";
+}
+
+// ---------------------------------------------------------------------------
+// Per-shard AAD binding enforcement tests
+// ---------------------------------------------------------------------------
+
+// A shard size of 128K forces one chunk (64K + overhead) per shard, so content
+// spanning 3 chunks produces 3 shard files.  Use ~210K of content: 3 * 65536 < 210000.
+TEST(BlackBoxCli, MultiShardArchiveRoundTrip) {
+    TempDir temp("bseal_integration_multi_shard_roundtrip");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    fs::create_directories(input);
+    create_keyfiles(key_a, key_b);
+    // ~210 KiB — spans at least 3 full 64K chunks.
+    write_file(input / "big.bin", repeated("0123456789abcdef", 13440)); // 13440*16 = 215040 bytes
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "128K",
+            "--padding", "none",
+        },
+        "multi-shard-passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    const auto shards = list_bin_files(sealed);
+    EXPECT_GE(shards.size(), 2u) << "expected multiple shards for a large input";
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+        },
+        "multi-shard-passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+    expect_roundtrip_equal(input, output);
+}
+
+// Alter one byte in the shard public header (shard_index field) of the first shard
+// file after encryption and assert that decryption fails with authentication failure.
+TEST(BlackBoxCli, TamperedShardPublicHeaderFailsAuthentication) {
+    TempDir temp("bseal_integration_tampered_shard_header");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    fs::create_directories(input);
+    create_keyfiles(key_a, key_b);
+    write_file(input / "data.txt", "per-shard header MAC tamper test\n");
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        encrypt_args(input, sealed, key_a, key_b),
+        "tamper-passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    // Corrupt the stored header_mac in the first shard file's shard header.
+    // The recomputed MAC over the untampered header fields will differ from the stored value,
+    // causing the shard header authentication check to fail before any chunk is read.
+    const auto shards = list_bin_files(sealed);
+    ASSERT_FALSE(shards.empty());
+    flip_byte_at(shards.front(), kShardHeaderMacOffset);
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        decrypt_args(sealed, output, key_a, key_b),
+        "tamper-passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+}
+
+// Swap the filenames of two shard files after encryption and verify that
+// decryption still succeeds.  Shard filenames are random labels only; the
+// shard_index stored inside each file's header determines ordering.
+TEST(BlackBoxCli, SwappedShardFilenamesDecryptSucceeds) {
+    TempDir temp("bseal_integration_swapped_shard_filenames");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    fs::create_directories(input);
+    create_keyfiles(key_a, key_b);
+    // Large enough to produce at least two shard files.
+    write_file(input / "big.bin", repeated("abcdefgh", 16384)); // 131072 bytes
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "128K",
+            "--padding", "none",
+        },
+        "swap-passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    auto shards = list_bin_files(sealed);
+    if (shards.size() >= 2) {
+        // Swap the two filenames by triple-rename.
+        const auto tmp = sealed / "swap_tmp.bin";
+        fs::rename(shards[0], tmp);
+        fs::rename(shards[1], shards[0]);
+        fs::rename(tmp, shards[1]);
+    }
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+        },
+        "swap-passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+    expect_roundtrip_equal(input, output);
+}
+
+// Overwrite shard 1's ciphertext payload with shard 0's ciphertext bytes.
+// Shard 1's header remains intact (shard_index=1, correct AAD key for shard 1),
+// but the ciphertext was encrypted under shard 0's public_header_hash.
+// AEAD decryption of those bytes as shard 1 content must fail.
+TEST(BlackBoxCli, CrossShardCiphertextFailsAuthentication) {
+    TempDir temp("bseal_integration_cross_shard_ciphertext");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    fs::create_directories(input);
+    create_keyfiles(key_a, key_b);
+    write_file(input / "big.bin", repeated("01234567", 16384)); // 131072 bytes
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "128K",
+            "--padding", "none",
+        },
+        "cross-shard-passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    auto shards = list_bin_files(sealed);
+    if (shards.size() >= 2) {
+        // Payload region starts after global (192) + shard (80) headers = 272 bytes.
+        constexpr std::size_t kPayloadOffset = 192 + 80;
+        const auto shard0_payload = [&] {
+            const auto all = read_binary(shards[0]);
+            if (all.size() > kPayloadOffset) {
+                return std::vector<std::uint8_t>(all.begin() + kPayloadOffset, all.end());
+            }
+            return std::vector<std::uint8_t>{};
+        }();
+
+        if (!shard0_payload.empty()) {
+            // Write shard 0's ciphertext into shard 1's payload area.
+            // Shard 1's headers remain intact (shard_index=1), so the decryptor
+            // will attempt to authenticate shard 0's ciphertext under shard 1's AAD.
+            write_bytes_at(shards[1], kPayloadOffset, shard0_payload);
+        }
+    }
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+        },
+        "cross-shard-passphrase\n");
+
+    EXPECT_NE(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+}
+
+// ---------------------------------------------------------------------------
+// KDF resource policy tests
+// ---------------------------------------------------------------------------
+
+// Encrypt with the Fast preset (256 MiB, 3 iterations, 4 threads) and decrypt
+// with the default policy (2 GiB / 4 iter / 8 threads).  The Fast preset is well
+// within the default limits so decryption must succeed.
+TEST(BlackBoxCli, DefaultPolicyAcceptsFastPreset) {
+    TempDir temp("bseal_integration_kdf_policy_fast");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "kdf policy fast preset test\n");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "fast-passphrase\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string()},
+        "fast-passphrase\n");
+
+    EXPECT_EQ(dec.exit_code, 0) << dec.stderr_text;
+}
+
+// A custom tight policy (--max-kdf-memory 128M) rejects an archive encrypted
+// with the Fast preset (256 MiB).  Exit code must be 1 (resource/format error),
+// not 3 (authentication failure), proving the check fires before Argon2.
+TEST(BlackBoxCli, TightMemoryPolicyRejectsFastPreset) {
+    TempDir temp("bseal_integration_kdf_policy_tight_memory");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "kdf tight policy test\n");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "tight-passphrase\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    // Fast preset uses 256 MiB; a 128 MiB limit must reject it before Argon2 runs.
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+            "--max-kdf-memory", "128M",
+        },
+        "tight-passphrase\n");
+
+    EXPECT_EQ(dec.exit_code, 1) << dec.stderr_text;
+    EXPECT_TRUE(contains_text(dec.stderr_text, "--max-kdf-memory"))
+        << "error must mention --max-kdf-memory override: " << dec.stderr_text;
+}
+
+// The same archive that a tight policy rejected proceeds to decrypt when the
+// override raises the limit above the archive's actual cost.
+TEST(BlackBoxCli, RaisedMemoryPolicyAllowsFastPreset) {
+    TempDir temp("bseal_integration_kdf_policy_raised_memory");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "kdf raised policy test\n");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "raised-passphrase\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    // 512 MiB > 256 MiB (Fast preset) — policy check passes and Argon2 runs.
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+            "--max-kdf-memory", "512M",
+        },
+        "raised-passphrase\n");
+
+    EXPECT_EQ(dec.exit_code, 0) << dec.stderr_text;
+    EXPECT_EQ(read_file(output / "data.txt"), "kdf raised policy test\n");
+}
+
+// Patch argon2_memory_kib in the global header to a value above the default
+// policy (2 GiB) but within the format maximum (4 GiB).
+// The default policy must reject this archive with exit code 1 before Argon2
+// allocates any memory; the error must mention --max-kdf-memory.
+TEST(BlackBoxCli, CraftedHighMemoryHeaderRejectedByDefaultPolicy) {
+    TempDir temp("bseal_integration_kdf_crafted_high_memory");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "crafted memory cost test\n");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "crafted-passphrase\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    // Patch argon2_memory_kib to 3 GiB (3145728 KiB) — within format max (4 GiB)
+    // but above the default policy limit (2 GiB).
+    // kOffsetArgon2MemoryKiB = 100 (as defined earlier in this file).
+    patch_u32_le_at_offset(sealed, kOffsetArgon2MemoryKiB, 3u * 1024u * 1024u);
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string()},
+        "crafted-passphrase\n");
+
+    EXPECT_EQ(dec.exit_code, 1) << dec.stderr_text;
+    EXPECT_TRUE(contains_text(dec.stderr_text, "--max-kdf-memory"))
+        << "error must mention --max-kdf-memory: " << dec.stderr_text;
+}
+
+// Patch argon2_iterations to 5 (above the default policy limit of 4, within
+// format max of 10) and assert the default policy rejects the archive with
+// exit code 1, naming --max-kdf-iterations in the error message.
+TEST(BlackBoxCli, CraftedHighIterationsRejectedByDefaultPolicy) {
+    TempDir temp("bseal_integration_kdf_crafted_high_iter");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "crafted iterations test\n");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "iter-passphrase\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    // Patch argon2_iterations from 3 (Fast) to 5 (> default policy limit of 4).
+    patch_u32_le_at_offset(sealed, kOffsetArgon2Iterations, 5u);
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string()},
+        "iter-passphrase\n");
+
+    EXPECT_EQ(dec.exit_code, 1) << dec.stderr_text;
+    EXPECT_TRUE(contains_text(dec.stderr_text, "--max-kdf-iterations"))
+        << "error must mention --max-kdf-iterations: " << dec.stderr_text;
+}
+
+// With --max-kdf-iterations 5 the same crafted archive proceeds past the policy
+// check.  Argon2 runs (exit code 3 because the patched header MAC is now wrong),
+// proving the policy check itself no longer blocks the decrypt.
+TEST(BlackBoxCli, IterationsOverrideAllowsCraftedArchivePastPolicyCheck) {
+    TempDir temp("bseal_integration_kdf_iter_override");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "iter override test\n");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "iter-override-passphrase\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    patch_u32_le_at_offset(sealed, kOffsetArgon2Iterations, 5u);
+
+    // Policy allows 5 iterations; Argon2 runs on the patched archive.
+    // The patched header invalidates the MAC, so decrypt fails with exit code 3
+    // (auth failure), not 1 (policy error).  This proves the policy check passed.
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+            "--max-kdf-iterations", "5",
+        },
+        "iter-override-passphrase\n");
+
+    EXPECT_NE(dec.exit_code, 1) << "exit code must not be the policy error (1)";
+}
+
+// Patch argon2_parallelism to 9 (above the default policy limit of 8, within
+// format max of 32) and assert the default policy rejects with exit code 1.
+TEST(BlackBoxCli, CraftedHighParallelismRejectedByDefaultPolicy) {
+    TempDir temp("bseal_integration_kdf_crafted_high_parallel");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "crafted parallelism test\n");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "none",
+        },
+        "parallel-passphrase\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    // Patch argon2_parallelism from 4 (Fast) to 9 (> default policy limit of 8).
+    patch_u32_le_at_offset(sealed, kOffsetArgon2Parallelism, 9u);
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string()},
+        "parallel-passphrase\n");
+
+    EXPECT_EQ(dec.exit_code, 1) << dec.stderr_text;
+    EXPECT_TRUE(contains_text(dec.stderr_text, "--max-kdf-parallelism"))
+        << "error must mention --max-kdf-parallelism: " << dec.stderr_text;
+}
+
+// --max-kdf-memory 0 is an invalid policy limit; the CLI must reject it before
+// reading any archive data.
+TEST(BlackBoxCli, ZeroMaxKdfMemoryIsRejectedBeforeArchiveRead) {
+    TempDir temp("bseal_integration_kdf_zero_memory_limit");
+
+    // We don't even need a real archive; the CLI must reject the flag itself.
+    const auto result = run_bseal(
+        temp.subdir("run"),
+        {
+            "decrypt",
+            "--input", temp.subdir("nonexistent").string(),
+            "--output", temp.subdir("output").string(),
+            "--max-kdf-memory", "0",
+        },
+        "passphrase\n");
+
+    EXPECT_NE(result.exit_code, 0);
 }

@@ -240,6 +240,10 @@ inline io::ShardWriterOptions make_test_shard_writer_options(
     options.filename_extension    = ".bin";
     options.global_header         = make_test_global_header(shard_payload_size);
     options.header_authentication_key = test_header_authentication_key();
+    // global_header.shard_count = 1 — supply one non-zero placeholder hash.
+    std::array<Byte, 32> placeholder_hash{};
+    placeholder_hash.fill(Byte{0x01});
+    options.per_shard_public_header_hashes = {placeholder_hash};
     return options;
 }
 

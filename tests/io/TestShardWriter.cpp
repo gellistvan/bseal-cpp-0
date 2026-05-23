@@ -101,6 +101,15 @@ bseal::io::GlobalPublicHeaderV1 make_test_global_header(
     return h;
 }
 
+/// Generate a deterministic non-zero fake hash for a given shard index.
+/// Each hash is filled with the byte value (shard_index + 1) & 0xFF, which is
+/// non-zero for any shard_index in [0, 254].
+std::array<bseal::Byte, 32> fake_shard_hash(std::uint32_t shard_index) {
+    std::array<bseal::Byte, 32> h{};
+    h.fill(static_cast<bseal::Byte>((shard_index + 1u) & 0xFFu));
+    return h;
+}
+
 bseal::io::ShardWriterOptions make_writer_options(
     const std::filesystem::path& dir,
     std::uint64_t max_payload_size,
@@ -115,6 +124,10 @@ bseal::io::ShardWriterOptions make_writer_options(
     options.global_header        = make_test_global_header(
         max_payload_size, chunk_plain_size, shard_count, global_chunk_count);
     options.header_authentication_key = test_header_authentication_key();
+    options.per_shard_public_header_hashes.reserve(shard_count);
+    for (std::uint32_t i = 0; i < shard_count; ++i) {
+        options.per_shard_public_header_hashes.push_back(fake_shard_hash(i));
+    }
     return options;
 }
 
@@ -368,7 +381,7 @@ TEST(TestShardWriter, FinalizationMacsVerifyAgainstFinalGlobalHeader) {
         frame_size, kTestChunkPlainSize,
         /*shard_count=*/1, /*global_chunk_count=*/1); // placeholder — wrong counts
 
-    bseal::io::ShardWriter writer(std::move(opts));
+    bseal::io::ShardWriter writer(std::move(opts), bseal::io::UnsafeAllowMissingShardAadForTests{});
 
     write_fake_frame(writer, 0, kTestChunkPlainSize, false,
                      bseal::ConstByteSpan{c0.data(), c0.size()});
@@ -422,6 +435,62 @@ TEST(TestShardWriter, FinalizationMacsVerifyAgainstFinalGlobalHeader) {
         EXPECT_TRUE(bseal::io::verify_shard_header_mac(key_span, global_hdr, shard_hdr))
             << "header_mac failed to verify against final global header for: " << path;
     }
+
+    std::filesystem::remove_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// Mandatory per-shard AAD binding validation tests
+// ---------------------------------------------------------------------------
+
+TEST(TestShardWriter, EmptyShardHashVectorThrows) {
+    const auto dir = make_temp_dir("bseal_shard_writer_empty_hashes");
+
+    bseal::io::ShardWriterOptions opts = make_writer_options(dir, 4 * 1024 * 1024);
+    opts.per_shard_public_header_hashes.clear();
+
+    EXPECT_THROW(
+        { bseal::io::ShardWriter writer(std::move(opts)); },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardWriter, WrongHashVectorSizeThrows) {
+    const auto dir = make_temp_dir("bseal_shard_writer_wrong_hash_count");
+
+    // global_header.shard_count = 3 but we supply only 1 hash.
+    bseal::io::ShardWriterOptions opts = make_writer_options(
+        dir, 4 * 1024 * 1024, ".bin", kTestChunkPlainSize, /*shard_count=*/3, 3);
+    opts.per_shard_public_header_hashes.resize(1); // truncate to wrong size
+
+    EXPECT_THROW(
+        { bseal::io::ShardWriter writer(std::move(opts)); },
+        bseal::InvalidArgument);
+
+    // Also reject one extra hash.
+    bseal::io::ShardWriterOptions opts2 = make_writer_options(
+        dir, 4 * 1024 * 1024, ".bin", kTestChunkPlainSize, /*shard_count=*/1, 1);
+    opts2.per_shard_public_header_hashes.push_back(fake_shard_hash(99)); // now size 2
+
+    EXPECT_THROW(
+        { bseal::io::ShardWriter writer(std::move(opts2)); },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardWriter, AllZeroHashEntryThrows) {
+    const auto dir = make_temp_dir("bseal_shard_writer_zero_hash");
+
+    bseal::io::ShardWriterOptions opts = make_writer_options(
+        dir, 4 * 1024 * 1024, ".bin", kTestChunkPlainSize, /*shard_count=*/2, 2);
+    // Poison shard 1's hash to all-zero.
+    opts.per_shard_public_header_hashes[1].fill(bseal::Byte{0});
+
+    EXPECT_THROW(
+        { bseal::io::ShardWriter writer(std::move(opts)); },
+        bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
 }

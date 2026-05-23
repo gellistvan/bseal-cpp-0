@@ -2,7 +2,9 @@
 
 #include "common/Errors.hpp"
 #include "common/SizeParser.hpp"
+#include "crypto/Kdf.hpp"
 
+#include <limits>
 #include <string_view>
 
 namespace bseal::cli {
@@ -45,6 +47,38 @@ PaddingPolicy parse_padding(std::string_view value) {
 
     throw InvalidArgument("unknown padding policy '" + std::string(value) +
                           "'; valid values: none, chunk, power2, fixed-size=N");
+}
+
+std::uint32_t parse_u32(std::string_view text) {
+    if (text.empty()) {
+        throw InvalidArgument("integer value must not be empty");
+    }
+    std::uint64_t value = 0;
+    for (char c : text) {
+        if (c < '0' || c > '9') {
+            throw InvalidArgument("invalid integer: '" + std::string(text) + "'");
+        }
+        value = value * 10 + static_cast<std::uint64_t>(c - '0');
+        if (value > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) {
+            throw InvalidArgument("integer value is too large: '" + std::string(text) + "'");
+        }
+    }
+    return static_cast<std::uint32_t>(value);
+}
+
+// Parse a size string (e.g. "256M", "2G") and return the value in KiB.
+// Requires the result to be a whole number of KiB.
+std::uint32_t parse_size_kib(std::string_view text) {
+    const std::uint64_t bytes = parse_size_bytes(text);
+    if (bytes % 1024 != 0) {
+        throw InvalidArgument(
+            "--max-kdf-memory must be a whole number of KiB (e.g. 256M, 2G)");
+    }
+    const std::uint64_t kib = bytes / 1024;
+    if (kib > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) {
+        throw InvalidArgument("--max-kdf-memory size is too large");
+    }
+    return static_cast<std::uint32_t>(kib);
 }
 
 void parse_common_option(CommonOptions& options, std::string_view key, std::string_view value) {
@@ -113,12 +147,23 @@ ParsedArgs parse_args(int argc, char** argv) {
                 parsed.decrypt.verbose = true;
             } else if (key == "--overwrite") {
                 parsed.decrypt.overwrite = true;
+            } else if (key == "--max-kdf-memory") {
+                parsed.decrypt.kdf_policy.max_memory_kib =
+                    parse_size_kib(arg_at(++i, argc, argv));
+            } else if (key == "--max-kdf-iterations") {
+                parsed.decrypt.kdf_policy.max_iterations =
+                    parse_u32(arg_at(++i, argc, argv));
+            } else if (key == "--max-kdf-parallelism") {
+                parsed.decrypt.kdf_policy.max_parallelism =
+                    parse_u32(arg_at(++i, argc, argv));
             } else if (key == "--input" || key == "--output" || key == "--keyfile") {
                 parse_common_option(parsed.decrypt, key, arg_at(++i, argc, argv));
             } else {
                 throw InvalidArgument("unknown option: " + std::string(key));
             }
         }
+        // Validate the policy limits before reading any archive data.
+        bseal::crypto::validate_kdf_resource_policy(parsed.decrypt.kdf_policy);
         return parsed;
     }
 
@@ -141,6 +186,9 @@ Encrypt options:
 
 Decrypt options:
   --overwrite
+  --max-kdf-memory SIZE   reject archives whose Argon2id memory exceeds SIZE (default: 2G)
+  --max-kdf-iterations N  reject archives whose Argon2id iteration count exceeds N (default: 4)
+  --max-kdf-parallelism N reject archives whose Argon2id parallelism exceeds N (default: 8)
 
 This skeleton defines interfaces only. It does not perform production encryption yet.
 )USAGE";
