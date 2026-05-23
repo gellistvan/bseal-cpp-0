@@ -638,4 +638,17 @@ std::uint64_t chunk_frame_v1_encoded_size(const ChunkFrameHeaderV1& header) {
     return encoded_len;
 }
 
+std::uint64_t chunk_frame_v1_encoded_size_from_params(
+    std::uint64_t plaintext_len, std::uint16_t tag_len) {
+    const auto body = plaintext_len + static_cast<std::uint64_t>(tag_len);
+    if (body < plaintext_len) {
+        throw InvalidArgument("chunk frame body length overflow");
+    }
+    const auto total = static_cast<std::uint64_t>(kChunkFrameHeaderV1Size) + body;
+    if (total < body) {
+        throw InvalidArgument("chunk frame encoded length overflow");
+    }
+    return total;
+}
+
 } // namespace bseal::io

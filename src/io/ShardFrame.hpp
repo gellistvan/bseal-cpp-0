@@ -214,4 +214,11 @@ Bytes serialize_chunk_frame_header_v1(const ChunkFrameHeaderV1& header);
 ChunkFrameHeaderV1 parse_chunk_frame_header_v1(ConstByteSpan bytes);
 std::uint64_t chunk_frame_v1_encoded_size(const ChunkFrameHeaderV1& header);
 
+/// Compute encoded chunk frame size from raw fields using checked arithmetic:
+///   kChunkFrameHeaderV1Size + plaintext_len + tag_len
+/// For v1 AEADs, ciphertext_len == plaintext_len.
+/// Throws InvalidArgument on overflow.
+std::uint64_t chunk_frame_v1_encoded_size_from_params(
+    std::uint64_t plaintext_len, std::uint16_t tag_len);
+
 } // namespace bseal::io

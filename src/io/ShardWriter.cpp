@@ -276,11 +276,17 @@ ShardWritePosition ShardWriter::write_chunk_frame(
 
     const auto frame_size = chunk_frame_v1_encoded_size(header);
 
+    if (frame_size > options_.max_shard_payload_len) {
+        throw InvalidArgument(
+            "chunk frame (" + std::to_string(frame_size) + " bytes) exceeds"
+            " max_shard_payload_len (" + std::to_string(options_.max_shard_payload_len) +
+            " bytes); increase --shard-size or decrease --chunk-size");
+    }
+
+    // Overflow-safe: frame_size <= max_shard_payload_len (checked above).
     if (!current_stream_.is_open()) {
         open_next_shard(header.global_chunk_index);
-    } else if (
-        current_payload_offset_ > 0 &&
-        current_payload_offset_ + frame_size > options_.max_shard_payload_len) {
+    } else if (current_payload_offset_ > options_.max_shard_payload_len - frame_size) {
         close_current_shard();
         open_next_shard(header.global_chunk_index);
     }
@@ -430,8 +436,15 @@ PlannedChunkFrame ShardWriter::plan_chunk_frame(
 
     const auto frame_size = chunk_frame_v1_encoded_size(header);
 
-    if (planned_payload_offset_ > 0 &&
-        planned_payload_offset_ + frame_size > options_.max_shard_payload_len) {
+    if (frame_size > options_.max_shard_payload_len) {
+        throw InvalidArgument(
+            "chunk frame (" + std::to_string(frame_size) + " bytes) exceeds"
+            " max_shard_payload_len (" + std::to_string(options_.max_shard_payload_len) +
+            " bytes); increase --shard-size or decrease --chunk-size");
+    }
+
+    // Overflow-safe: frame_size <= max_shard_payload_len (checked above).
+    if (planned_payload_offset_ > options_.max_shard_payload_len - frame_size) {
         ++planned_shard_index_;
         planned_payload_offset_ = 0;
         header.shard_index = planned_shard_index_;

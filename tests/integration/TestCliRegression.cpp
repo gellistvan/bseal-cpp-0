@@ -293,8 +293,8 @@ std::vector<std::string> encrypt_args(const fs::path& input,
       "--keyfile", keyfile.string(),
       "--suite", "xchacha20-poly1305",
       "--kdf", "fast",
-      "--chunk-size", "64K",   // minimum valid per FORMAT.md §3 (65536 bytes)
-      "--shard-size", "64K",   // 64K < one frame (65592 bytes) → forces a new shard per chunk
+      "--chunk-size", "64K",    // minimum valid per FORMAT.md §3 (65536 bytes)
+      "--shard-size", "65592",  // exactly one frame per shard (40 header + 65536 data + 16 tag)
       "--padding", "none",
   };
 }
@@ -623,6 +623,66 @@ TEST(BlackBoxCliRegression, PreexistingBinFileSurvivesFailedEncrypt) {
       << "keep.bin was modified by failed encrypt cleanup";
 }
 #endif // !defined(_WIN32)
+
+TEST(BlackBoxCliRegression, ShardSizeTooSmallForChunkFails) {
+  // --chunk-size 64K produces frames of exactly 65592 bytes (40 header + 65536 data + 16 tag).
+  // --shard-size 65591 is one byte too small → must fail with exit code 1 (bad arguments).
+  TempDir temp("bseal_cli_regression_shard_too_small");
+  const auto input = temp.subdir("input");
+  const auto sealed = temp.subdir("sealed");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  const auto result = run_bseal(
+      temp.subdir("run"),
+      {"encrypt",
+       "--input",   input.string(),
+       "--output",  sealed.string(),
+       "--keyfile", keyfile.string(),
+       "--suite",   "xchacha20-poly1305",
+       "--kdf",     "fast",
+       "--chunk-size", "64K",
+       "--shard-size", "65591",
+       "--padding", "none"},
+      kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, ShardSizeExactlyOneFrameSucceeds) {
+  // --shard-size 65592 is exactly one frame → must succeed.
+  TempDir temp("bseal_cli_regression_shard_exact");
+  const auto input = temp.subdir("input");
+  const auto sealed = temp.subdir("sealed");
+  const auto output = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  const auto enc = run_bseal(
+      temp.subdir("enc-run"),
+      {"encrypt",
+       "--input",   input.string(),
+       "--output",  sealed.string(),
+       "--keyfile", keyfile.string(),
+       "--suite",   "xchacha20-poly1305",
+       "--kdf",     "fast",
+       "--chunk-size", "64K",
+       "--shard-size", "65592",
+       "--padding", "none"},
+      kPassphrase);
+
+  EXPECT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+  const auto dec = run_bseal(
+      temp.subdir("dec-run"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+
+  EXPECT_EQ(dec.exit_code, 0) << dec.stderr_text;
+  EXPECT_EQ(read_file(output / "tiny.txt"), "hello");
+}
 
 TEST(BlackBoxCliRegression, HardenedExtractInvalidValueFails) {
   TempDir temp("bseal_cli_regression_hardened_invalid");

@@ -585,3 +585,106 @@ TEST(TestShardWriter, AllZeroHashEntryThrows) {
 
     std::filesystem::remove_all(dir);
 }
+
+// ---------------------------------------------------------------------------
+// max_shard_payload_len enforcement tests (boundary: frame_size = 1080)
+// ---------------------------------------------------------------------------
+
+// Helper constants for these tests.
+// chunk_plain_size = 1024, tag_len = 16, header = 40 → frame = 1080.
+constexpr std::uint32_t kBoundaryChunkSize = 1024;
+constexpr std::uint64_t kBoundaryFrameSize =
+    static_cast<std::uint64_t>(bseal::io::kChunkFrameHeaderV1Size)
+    + kBoundaryChunkSize
+    + kTestTagLen; // = 40 + 1024 + 16 = 1080
+
+TEST(TestShardWriter, PlanChunkFrameRejectsOversizedLimit) {
+    const auto dir = make_temp_dir("bseal_shard_writer_plan_oversize");
+
+    // Limit is one byte too small → must throw.
+    auto opts_small = make_writer_options(
+        dir, kBoundaryFrameSize - 1, ".bin", kBoundaryChunkSize, 1, 1);
+    bseal::io::ShardWriter writer_small(
+        std::move(opts_small), bseal::io::UnsafeAllowMissingShardAadForTests{});
+    EXPECT_THROW(
+        (void)writer_small.plan_chunk_frame(
+            0, kBoundaryChunkSize, kBoundaryChunkSize, kTestTagLen, true),
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardWriter, PlanChunkFrameAcceptsExactLimit) {
+    const auto dir = make_temp_dir("bseal_shard_writer_plan_exact");
+
+    // Limit equals frame size exactly → must succeed.
+    auto opts_exact = make_writer_options(
+        dir, kBoundaryFrameSize, ".bin", kBoundaryChunkSize, 1, 1);
+    bseal::io::ShardWriter writer_exact(
+        std::move(opts_exact), bseal::io::UnsafeAllowMissingShardAadForTests{});
+    EXPECT_NO_THROW(
+        (void)writer_exact.plan_chunk_frame(
+            0, kBoundaryChunkSize, kBoundaryChunkSize, kTestTagLen, true));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardWriter, WriteChunkFrameRejectsOversizedLimit) {
+    const auto dir = make_temp_dir("bseal_shard_writer_write_oversize");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kBoundaryChunkSize);
+
+    // Limit is one byte too small → write_chunk_frame must throw.
+    auto opts_small = make_writer_options(
+        dir, kBoundaryFrameSize - 1, ".bin", kBoundaryChunkSize, 1, 1);
+    bseal::io::ShardWriter writer_small(
+        std::move(opts_small), bseal::io::UnsafeAllowMissingShardAadForTests{});
+
+    // Build the header manually since plan_chunk_frame will also throw.
+    bseal::io::ChunkFrameHeaderV1 hdr{};
+    hdr.frame_flags        = bseal::io::kChunkFrameFlagFinalChunk;
+    hdr.shard_index        = 0;
+    hdr.global_chunk_index = 0;
+    hdr.plaintext_len      = kBoundaryChunkSize;
+    hdr.ciphertext_len     = kBoundaryChunkSize;
+    hdr.tag_len            = kTestTagLen;
+    const auto hdr_bytes   = bseal::io::serialize_chunk_frame_header_v1(hdr);
+
+    EXPECT_THROW(
+        (void)writer_small.write_chunk_frame(
+            hdr,
+            bseal::ConstByteSpan{hdr_bytes.data(), hdr_bytes.size()},
+            bseal::ConstByteSpan{c0.data(), c0.size()}),
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardWriter, WriteChunkFrameAcceptsExactLimit) {
+    const auto dir = make_temp_dir("bseal_shard_writer_write_exact");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kBoundaryChunkSize);
+
+    // Limit equals frame size exactly → must succeed.
+    auto opts_exact = make_writer_options(
+        dir, kBoundaryFrameSize, ".bin", kBoundaryChunkSize, 1, 1);
+    bseal::io::ShardWriter writer_exact(
+        std::move(opts_exact), bseal::io::UnsafeAllowMissingShardAadForTests{});
+
+    bseal::io::ChunkFrameHeaderV1 hdr{};
+    hdr.frame_flags        = bseal::io::kChunkFrameFlagFinalChunk;
+    hdr.shard_index        = 0;
+    hdr.global_chunk_index = 0;
+    hdr.plaintext_len      = kBoundaryChunkSize;
+    hdr.ciphertext_len     = kBoundaryChunkSize;
+    hdr.tag_len            = kTestTagLen;
+    const auto hdr_bytes   = bseal::io::serialize_chunk_frame_header_v1(hdr);
+
+    EXPECT_NO_THROW(
+        (void)writer_exact.write_chunk_frame(
+            hdr,
+            bseal::ConstByteSpan{hdr_bytes.data(), hdr_bytes.size()},
+            bseal::ConstByteSpan{c0.data(), c0.size()}));
+
+    std::filesystem::remove_all(dir);
+}
