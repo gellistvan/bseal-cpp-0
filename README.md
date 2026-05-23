@@ -8,7 +8,15 @@ It is still **not production-ready cryptography**. Treat the repository as a har
 
 ## Current status
 
-Implemented today:
+### Format stability
+
+The BSEAL-F1 on-disk format is now **frozen** at the byte level. `docs/FORMAT.md` is the normative specification. Any serialization, key derivation, or nonce derivation change that silently alters the byte output is caught by the known-answer tests in `tests/io/TestFormatV1Kat.cpp`. The fixture files in `tests/fixtures/format-v1/` are committed ground truth.
+
+This means archives produced by the current build will continue to decrypt correctly with future builds, as long as no breaking format change is made. Breaking changes require bumping `format_major`.
+
+No external cryptographic audit has been performed. Do not rely on this for production secrets until after an audit.
+
+### Implemented features
 
 * `bseal encrypt` and `bseal decrypt` are wired through the CLI and app layer.
 * Directory trees can be archived into encrypted shard files and restored.
@@ -173,6 +181,11 @@ Encrypt-only options:
 Decrypt-only options:
 
 * `--overwrite`, allows restoring into an existing non-empty output directory
+* `--hardened-extract auto|on|off` — extraction filesystem safety mode (default: `auto`)
+  * `auto`: use the hardened POSIX backend when available (Linux/macOS); fall back to the portable backend on other platforms
+  * `on`: require the hardened POSIX backend; fail immediately (exit 1) if the platform does not support it
+  * `off`: always use the portable backend (TOCTOU window is not closed)
+  * The hardened POSIX backend traverses intermediate directories using `openat(2)` with `O_NOFOLLOW`, so a local attacker who races a directory replacement with a symlink cannot redirect extraction outside the output root. See `SECURITY_NOTES.md` for the full threat model.
 * `--max-kdf-memory SIZE` — reject archives whose Argon2id memory cost exceeds SIZE (default: `2G`; covers all built-in KDF presets including `paranoid`)
 * `--max-kdf-iterations N` — reject archives whose Argon2id iteration count exceeds N (default: `4`)
 * `--max-kdf-parallelism N` — reject archives whose Argon2id parallelism exceeds N (default: `8`)

@@ -492,3 +492,90 @@ TEST(BlackBoxCliRegression, DuplicateShardFailsOrIsRejectedDeterministically) {
   EXPECT_EQ(second_result.exit_code, first_result.exit_code)
       << "duplicate-shard rejection should be deterministic";
 }
+
+// ---------------------------------------------------------------------------
+// --hardened-extract tests
+// ---------------------------------------------------------------------------
+
+TEST(BlackBoxCliRegression, HardenedExtractAutoRoundTrip) {
+  // --hardened-extract=auto (default) should produce identical output to the
+  // normal round-trip path.
+  TempDir temp("bseal_cli_regression_hardened_auto");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("auto");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+  expect_output_tree_matches_input_tree(paths.input, paths.output);
+}
+
+TEST(BlackBoxCliRegression, HardenedExtractOffRoundTrip) {
+  // --hardened-extract=off uses the portable backend; the round-trip must
+  // still succeed and produce byte-for-byte identical output.
+  TempDir temp("bseal_cli_regression_hardened_off");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("off");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+  expect_output_tree_matches_input_tree(paths.input, paths.output);
+}
+
+TEST(BlackBoxCliRegression, HardenedExtractOnRoundTripOnPosix) {
+  // --hardened-extract=on: succeeds on POSIX, fails on non-POSIX.
+  TempDir temp("bseal_cli_regression_hardened_on");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("on");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+
+#if !defined(_WIN32)
+  EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+  expect_output_tree_matches_input_tree(paths.input, paths.output);
+#else
+  EXPECT_NE(result.exit_code, 0)
+      << "--hardened-extract=on should fail on non-POSIX platforms";
+#endif
+}
+
+TEST(BlackBoxCliRegression, HardenedExtractOnFailsOnNonPosix) {
+#if defined(_WIN32)
+  TempDir temp("bseal_cli_regression_hardened_on_nonposix");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("on");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+  EXPECT_NE(result.exit_code, 0)
+      << "--hardened-extract=on must fail on non-POSIX platforms";
+  EXPECT_NE(result.exit_code, 3)
+      << "failure should be exit code 1 (invalid argument), not 3 (auth failure)";
+#else
+  GTEST_SKIP() << "this test is only relevant on non-POSIX platforms";
+#endif
+}
+
+TEST(BlackBoxCliRegression, HardenedExtractInvalidValueFails) {
+  TempDir temp("bseal_cli_regression_hardened_invalid");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("invalid-value");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}

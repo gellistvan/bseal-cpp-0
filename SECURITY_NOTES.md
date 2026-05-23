@@ -124,13 +124,42 @@ production code. All-zero keys are also rejected at the constructor level.
 
 ### Local-attacker assumptions
 
-The extractor assumes a **trusted local filesystem** for the output directory: no concurrent
-attacker is modifying directory entries, replacing symlinks, or injecting entries between BSEAL's
-own operations. BSEAL does **not** defend against a local attacker who can race the filesystem
-after a path check and before a write (TOCTOU race). Defending against local filesystem races
-would require `openat(2)`-family traversal throughout, which has no portable C++ equivalent.
+An adversary with concurrent write access to the output filesystem can attempt to redirect
+extraction by racing directory operations (TOCTOU attacks). BSEAL now offers a POSIX-hardened
+extraction backend that substantially reduces this exposure on supported platforms.
 
-### What is hardened
+### Hardened POSIX backend (`--hardened-extract=on` or `=auto` on POSIX)
+
+When the hardened backend is active, `SafeOutputTree` traverses path components using
+`openat(2)`-family syscalls rather than string-based path construction:
+
+- Each intermediate directory is opened with `openat(parent_fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)`.
+  `O_NOFOLLOW` causes the open to fail with `ELOOP` if `name` is a symlink.
+- Before each `openat`, `fstatat(parent_fd, name, AT_SYMLINK_NOFOLLOW)` verifies the entry is a
+  real directory. A symlink at any path component causes immediate rejection with no write occurring.
+- Files are promoted via `renameat(AT_FDCWD, src, parent_fd, dest_name)`, where `parent_fd` is the
+  already-verified directory fd. This means the kernel resolves `dest_name` relative to an fd that
+  was obtained without following any symlinks — a concurrent attacker who replaces a directory with
+  a symlink **after** the fd was opened cannot redirect the rename through that fd.
+- Existing entries at the destination are examined with `fstatat(AT_SYMLINK_NOFOLLOW)`.  An
+  existing symlink is removed via `unlinkat(parent_fd, name, 0)` (which unlinks the symlink entry
+  itself and never follows or touches its target) before the rename.
+
+**Protection scope**: hardened mode eliminates the TOCTOU window for intermediate directory
+components between path verification and file promotion. It does not protect against an attacker
+who can replace the **output root** itself, or manipulate the source (temp) tree.
+
+**CLI flag**: `--hardened-extract=auto|on|off` (default: `auto`).
+- `auto`: use hardened POSIX backend when available; fall back to portable on non-POSIX.
+- `on`: require hardened POSIX backend; fail with exit code 1 if the platform does not support it.
+- `off`: always use the portable backend (TOCTOU window remains).
+
+**Platform availability**: the hardened backend requires POSIX `openat(2)`, `mkdirat(2)`,
+`fstatat(2)`, `unlinkat(2)`, and `renameat(2)`. This covers Linux and macOS. Windows builds
+compile and run cleanly but always use the portable backend; `--hardened-extract=on` fails
+immediately with exit code 1 on Windows.
+
+### Portable backend (always used on non-POSIX; also `--hardened-extract=off`)
 
 - **Temp root creation** rejects any pre-existing entry at `.bseal-extract-tmp` using `lstat`
   (symlink-aware stat), so a broken symlink or a live symlink-to-directory at that path is caught
@@ -139,24 +168,25 @@ would require `openat(2)`-family traversal throughout, which has no portable C++
   as present, not absent.
 - **Symlink removal** at overwrite time uses `remove()` (POSIX `unlink`), which removes the
   symlink entry itself and never touches the symlink target.
-- **Intermediate directory symlink guard**: before each `rename()` into `output_root`, the
-  canonical (resolved) parent path is verified to remain under `output_root`. If a pre-existing
-  symlink at an intermediate component (e.g. `output_root/subdir → /external`) would redirect
-  the write, the extraction is aborted.
-- **Symlink extraction disabled by default** (`allow_symlinks = false`). When enabled, symlink
-  targets are validated as safe relative paths (no `..` components, no absolute paths).
+- **Intermediate directory symlink guard**: before each `rename()`, the canonical (resolved) parent
+  path is verified to remain under `output_root`.
 
 ### Remaining non-goals
 
-- **TOCTOU races**: a concurrent local process that replaces a directory with a symlink *between*
-  BSEAL's `canonical()` check and the subsequent `rename()` can still redirect a write. This is a
-  known limitation documented here.
+- **TOCTOU in portable mode**: the portable backend's canonical-path check does not close the race
+  between the check and `rename()`. A concurrent local process that replaces a directory component
+  with a symlink in that window can still redirect a write. Use `--hardened-extract=on` or `=auto`
+  on POSIX to close this window.
+- **Output-root replacement**: neither backend defends against an attacker who can replace the
+  output root directory itself.
 - **Filesystem-level denial of service**: an attacker with write access to `output_root` can cause
   extraction to fail (e.g. by creating conflicting entries). Extraction failures leave `output_root`
   unchanged except for the cleaned-up temp directory.
 - **Cross-device rename**: temp files are placed inside `output_root/.bseal-extract-tmp` so that
   the final `rename()` stays on the same filesystem. Cross-device moves (different mount points)
   are not handled and will fail, not silently write partial output.
+- **Symlink extraction disabled by default** (`allow_symlinks = false`). When enabled, symlink
+  targets are validated as safe relative paths (no `..` components, no absolute paths).
 
 ## KDF resource policy
 
@@ -187,6 +217,19 @@ Two layers of protection defend against this:
 
 The default limits are **not** derived from available RAM at runtime to remain reproducible and
 predictable across environments. Operators must set them explicitly if lower limits are required.
+
+## Format freeze vs. cryptographic audit
+
+The BSEAL-F1 on-disk format is now frozen at the byte level and protected by known-answer tests (`tests/io/TestFormatV1Kat.cpp`). Format stability means the serialization, key schedule, and nonce derivation will not change silently.
+
+Format stability is **not** the same as cryptographic soundness. The following review work has not yet been done:
+
+- No external cryptographic audit of the key schedule, nonce design, or AEAD AAD construction.
+- No formal proof of the multi-key security reduction.
+- No review of the Argon2id parameter selection relative to current hardware costs.
+- No review of side-channel exposure in key handling, AEAD invocations, or header MAC verification.
+
+Until an audit is completed, this implementation should be treated as a research and educational tool, not a production secret-protection system.
 
 ## Error messages
 

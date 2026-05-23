@@ -27,6 +27,15 @@ crypto::CipherSuite parse_suite(std::string_view value) {
     throw InvalidArgument("unknown cipher suite");
 }
 
+HardenedExtractMode parse_hardened_extract(std::string_view value) {
+    if (value == "auto") return HardenedExtractMode::Auto;
+    if (value == "on")   return HardenedExtractMode::On;
+    if (value == "off")  return HardenedExtractMode::Off;
+    throw InvalidArgument(
+        "unknown --hardened-extract value '" + std::string(value) +
+        "'; valid values: auto, on, off");
+}
+
 crypto::KdfPreset parse_kdf(std::string_view value) {
     if (value == "fast") return crypto::KdfPreset::Fast;
     if (value == "strong") return crypto::KdfPreset::Strong;
@@ -156,6 +165,9 @@ ParsedArgs parse_args(int argc, char** argv) {
             } else if (key == "--max-kdf-parallelism") {
                 parsed.decrypt.kdf_policy.max_parallelism =
                     parse_u32(arg_at(++i, argc, argv));
+            } else if (key == "--hardened-extract") {
+                parsed.decrypt.hardened_extract =
+                    parse_hardened_extract(arg_at(++i, argc, argv));
             } else if (key == "--input" || key == "--output" || key == "--keyfile") {
                 parse_common_option(parsed.decrypt, key, arg_at(++i, argc, argv));
             } else {
@@ -186,6 +198,11 @@ Encrypt options:
 
 Decrypt options:
   --overwrite
+  --hardened-extract auto|on|off
+                          extraction filesystem safety mode (default: auto)
+                            auto: use hardened POSIX backend when available, else portable
+                            on:   require hardened POSIX backend; fail if unavailable
+                            off:  always use portable backend (not TOCTOU-hardened)
   --max-kdf-memory SIZE   reject archives whose Argon2id memory exceeds SIZE (default: 2G)
   --max-kdf-iterations N  reject archives whose Argon2id iteration count exceeds N (default: 4)
   --max-kdf-parallelism N reject archives whose Argon2id parallelism exceeds N (default: 8)
