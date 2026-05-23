@@ -19,6 +19,13 @@ else()
     set(BSEAL_GTEST_LIBS bseal_minigtest_main)
 endif()
 
+add_executable(bseal_common_gtests
+    common/TestCheckedArithmetic.cpp
+)
+target_link_libraries(bseal_common_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
+bseal_set_project_warnings(bseal_common_gtests)
+bseal_enable_sanitizers_if_requested(bseal_common_gtests)
+
 add_executable(bseal_platform_gtests
     platform/TestRandom.cpp
     platform/TestMemoryLock.cpp
@@ -99,6 +106,11 @@ bseal_enable_sanitizers_if_requested(bseal_pipeline_gtests)
 if (GTest_FOUND)
     include(GoogleTest)
 
+    gtest_discover_tests(bseal_common_gtests
+            TEST_PREFIX common.
+            DISCOVERY_TIMEOUT 30
+    )
+
     gtest_discover_tests(bseal_platform_gtests
             TEST_PREFIX platform.
             DISCOVERY_TIMEOUT 30
@@ -124,6 +136,7 @@ if (GTest_FOUND)
             DISCOVERY_TIMEOUT 30
     )
 else()
+    add_test(NAME bseal_common_gtests COMMAND bseal_common_gtests)
     add_test(NAME bseal_platform_gtests COMMAND bseal_platform_gtests)
     add_test(NAME bseal_io_gtests COMMAND bseal_io_gtests)
     add_test(NAME bseal_archive_gtests COMMAND bseal_archive_gtests)

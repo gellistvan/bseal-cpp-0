@@ -1,6 +1,7 @@
 #include "io/ShardWriter.hpp"
 #include "io/ShardFrame.hpp"
 
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 #include "platform/Random.hpp"
 
@@ -364,10 +365,12 @@ void ShardWriter::finish() {
     if (total_chunks > 0 && final_chunk_plaintext_len_ > 0) {
         final_global.final_plaintext_chunk_len =
             static_cast<std::uint32_t>(final_chunk_plaintext_len_);
-        final_global.padded_plaintext_size =
-            (total_chunks - 1u)
-            * static_cast<std::uint64_t>(final_global.chunk_plain_size)
-            + final_chunk_plaintext_len_;
+        final_global.padded_plaintext_size = checked_add_u64(
+            checked_mul_u64(total_chunks - 1u,
+                            static_cast<std::uint64_t>(final_global.chunk_plain_size),
+                            "ShardWriter: padded plaintext size"),
+            final_chunk_plaintext_len_,
+            "ShardWriter: padded plaintext size");
     }
 
     const auto global_bytes = serialize_global_public_header(final_global);
