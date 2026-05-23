@@ -211,5 +211,40 @@ TEST(DecryptPipeline, FailsWhenCiphertextIsModified) {
     EXPECT_THROW(pipeline.run(), Error);
 }
 
+TEST(DecryptPipeline, RejectsMismatchedPaddedPlaintextSize) {
+    TempDir input_root("bseal_decrypt_padded_size_input");
+    TempDir sealed_root("bseal_decrypt_padded_size_sealed");
+    TempDir output_root("bseal_decrypt_padded_size_output");
+
+    create_sample_tree(input_root.path());
+    run_test_encryption(input_root.path(), sealed_root.path());
+
+    auto discovered_shards = io::ShardReader::discover(sealed_root.path());
+    io::ShardReader shard_reader(
+        std::move(discovered_shards), io::UnsafeSkipHeaderAuthenticationForTests{});
+
+    archive::ArchiveReader archive_reader(
+        archive::ArchiveReaderOptions{
+            output_root.path(),
+            false,
+            true,
+            true,
+            false,
+        });
+
+    // Pass a padded_plaintext_size that is clearly wrong.
+    auto options = make_decrypt_options();
+    options.padded_plaintext_size = 1; // actual is many bytes
+
+    DecryptPipeline pipeline(
+        options,
+        std::make_unique<TestAeadBackend>(),
+        make_test_keys(),
+        std::move(shard_reader),
+        std::move(archive_reader));
+
+    EXPECT_THROW(pipeline.run(), InvalidArgument);
+}
+
 } // namespace
 } // namespace bseal::pipeline::test

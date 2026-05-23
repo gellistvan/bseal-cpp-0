@@ -218,9 +218,11 @@ void decryption_worker_main(
 void ordered_plaintext_consumer_main(
     archive::ArchiveReader& archive_reader,
     WorkQueue<PlainChunk>& plaintext_queue,
-    FailureState& failure_state) {
+    FailureState& failure_state,
+    std::uint64_t expected_plaintext_bytes) {
     std::map<std::uint64_t, Bytes> pending;
     std::uint64_t next_expected_index = 0;
+    std::uint64_t total_plaintext_bytes = 0;
 
     try {
         while (true) {
@@ -244,6 +246,7 @@ void ordered_plaintext_consumer_main(
                     break;
                 }
 
+                total_plaintext_bytes += ready->second.size();
                 archive_reader.consume(ConstByteSpan{ready->second.data(), ready->second.size()});
                 wipe_bytes(ready->second);
                 pending.erase(ready);
@@ -257,6 +260,17 @@ void ordered_plaintext_consumer_main(
 
         if (!failure_state.failed()) {
             archive_reader.finish();
+        }
+
+        // Verify total decrypted bytes match the public header's padded_plaintext_size.
+        // This catches encryptor bugs; the header MAC guarantees the expected value is authentic.
+        if (!failure_state.failed() &&
+            expected_plaintext_bytes != 0 &&
+            total_plaintext_bytes != expected_plaintext_bytes) {
+            throw InvalidArgument(
+                "decrypted plaintext length (" + std::to_string(total_plaintext_bytes) +
+                " bytes) does not match public header padded_plaintext_size (" +
+                std::to_string(expected_plaintext_bytes) + " bytes)");
         }
     } catch (...) {
         failure_state.record(std::current_exception());
@@ -323,7 +337,8 @@ void DecryptPipeline::run() {
         plaintext_queue.close();
     });
 
-    ordered_plaintext_consumer_main(archive_reader_, plaintext_queue, failure_state);
+    ordered_plaintext_consumer_main(
+        archive_reader_, plaintext_queue, failure_state, options_.padded_plaintext_size);
 
     if (reader.joinable()) {
         reader.join();

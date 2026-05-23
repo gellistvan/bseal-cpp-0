@@ -166,8 +166,8 @@ Encrypt-only options:
 * `--padding none|chunk|power2|fixed-size=N`
   * `none` — no padding; plaintext size is exactly the unpadded archive stream
   * `chunk` — pad to the next multiple of `--chunk-size`
-  * `power2` — pad to the next power-of-two total plaintext size
-  * `fixed-size=N` — pad to exactly N bytes (fails if the archive is already larger, or if the gap is too small to hold a padding record header)
+  * `power2` — pad to the next power-of-two total plaintext size, with a minimum of one full chunk
+  * `fixed-size=N` — pad to exactly N bytes; N must be a positive multiple of `--chunk-size` (fails if the archive is already larger, if N is not a chunk-size multiple, or if the gap is too small to hold a padding record header)
   * Padding is represented as an encrypted `RandomPadding` archive record so it is authenticated by AEAD and indistinguishable from file data
 
 Decrypt-only options:
