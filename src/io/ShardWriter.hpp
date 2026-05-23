@@ -72,6 +72,11 @@ public:
 
     void finish();
 
+    /// Closes the current shard stream (if open) and removes only the shard files
+    /// created by this ShardWriter instance. Pre-existing files in the output directory
+    /// are never touched. Ignores all filesystem errors; never throws.
+    void abort_and_remove_created_shards_noexcept() noexcept;
+
 private:
     struct FinalizedShard {
         std::filesystem::path path;

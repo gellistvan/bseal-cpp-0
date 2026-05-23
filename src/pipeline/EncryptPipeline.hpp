@@ -71,6 +71,10 @@ public:
     // - plaintext chunks are zeroed after encryption where practical.
     void run();
 
+    /// Delegates to ShardWriter::abort_and_remove_created_shards_noexcept().
+    /// Call in error handlers to clean up only the shard files this pipeline created.
+    void abort_and_remove_created_shards_noexcept() noexcept;
+
 private:
     EncryptPipelineOptions options_;
     std::unique_ptr<crypto::CryptoBackend> backend_;

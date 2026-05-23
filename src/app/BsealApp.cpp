@@ -595,12 +595,7 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     try {
         pipeline.run();
     } catch (...) {
-        std::error_code ec;
-        for (const auto& entry : std::filesystem::directory_iterator(options.output, ec)) {
-            if (!ec && entry.is_regular_file() && entry.path().extension() == ".bin") {
-                std::filesystem::remove(entry.path(), ec);
-            }
-        }
+        pipeline.abort_and_remove_created_shards_noexcept();
         throw;
     }
 
