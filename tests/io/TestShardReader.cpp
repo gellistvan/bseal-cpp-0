@@ -280,7 +280,8 @@ TEST(TestShardReader, ReadsMultipleChunkFramesFromOneShard) {
     EXPECT_EQ(shards[0].first_chunk_index(), 0u);
     EXPECT_EQ(shards[0].chunk_count(), 2u);
 
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     auto r0 = reader.read_next_chunk_record();
     ASSERT_TRUE(r0.has_value());
@@ -348,7 +349,8 @@ TEST(TestShardReader, ReadsMultipleShardsUsingMetadataNotFilenameOrder) {
     auto rediscovered = bseal::io::ShardReader::discover(dir);
     ASSERT_EQ(rediscovered.size(), 2u);
 
-    bseal::io::ShardReader reader(std::move(rediscovered));
+    bseal::io::ShardReader reader(
+        std::move(rediscovered), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
     auto r0 = reader.read_next_chunk_record();
     auto r1 = reader.read_next_chunk_record();
 
@@ -423,7 +425,8 @@ TEST(TestShardReader, RejectsTamperedFrameLength) {
     write_u64_le_at(file, frame_ciphertext_len_offset(first_frame_offset()), 1);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     EXPECT_THROW(
         { (void)reader.read_next_chunk_record(); },
@@ -453,7 +456,8 @@ TEST(TestShardReader, RejectsTamperedChunkIndex) {
         2);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     auto first = reader.read_next_chunk_record();
     ASSERT_TRUE(first.has_value());
@@ -486,7 +490,8 @@ TEST(TestShardReader, RejectsDuplicateFrame) {
         0);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     auto first = reader.read_next_chunk_record();
     ASSERT_TRUE(first.has_value());
@@ -511,7 +516,8 @@ TEST(TestShardReader, RejectsInvalidFinalChunkMarker) {
     writer.finish();
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     EXPECT_THROW(
         { (void)reader.read_next_chunk_record(); },
@@ -541,7 +547,8 @@ TEST(TestShardReader, RejectsUnexpectedFinalChunkMarker) {
         bseal::io::kChunkFrameFlagFinalChunk);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     EXPECT_THROW(
         { (void)reader.read_next_chunk_record(); },
@@ -569,7 +576,8 @@ TEST(TestShardReader, AcceptsExplicitValidationMatchingShardMetadata) {
     validation.chunk_plain_size = shards[0].global_header.chunk_plain_size;
     validation.public_header_hash = shards[0].public_header_hash;
 
-    bseal::io::ShardReader reader(std::move(shards), validation);
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation);
 
     auto r0 = reader.read_next_chunk_record();
     ASSERT_TRUE(r0.has_value());
@@ -599,7 +607,8 @@ TEST(TestShardReader, RejectsExplicitValidationSuiteIdMismatch) {
         shards[0].global_header.aead_alg_id + 1u);
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards), validation); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -626,7 +635,8 @@ TEST(TestShardReader, RejectsExplicitValidationArchiveIdMismatch) {
     validation.archive_id = wrong_archive_id;
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards), validation); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -649,7 +659,8 @@ TEST(TestShardReader, RejectsExplicitValidationChunkPlainSizeMismatch) {
     validation.chunk_plain_size = shards[0].global_header.chunk_plain_size + 1u;
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards), validation); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -676,7 +687,8 @@ TEST(TestShardReader, RejectsExplicitValidationPublicHeaderHashMismatch) {
     validation.public_header_hash = wrong_hash;
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards), validation); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -706,7 +718,8 @@ TEST(TestShardReader, RejectsDuplicateShardIndex) {
     auto shards = bseal::io::ShardReader::discover(dir);
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards)); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -738,7 +751,8 @@ TEST(TestShardReader, RejectsMissingShardIndex) {
     auto shards = bseal::io::ShardReader::discover(dir);
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards)); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -803,10 +817,68 @@ TEST(TestShardReader, RejectsMismatchedArchiveIdAcrossShards) {
     auto shards = bseal::io::ShardReader::discover(mixed);
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards)); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir_a);
     std::filesystem::remove_all(dir_b);
     std::filesystem::remove_all(mixed);
+}
+
+TEST(TestShardReader, RejectsConstructionWithAllZeroHeaderAuthKey) {
+    const auto dir = make_temp_dir("bseal_shard_reader_zero_auth_key");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
+    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                      kTestChunkPlain, 1, 1));
+    write_fake_frame(writer, 0, kTestChunkPlain, true,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    const std::array<bseal::Byte, 32> zero_key{};
+    EXPECT_THROW(
+        { bseal::io::ShardReader reader(std::move(shards), zero_key); },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardReader, RejectsCorruptedShardHeaderMac) {
+    const auto dir = make_temp_dir("bseal_shard_reader_corrupt_mac");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
+    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                      kTestChunkPlain, 1, 1));
+    write_fake_frame(writer, 0, kTestChunkPlain, true,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    // Tamper with the first byte of the 32-byte header_mac field.
+    // In ShardPublicHeaderV1 the mac is at bytes [40..72) of the shard header,
+    // which lives at file offset 192 (global) + 40 = 232.
+    const auto file = only_bin_file(dir);
+    {
+        std::fstream f(file, std::ios::binary | std::ios::in | std::ios::out);
+        ASSERT_TRUE(f.good());
+        constexpr std::streamoff kShardMacOffset =
+            static_cast<std::streamoff>(bseal::io::kGlobalPublicHeaderV1Size) + 40;
+        f.seekp(kShardMacOffset, std::ios::beg);
+        ASSERT_TRUE(f.good());
+        const char flip = static_cast<char>(0xFFu);
+        f.write(&flip, 1);
+        ASSERT_TRUE(f.good());
+    }
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    EXPECT_THROW(
+        { bseal::io::ShardReader reader(std::move(shards), test_header_authentication_key()); },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
 }

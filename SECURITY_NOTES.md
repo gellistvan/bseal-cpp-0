@@ -85,6 +85,18 @@ rewrites both the global header bytes and the shard header MAC (using the final 
 every finalized shard before returning. Do not skip `finish()`, and do not reopen shard files
 between `finish()` returning and the reader verifying `header_mac`.
 
+## Mandatory header MAC verification in ShardReader
+
+The production `ShardReader` constructor requires a non-zero `header_authentication_key`
+and verifies every shard's `header_mac` during construction before any chunk data can be
+returned. This is defense in depth on top of the `verify_all_shard_header_macs` call in
+`BsealApp::decrypt()`, which maps authentication failures to exit code 3.
+
+The only way to skip `header_mac` verification is to pass the
+`UnsafeSkipHeaderAuthenticationForTests{}` tag — a named type that cannot be constructed
+by accident, making the bypass explicit and easy to grep for. Never pass this tag in
+production code. All-zero keys are also rejected at the constructor level.
+
 ## Error messages
 
 Authentication failures should not distinguish between:

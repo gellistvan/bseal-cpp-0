@@ -36,9 +36,11 @@ struct ShardReaderValidation {
     std::optional<std::uint64_t>           chunk_plain_size;
     /// If set, every shard's public_header_hash is verified.
     std::optional<std::array<Byte, 32>>    public_header_hash;
-    /// If set, per-shard header_mac is verified with this key.
-    std::optional<std::array<Byte, 32>>    header_authentication_key;
 };
+
+/// Tag type that explicitly opts out of header_mac verification.
+/// Only use this in tests — never in production code paths.
+struct UnsafeSkipHeaderAuthenticationForTests {};
 
 struct ChunkRecord {
     std::uint64_t chunk_index{0};
@@ -56,7 +58,18 @@ struct ChunkRecord {
 
 class ShardReader {
 public:
-    ShardReader(std::vector<ShardInfo> shards, ShardReaderValidation validation = {});
+    /// Production constructor: header_mac is verified against the supplied key
+    /// for every shard before any chunk data is returned. All-zero keys are
+    /// rejected because they almost certainly indicate an uninitialized caller.
+    ShardReader(std::vector<ShardInfo>   shards,
+                std::array<Byte, 32>     header_authentication_key,
+                ShardReaderValidation    validation = {});
+
+    /// Test-only constructor: skips header_mac verification entirely.
+    /// Never use this in production code.
+    ShardReader(std::vector<ShardInfo>                   shards,
+                UnsafeSkipHeaderAuthenticationForTests,
+                ShardReaderValidation                    validation = {});
 
     static std::vector<ShardInfo> discover(const std::filesystem::path& input_dir);
 
@@ -73,8 +86,9 @@ private:
     void open_current_shard();
     void close_current_shard_and_check_trailing_garbage();
 
-    std::vector<ShardInfo>   shards_;
-    ShardReaderValidation    validation_{};
+    std::vector<ShardInfo>              shards_;
+    ShardReaderValidation               validation_{};
+    std::optional<std::array<Byte, 32>> auth_key_{};
     std::size_t              current_shard_pos_{0};
     std::uint64_t            current_record_in_shard_{0};
     std::uint64_t            expected_total_chunk_count_{0};
