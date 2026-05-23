@@ -33,6 +33,7 @@ add_library(bseal_core
     src/archive/ArchiveWriter.cpp
     src/archive/PathSanitizer.cpp
     src/archive/RecordFormat.cpp
+    src/archive/SafeOutputTree.cpp
     src/io/AsyncReader.cpp
     src/io/AsyncWriter.cpp
     src/io/BufferPool.cpp

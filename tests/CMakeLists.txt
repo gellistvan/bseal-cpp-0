@@ -49,6 +49,7 @@ add_executable(bseal_archive_gtests
         archive/TestMetadata.cpp
         archive/TestPathSanitizer.cpp
         archive/TestRecordFormat.cpp
+        archive/TestSafeOutputTree.cpp
 )
 
 target_link_libraries(bseal_archive_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})

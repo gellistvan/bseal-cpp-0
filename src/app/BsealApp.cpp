@@ -3,6 +3,7 @@
 #include "archive/ArchiveReader.hpp"
 #include "archive/ArchiveWriter.hpp"
 #include "archive/RecordFormat.hpp"
+#include "archive/SafeOutputTree.hpp"
 #include "common/Errors.hpp"
 #include "common/Types.hpp"
 #include "crypto/AesGcmBackend.hpp"
@@ -135,6 +136,19 @@ bseal::crypto::CipherSuite suite_from_aead_alg_id(std::uint16_t id) {
         return bseal::crypto::CipherSuite::Aes256Gcm;
     }
     throw bseal::InvalidArgument("archive uses an unsupported AEAD algorithm");
+}
+
+bseal::archive::HardenedExtractMode to_archive_hardened_mode(
+    bseal::cli::HardenedExtractMode m) {
+    switch (m) {
+    case bseal::cli::HardenedExtractMode::Auto:
+        return bseal::archive::HardenedExtractMode::Auto;
+    case bseal::cli::HardenedExtractMode::On:
+        return bseal::archive::HardenedExtractMode::On;
+    case bseal::cli::HardenedExtractMode::Off:
+        return bseal::archive::HardenedExtractMode::Off;
+    }
+    return bseal::archive::HardenedExtractMode::Auto;
 }
 
 void require_path_exists(const std::filesystem::path& path, std::string_view description) {
@@ -650,6 +664,7 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
         true,
         true,
         false,
+        to_archive_hardened_mode(options.hardened_extract),
     });
 
     bseal::pipeline::DecryptPipelineOptions pipeline_options;

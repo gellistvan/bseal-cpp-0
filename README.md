@@ -173,6 +173,11 @@ Encrypt-only options:
 Decrypt-only options:
 
 * `--overwrite`, allows restoring into an existing non-empty output directory
+* `--hardened-extract auto|on|off` — extraction filesystem safety mode (default: `auto`)
+  * `auto`: use the hardened POSIX backend when available (Linux/macOS); fall back to the portable backend on other platforms
+  * `on`: require the hardened POSIX backend; fail immediately (exit 1) if the platform does not support it
+  * `off`: always use the portable backend (TOCTOU window is not closed)
+  * The hardened POSIX backend traverses intermediate directories using `openat(2)` with `O_NOFOLLOW`, so a local attacker who races a directory replacement with a symlink cannot redirect extraction outside the output root. See `SECURITY_NOTES.md` for the full threat model.
 * `--max-kdf-memory SIZE` — reject archives whose Argon2id memory cost exceeds SIZE (default: `2G`; covers all built-in KDF presets including `paranoid`)
 * `--max-kdf-iterations N` — reject archives whose Argon2id iteration count exceeds N (default: `4`)
 * `--max-kdf-parallelism N` — reject archives whose Argon2id parallelism exceeds N (default: `8`)

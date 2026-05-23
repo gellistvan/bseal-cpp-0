@@ -1,6 +1,7 @@
 #include "archive/ArchiveReader.hpp"
 
 #include "archive/PathSanitizer.hpp"
+#include "archive/SafeOutputTree.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -363,90 +364,34 @@ void ArchiveReader::create_symlink(const EntryMetadata& metadata) {
 }
 
 void ArchiveReader::commit_temp_tree() {
-    std::vector<std::filesystem::path> paths;
+    SafeOutputTree safe_tree(options_.output_root,
+                             options_.hardened_extract_mode);
 
+    std::vector<std::filesystem::path> paths;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(temp_root_)) {
         paths.push_back(entry.path());
     }
 
+    // Parents before children so directories are created before files within them.
     std::ranges::sort(paths, [](const auto& a, const auto& b) {
-        // Parents before children.
         return std::distance(a.begin(), a.end()) < std::distance(b.begin(), b.end());
     });
 
     std::error_code ec;
-
     for (const auto& src : paths) {
         const auto rel = std::filesystem::relative(src, temp_root_, ec);
         if (ec) {
-            throw InvalidArgument("cannot compute temporary relative path: " + ec.message());
+            throw InvalidArgument(
+                "cannot compute temporary relative path: " + ec.message());
         }
 
-        const auto dst = final_path_for(rel);
-
         if (std::filesystem::is_directory(src, ec) && !std::filesystem::is_symlink(src, ec)) {
-            std::filesystem::create_directories(dst, ec);
-            if (ec) {
-                throw InvalidArgument("cannot create final directory: " + ec.message());
-            }
+            safe_tree.ensure_dirs(rel);
             continue;
         }
 
-        // Use symlink_status (lstat) so existing symlinks in output_root are detected without
-        // following them — prevents treating a dangling symlink as "not present".
-        {
-            std::error_code status_ec;
-            const auto dst_status = std::filesystem::symlink_status(dst, status_ec);
-            const bool dst_present =
-                !status_ec && dst_status.type() != std::filesystem::file_type::not_found;
-
-            if (dst_present) {
-                if (!options_.overwrite_existing) {
-                    throw InvalidArgument("output path already exists: " + dst.string());
-                }
-
-                // Remove the entry at dst without following it. Use remove() for symlinks so we
-                // unlink the symlink itself and never touch whatever it points to.
-                if (dst_status.type() == std::filesystem::file_type::symlink) {
-                    std::filesystem::remove(dst, ec);
-                } else {
-                    std::filesystem::remove_all(dst, ec);
-                }
-                if (ec) {
-                    throw InvalidArgument("cannot remove existing output path: " + ec.message());
-                }
-            }
-        }
-
-        std::filesystem::create_directories(dst.parent_path(), ec);
-        if (ec) {
-            throw InvalidArgument("cannot create final parent directory: " + ec.message());
-        }
-
-        // Guard against a pre-existing symlink at an intermediate path component redirecting the
-        // rename outside output_root (e.g. output_root/subdir → /external). Canonicalize the
-        // resolved parent and verify it is within output_root.
-        // Note: a TOCTOU race remains if an attacker can modify the filesystem between this check
-        // and rename(). Full mitigation requires openat(2)-style traversal; see SECURITY_NOTES.md.
-        {
-            std::error_code canon_ec;
-            const auto real_parent = std::filesystem::canonical(dst.parent_path(), canon_ec);
-            if (!canon_ec) {
-                const auto rel_to_root =
-                    real_parent.lexically_relative(options_.output_root);
-                if (!rel_to_root.empty() && *rel_to_root.begin() == "..") {
-                    throw InvalidArgument(
-                        "output path escapes output root via symlink: " + dst.string());
-                }
-            }
-        }
-
-        // This is atomic for individual files/symlinks on the same filesystem. The temporary root
-        // lives under output_root to make cross-device rename unlikely.
-        std::filesystem::rename(src, dst, ec);
-        if (ec) {
-            throw InvalidArgument("cannot promote temporary output file: " + ec.message());
-        }
+        // For files and symlinks: ensure the parent exists then atomically promote.
+        safe_tree.rename_into(src, rel, options_.overwrite_existing);
     }
 }
 

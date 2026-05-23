@@ -2,6 +2,7 @@
 
 #include "archive/Metadata.hpp"
 #include "archive/RecordFormat.hpp"
+#include "archive/SafeOutputTree.hpp"
 #include "common/Types.hpp"
 
 #include <filesystem>
@@ -16,6 +17,7 @@ struct ArchiveReaderOptions {
     bool restore_timestamps{true};
     bool restore_permissions{true};
     bool allow_symlinks{false};
+    HardenedExtractMode hardened_extract_mode{HardenedExtractMode::Auto};
 };
 
 class ArchiveReader {
