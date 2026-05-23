@@ -4,6 +4,7 @@
 #include "archive/ArchiveWriter.hpp"
 #include "archive/RecordFormat.hpp"
 #include "archive/SafeOutputTree.hpp"
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 #include "common/Types.hpp"
 #include "crypto/AesGcmBackend.hpp"
@@ -256,9 +257,7 @@ std::vector<ShardPlan> plan_shards(
             const std::uint64_t this_plain_len =
                 is_final ? global_header.final_plaintext_chunk_len : chunk_plain_size;
             const std::uint64_t frame_size =
-                static_cast<std::uint64_t>(bseal::io::kChunkFrameHeaderV1Size)
-                + this_plain_len
-                + static_cast<std::uint64_t>(tag_len);
+                bseal::io::chunk_frame_v1_encoded_size_from_params(this_plain_len, tag_len);
 
             // Overflow-safe: frame_size <= max_shard_payload_len (checked above).
             if (sp.chunk_count > 0 &&
@@ -266,7 +265,8 @@ std::vector<ShardPlan> plan_shards(
                 break; // Start new shard.
             }
 
-            shard_payload += frame_size;
+            shard_payload = checked_add_u64(shard_payload, frame_size,
+                                            "shard payload accumulation");
             ++sp.chunk_count;
             ++chunk_idx;
         }
@@ -369,26 +369,30 @@ PaddingResult compute_padding(
     case Kind::Chunk: {
         if (raw_size == 0) return {0, 1, 0};
         const std::uint64_t rem = raw_size % chunk_plain_size;
-        std::uint64_t target = (rem == 0) ? raw_size : raw_size + (chunk_plain_size - rem);
+        std::uint64_t target = (rem == 0)
+            ? raw_size
+            : checked_add_u64(raw_size, chunk_plain_size - rem,
+                              "chunk padding: padded size");
         const std::uint64_t gap = target - raw_size;
         // If gap is non-zero but too small for a RandomPadding prefix, bump one chunk.
         if (gap > 0 && gap < bseal::archive::kRecordPrefixSize) {
-            target += chunk_plain_size;
+            target = checked_add_u64(target, chunk_plain_size,
+                                     "chunk padding: extra chunk");
         }
         return {target, 1, 0};
     }
 
     case Kind::Power2: {
         if (raw_size == 0) return {0, 2, 0};
-        std::uint64_t target = 1;
-        while (target < raw_size) target <<= 1;
+        std::uint64_t target = checked_next_power_of_two_u64(raw_size,
+                                   "power2 padding: target size");
         // FORMAT.md §14: padded_plaintext_size must be a positive multiple of
         // chunk_plain_size. chunk_plain_size is always a power of two, so
         // max(target, chunk_plain_size) is also a power of two and a multiple.
         if (target < chunk_plain_size) target = chunk_plain_size;
         const std::uint64_t gap = target - raw_size;
         if (gap > 0 && gap < bseal::archive::kRecordPrefixSize) {
-            target <<= 1;
+            target = checked_mul_u64(target, 2, "power2 padding: bump");
         }
         return {target, 2, 0};
     }
@@ -550,7 +554,8 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
             std::min(chunk_plain_size,
                      static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())));
     } else {
-        global_chunk_count = (padded_plaintext_size + chunk_plain_size - 1) / chunk_plain_size;
+        global_chunk_count = checked_ceil_div_u64(padded_plaintext_size, chunk_plain_size,
+                                                   "chunk count");
         const std::uint64_t rem = padded_plaintext_size % chunk_plain_size;
         final_plaintext_chunk_len =
             rem == 0 ? static_cast<std::uint32_t>(chunk_plain_size)

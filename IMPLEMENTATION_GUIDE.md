@@ -115,3 +115,23 @@ Add a benchmark target that measures:
 - end-to-end decrypt GB/s.
 
 The design goal is that end-to-end encryption/decryption is limited by storage throughput, not crypto.
+
+## Checked arithmetic policy
+
+All size computations in the planning and padding code paths use the helpers in
+`src/common/CheckedArithmetic.hpp` rather than bare C++ arithmetic:
+
+| Helper | Replaces |
+|---|---|
+| `checked_add_u64(a, b, ctx)` | `a + b` on `uint64_t` sizes |
+| `checked_sub_u64(a, b, ctx)` | `a - b` on `uint64_t` sizes |
+| `checked_mul_u64(a, b, ctx)` | `a * b` on `uint64_t` sizes |
+| `checked_ceil_div_u64(a, b, ctx)` | `(a + b - 1) / b` ceiling division |
+| `checked_next_power_of_two_u64(x, ctx)` | iterative left-shift power-of-two rounding |
+
+All helpers throw `bseal::InvalidArgument` on overflow/underflow/zero-divisor, propagating as exit
+code 1. The `ctx` string names the call site so error messages are actionable.
+
+Functions that already perform manual overflow checks (e.g. `chunk_frame_v1_encoded_size` in
+`src/io/ShardFrame.cpp`) are intentionally left unchanged; they predate this policy and are
+correct as-is.

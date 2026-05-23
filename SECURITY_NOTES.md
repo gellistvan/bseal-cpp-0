@@ -231,6 +231,18 @@ Format stability is **not** the same as cryptographic soundness. The following r
 
 Until an audit is completed, this implementation should be treated as a research and educational tool, not a production secret-protection system.
 
+## Integer overflow hardening
+
+Size arithmetic in the encrypt path (padding computation, chunk-count calculation, shard payload
+accumulation) uses the checked helpers in `src/common/CheckedArithmetic.hpp`. Each helper throws
+`bseal::InvalidArgument` on overflow, underflow, or zero-divisor, so a crafted or degenerate input
+cannot silently wrap to a smaller-than-intended allocation.
+
+The helpers are unit-tested in `tests/common/TestCheckedArithmetic.cpp`, including boundary values
+at `UINT64_MAX` and `2^63` (the largest representable power of two). The sanitizer build
+(`-DBSEAL_ENABLE_SANITIZERS=ON`) additionally catches any remaining unsigned arithmetic that was
+intentionally left unchecked (e.g. bitfield masks and loop counters) via UBSan.
+
 ## Error messages
 
 Authentication failures should not distinguish between:
