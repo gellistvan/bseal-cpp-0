@@ -1,14 +1,14 @@
 // Performance tests: AEAD encrypt/decrypt throughput.
 //
 // These tests measure in-memory throughput of the two AEAD backends and assert
-// a conservative floor derived from INCENTIVE.md §16.1 ("compatible with
+// a conservative floor derived from docs/INCENTIVE.md §16.1 ("compatible with
 // practical USB 3.2 storage speeds on suitable hardware"). The floor is set well
 // below what any modern CPU achieves in software so that the test does not fail
 // on slow CI hosts, while still catching catastrophic regressions such as
 // accidentally falling back to an unaccelerated path or repeatedly allocating
 // per-byte.
 //
-// Methodology (INCENTIVE.md §16.4): separate AEAD throughput from I/O and KDF.
+// Methodology (docs/INCENTIVE.md §16.4): separate AEAD throughput from I/O and KDF.
 // Each sub-test measures only the encrypt_chunk / decrypt_chunk hot loop with
 // data already resident in memory. KDF and I/O latency are measured elsewhere.
 
@@ -149,7 +149,7 @@ void measure_throughput(CryptoBackend& backend, const char* label) {
     std::fflush(stdout);
 
     // Conservative floor: fail only if throughput is catastrophically low.
-    // INCENTIVE.md §16.1 targets USB 3.2 practical throughput; 50 MB/s is the
+    // docs/INCENTIVE.md §16.1 targets USB 3.2 practical throughput; 50 MB/s is the
     // canary — well below any real hardware limit but above "something is broken."
     EXPECT_GE(enc_mbps, kMinThroughputMbps)
         << label << " encrypt throughput is below " << kMinThroughputMbps << " MB/s";
@@ -169,7 +169,7 @@ TEST(AeadThroughput, AesGcmEncrypt) {
     measure_throughput(backend, "AES-256-GCM");
 }
 
-// Streaming requirement check (INCENTIVE.md §16.2): chunk-by-chunk processing
+// Streaming requirement check (docs/INCENTIVE.md §16.2): chunk-by-chunk processing
 // does not accumulate the full plaintext in a single allocation. Verify that
 // encrypting N chunks one at a time produces the same ciphertext size as
 // expected (chunk_plain + tag per chunk) without an intermediate buffer holding
