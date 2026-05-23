@@ -1,6 +1,6 @@
 # BSEAL Implementation Guide
 
-This guide is written for a future human or AI agent implementing the skeleton.
+This guide records design rules, the implementation order used to build BSEAL, and testing requirements.
 
 ## Non-negotiable rules
 
@@ -23,7 +23,9 @@ The skeleton avoids hard dependencies so it can compile anywhere. Recommended pr
 - Keyfile hashing: official BLAKE3 implementation.
 - HKDF: audited SHA-256/HKDF implementation.
 
-## Suggested implementation order
+## Implementation order
+
+The following order was used to build BSEAL. It remains the recommended order for fresh ports or significant refactors.
 
 1. `platform/Random` using the OS CSPRNG.
 2. `crypto/SecureBuffer` memory locking and explicit wipe verification.
@@ -35,7 +37,7 @@ The skeleton avoids hard dependencies so it can compile anywhere. Recommended pr
 8. `io/ShardWriter` and `io/ShardReader` simple sequential implementation.
 9. `archive/ArchiveWriter` and `archive/ArchiveReader` streaming records.
 10. `pipeline/EncryptPipeline` and `pipeline/DecryptPipeline` with bounded queues.
-11. Add parallel I/O, CPU feature selection, AES-GCM backend, benchmarks.
+11. Parallel I/O, CPU feature selection, AES-GCM backend, AEAD throughput and KDF latency benchmarks.
 12. Optional GPU backend only after CPU backend is correct and benchmarked.
 
 ## Chunk encryption contract
@@ -89,7 +91,7 @@ Implement these policies:
 
 ## Testing requirements
 
-Before considering the tool usable, add tests for:
+The following cases all have named tests in the current test suite:
 
 - wrong passphrase fails;
 - wrong keyfile fails;
@@ -105,14 +107,14 @@ Before considering the tool usable, add tests for:
 
 ## Benchmarks
 
-Add a benchmark target that measures:
+`tests/perf/TestAeadThroughput.cpp` measures in-memory AEAD encrypt/decrypt throughput for both backends. `tests/perf/TestKdfLatency.cpp` measures KDF latency and correctness properties for the Fast preset. Both run as part of `bseal_perf_gtests`.
 
-- raw read speed;
-- raw write speed;
-- AEAD encrypt GB/s;
-- AEAD decrypt GB/s;
+Still missing from the perf suite:
+
+- raw storage read speed;
+- raw storage write speed;
 - end-to-end encrypt directory GB/s;
-- end-to-end decrypt GB/s.
+- end-to-end decrypt directory GB/s.
 
 The design goal is that end-to-end encryption/decryption is limited by storage throughput, not crypto.
 
@@ -135,3 +137,67 @@ code 1. The `ctx` string names the call site so error messages are actionable.
 Functions that already perform manual overflow checks (e.g. `chunk_frame_v1_encoded_size` in
 `src/io/ShardFrame.cpp`) are intentionally left unchanged; they predate this policy and are
 correct as-is.
+
+## Malformed input coverage
+
+Every byte of an archive is treated as attacker-controlled until authenticated. The test suite
+enforces this through three layers:
+
+### Format errors → exit 1 (caught before authentication)
+
+| Corruption class | Where caught | Test location |
+|---|---|---|
+| Bad global magic ("BSEAL-F1") | `parse_global_public_header` | `io/TestMalformedShards.cpp` |
+| format_major ≠ 1 / format_minor ≠ 0 | `parse_global_public_header` | `io/TestMalformedShards.cpp` |
+| Nonzero global_flags or reserved fields | `parse_global_public_header` | `io/TestMalformedShards.cpp` |
+| Unknown aead_alg_id / kdf_alg_id | `parse_global_public_header` | `io/TestMalformedShards.cpp` |
+| Truncated global header | `ShardReader::discover` | `io/TestMalformedShards.cpp` |
+| Bad shard magic ("BSEAL-S1") | `parse_shard_public_header` | `io/TestMalformedShards.cpp` |
+| Truncated shard header | `ShardReader::discover` | `io/TestMalformedShards.cpp` |
+| Nonzero shard reserved0 | `parse_shard_public_header` | `io/TestMalformedShards.cpp` |
+| shard_payload_len too large / too small | `ShardReader::discover` | `io/TestMalformedShards.cpp` |
+| Trailing garbage after declared payload | `ShardReader::discover` | `io/TestMalformedShards.cpp` |
+| Bad frame magic ("BSC1") | `parse_chunk_frame_header_v1` | `io/TestMalformedShards.cpp` |
+| Unknown frame flags (bits other than bit0) | `parse_chunk_frame_header_v1` | `io/TestMalformedShards.cpp` |
+| tag_len ≠ 16 | `parse_chunk_frame_header_v1` | `io/TestMalformedShards.cpp` |
+| ciphertext_len ≠ plaintext_len | `parse_chunk_frame_header_v1` | `io/TestMalformedShards.cpp` |
+| Nonzero frame reserved0 / reserved1 | `parse_chunk_frame_header_v1` | `io/TestMalformedShards.cpp` |
+| Duplicate shard_index across shards | `ShardReader` constructor | `io/TestMalformedShards.cpp` |
+| Missing shard_index | `ShardReader` constructor | `io/TestMalformedShards.cpp` |
+| archive_id mismatch across shards | `ShardReader` constructor | `io/TestMalformedShards.cpp` |
+| Reordered / duplicate global_chunk_index | `ShardReader::read_next_chunk_record` | `io/TestMalformedShards.cpp` |
+| RandomPadding before ArchiveEnd | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
+| Non-padding record after ArchiveEnd | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
+| Duplicate ArchiveBegin | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
+| FileBytes without prior FileEntry | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
+| FileEnd without FileEntry | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
+| ArchiveEnd before ArchiveBegin | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
+| finish() without ArchiveEnd | `ArchiveReader::finish` | `archive/TestMalformedRecords.cpp` |
+| finish() with open file | `ArchiveReader::finish` | `archive/TestMalformedRecords.cpp` |
+| FileBytes exceeding declared size | `ArchiveReader::write_file_bytes` | `archive/TestMalformedRecords.cpp` |
+| FileEnd before declared size reached | `ArchiveReader::end_file` | `archive/TestMalformedRecords.cpp` |
+
+### Authentication failures → exit 3
+
+| Corruption class | Where caught | Test location |
+|---|---|---|
+| Tampered shard header_mac | `ShardReader` constructor (HMAC verify) | `io/TestShardReader.cpp` |
+| Tampered AEAD ciphertext / tag | Decrypt pipeline (AEAD open) | `integration/TestCliRegression.cpp` |
+| Wrong passphrase | KDF + AEAD open | `integration/TestCliRegression.cpp` |
+
+### Black-box CLI regression (format errors → exit 1)
+
+Six tests in `integration/TestCliRegression.cpp` encrypt a tiny archive and then corrupt
+the resulting shard file before decrypting, verifying exit code 1:
+
+- `TruncatedGlobalHeader_Fails`
+- `GlobalHeaderWrongMagic_Fails`
+- `UnknownAeadAlgId_Fails`
+- `NonzeroReservedField_Fails`
+- `ShardPayloadLenTooSmall_Fails`
+- `TrailingGarbageInShard_Fails`
+
+### Policy
+
+Every corruption class in the above table must have a named test before any production release.
+Coverage-guided fuzzing (libFuzzer or AFL) is the next step for deeper parser hardening.

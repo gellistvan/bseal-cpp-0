@@ -2,9 +2,9 @@
 
 BSEAL is an experimental C++20 command-line tool for sealing a directory into randomized `*.bin` shard files and restoring it later with the same passphrase and keyfile set.
 
-The project has moved beyond the original skeleton: the CLI, application layer, archive record stream, AEAD chunk pipeline, KDF/key schedule, keyed public-header authentication, shard I/O, and black-box round-trip tests are now wired together.
+The CLI, application layer, archive record stream, AEAD chunk pipeline, KDF/key schedule, keyed public-header authentication, shard I/O, and black-box round-trip tests are fully implemented and wired together.
 
-It is still **not production-ready cryptography**. Treat the repository as a hardening/refactoring project until the container format, shard discovery rules, compatibility policy, and overall design have been reviewed and stabilized.
+**No external cryptographic audit has been performed.** BSEAL is not production-ready. Do not use it to protect real secrets, long-term backups, or irreplaceable data until after an audit and a compatibility policy decision.
 
 ## Current status
 
@@ -23,7 +23,7 @@ No external cryptographic audit has been performed. Do not rely on this for prod
 * XChaCha20-Poly1305 and AES-256-GCM backends exist behind a common AEAD interface.
 * Passphrases and ordered keyfiles feed an Argon2id-based KDF and a domain-separated key schedule.
 * Public KDF parameters are bounded before Argon2id so decrypt does not blindly trust attacker-controlled header costs.
-* The public archive header now has a real keyed MAC.
+* The public archive header has a keyed MAC.
   * The MAC uses the expanded `header_authentication_key`.
   * It does not reuse the chunk encryption key.
   * It does not treat `public_header_hash` as a MAC.
@@ -38,15 +38,13 @@ No external cryptographic audit has been performed. Do not rely on this for prod
   files, parses shard headers from file contents, rejects malformed garbage
   `.bin` files, duplicate or missing shard indexes, archive ID mismatches, and
   unsupported shard magic/version values.
-* Shard discovery is now header-driven and authenticated, but the archive/container format should still be treated as pre-release until the implementation fully converges with `docs/FORMAT.md`.
+* Shard discovery is header-driven and authenticated.
 * Tests include unit-style coverage plus black-box CLI regression tests for round trips, wrong passphrases, wrong keyfiles, corruption, missing shards, duplicate shards, empty directories, multiple shards, overwrite behavior, public-header MAC verification, and public-header tampering.
 
 Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
-* The archive/container format is not stable and has no compatibility guarantee. In particular, archives created on the `develop` branch before the nonce derivation spec/code alignment (commit that introduced known-answer tests in `TestKeySchedule.cpp`) cannot be decrypted by later builds because the normative v1 nonce formula has been clarified and locked to the prefix+counter design (`"BSEAL chunk nonce prefix v1"`). Do not rely on cross-build compatibility for pre-release archives.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
-* Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
 
 ## Build requirements
 
@@ -217,13 +215,11 @@ The current design uses:
 * Safe path validation during archive record parsing and extraction.
 * Temporary extraction state that is promoted only after the archive stream finishes.
 
-Important warning: this is a work in progress. Do not use it yet to protect real secrets, long-term backups, production credentials, or irreplaceable data.
-
 ## Header authentication
 
 Each shard contains a public header. Some public fields must remain visible so the decrypt path can discover the archive, validate bounded KDF parameters, derive keys, and select the correct algorithms.
 
-Those fields are now authenticated with a real keyed MAC:
+Those fields are authenticated with a keyed MAC:
 
 1. Encrypt creates a public header with `header_mac` empty or zeroed.
 2. Encrypt derives the normal expanded key schedule.
@@ -281,15 +277,15 @@ When changing crypto/container code:
 
 ## High-value next work
 
-1. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
+1. Add fuzzing targets for the shard and archive record parsers (libFuzzer or AFL).
 2. Retire the legacy `archive::PublicHeaderAuth` compatibility layer; consolidate all header MAC and hash operations on the `io/ShardFrame` functions.
 3. Decide the compatibility policy for archive format version 1.
-4. Add benchmarks after correctness and format-hardening work settles.
+4. Extend benchmarks beyond the current AEAD throughput and KDF latency perf tests to cover end-to-end encrypt/decrypt directory throughput.
 5. Prepare the codebase for external cryptographic review.
 
 ## Related docs
 
-* [`IMPLEMENTATION_GUIDE.md`](IMPLEMENTATION_GUIDE.md) records design rules, intended implementation order, and testing requirements.
+* [`IMPLEMENTATION_GUIDE.md`](IMPLEMENTATION_GUIDE.md) records design rules, implementation order, and testing requirements.
 * [`SECURITY_NOTES.md`](SECURITY_NOTES.md) records security assumptions and known hazards.
 * [`docs/FORMAT.md`](docs/FORMAT.md) describes the archive/container format.
 

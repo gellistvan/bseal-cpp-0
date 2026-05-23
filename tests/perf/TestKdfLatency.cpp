@@ -1,6 +1,6 @@
 // Performance tests: KDF latency.
 //
-// INCENTIVE.md §16.5: password-based key derivation is intentionally expensive.
+// docs/INCENTIVE.md §16.5: password-based key derivation is intentionally expensive.
 // It must add a bounded startup cost, not reduce per-gigabyte streaming
 // throughput. These tests verify that:
 //
@@ -12,7 +12,7 @@
 //   3. Two calls with different salts produce different outputs (KDF is salted).
 //
 // The Strong and Paranoid presets are excluded from automated tests because
-// their memory cost (1 GiB and 2 GiB) is too large for CI. INCENTIVE.md §21.5
+// their memory cost (1 GiB and 2 GiB) is too large for CI. docs/INCENTIVE.md §21.5
 // recommends recording hardware, OS, KDF params, and cache state for
 // reproducible benchmarks — those belong in a dedicated benchmarking harness,
 // not in the correctness/regression test suite.
@@ -102,7 +102,7 @@ TEST(KdfLatency, FastPresetCompletesWithinBudget) {
 }
 
 // Two different salts must produce different outputs (KDF is salted).
-// INCENTIVE.md §16.5: KDF is a bounded startup cost — two archives must not
+// docs/INCENTIVE.md §16.5: KDF is a bounded startup cost — two archives must not
 // produce the same derived key even with the same passphrase.
 TEST(KdfLatency, DifferentSaltsProduceDifferentOutputs) {
     KdfInput base;

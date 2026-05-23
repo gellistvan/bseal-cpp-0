@@ -37,7 +37,7 @@ inline constexpr std::uint16_t kKdfAlgIdArgon2idHkdf = 1;
 inline constexpr std::uint16_t kHashAlgIdBlake3       = 1;
 inline constexpr std::uint16_t kMacAlgIdHmacSha256    = 1;
 
-/// GlobalPublicHeaderV1 — field layout mirrors FORMAT.md §3 exactly.
+/// GlobalPublicHeaderV1 — field layout mirrors FORMAT.md §5 exactly.
 struct GlobalPublicHeaderV1 {
     // [0..8)
     std::array<Byte, 8> magic{}; // "BSEAL-F1"
@@ -119,7 +119,7 @@ inline constexpr std::array<Byte, 8> kShardHeaderV1Magic{
     static_cast<Byte>('1'),
 };
 
-/// ShardPublicHeaderV1 — field layout mirrors FORMAT.md §4 exactly.
+/// ShardPublicHeaderV1 — field layout mirrors FORMAT.md §9 exactly.
 struct ShardPublicHeaderV1 {
     // [0..8)
     std::array<Byte, 8> shard_magic{}; // "BSEAL-S1"
