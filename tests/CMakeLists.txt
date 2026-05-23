@@ -56,6 +56,7 @@ add_executable(bseal_io_gtests
         io/TestShardReader.cpp
         io/TestShardWriter.cpp
         io/TestFormatV1Kat.cpp
+        io/TestMalformedShards.cpp
 )
 
 target_include_directories(bseal_io_gtests
@@ -75,6 +76,7 @@ add_executable(bseal_archive_gtests
         archive/TestPathSanitizer.cpp
         archive/TestRecordFormat.cpp
         archive/TestSafeOutputTree.cpp
+        archive/TestMalformedRecords.cpp
 )
 
 target_link_libraries(bseal_archive_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})

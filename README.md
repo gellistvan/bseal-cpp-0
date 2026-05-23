@@ -281,7 +281,7 @@ When changing crypto/container code:
 
 ## High-value next work
 
-1. Add more malformed-container tests: reordered chunks, truncated chunk records, inconsistent shard headers, corrupted public headers, mismatched archive IDs, and shard set inconsistencies.
+1. Add fuzzing targets for the shard and archive record parsers (libFuzzer or AFL).
 2. Retire the legacy `archive::PublicHeaderAuth` compatibility layer; consolidate all header MAC and hash operations on the `io/ShardFrame` functions.
 3. Decide the compatibility policy for archive format version 1.
 4. Add benchmarks after correctness and format-hardening work settles.
