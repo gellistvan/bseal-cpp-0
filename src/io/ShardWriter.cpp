@@ -315,6 +315,24 @@ ShardWritePosition ShardWriter::write_chunk_frame(
     return position;
 }
 
+void ShardWriter::abort_and_remove_created_shards_noexcept() noexcept {
+    if (current_stream_.is_open()) {
+        current_stream_.close();
+    }
+
+    if (!current_path_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(current_path_, ec);
+        current_path_.clear();
+    }
+
+    for (const auto& shard : finalized_shards_) {
+        std::error_code ec;
+        std::filesystem::remove(shard.path, ec);
+    }
+    finalized_shards_.clear();
+}
+
 void ShardWriter::finish() {
     if (finished_) {
         return;

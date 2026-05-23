@@ -440,6 +440,97 @@ TEST(TestShardWriter, FinalizationMacsVerifyAgainstFinalGlobalHeader) {
 }
 
 // ---------------------------------------------------------------------------
+// abort_and_remove_created_shards_noexcept tests
+// ---------------------------------------------------------------------------
+
+// Helper: write text to a file.
+void write_text_file(const std::filesystem::path& path, std::string_view content) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) throw std::runtime_error("cannot open file for writing: " + path.string());
+    f.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+
+std::string read_text_file(const std::filesystem::path& path) {
+    std::ifstream f(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+TEST(TestShardWriter, AbortRemovesCreatedShardsButLeavesPreexistingFiles) {
+    const auto dir = make_temp_dir("bseal_shard_writer_abort");
+
+    // Pre-existing files that must survive cleanup.
+    const auto keep_bin = dir / "keep.bin";
+    const auto keep_txt = dir / "keep.txt";
+    const std::string keep_bin_content = "pre-existing binary content";
+    const std::string keep_txt_content = "pre-existing text content";
+    write_text_file(keep_bin, keep_bin_content);
+    write_text_file(keep_txt, keep_txt_content);
+
+    // Use one-chunk-per-shard limit so the first write finalizes shard 0 and then
+    // opens shard 1, giving us both a finalized shard and a currently open shard.
+    const std::uint64_t frame_size =
+        static_cast<std::uint64_t>(bseal::io::kChunkFrameHeaderV1Size)
+        + kTestChunkPlainSize
+        + kTestTagLen;
+    const std::uint64_t two_frame_limit = 2u * frame_size;
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlainSize);
+    auto c1 = fake_ciphertext_and_tag(0x20, kTestChunkPlainSize);
+    auto c2 = fake_ciphertext_and_tag(0x30, kTestChunkPlainSize);
+
+    // shard_count=2, global_chunk_count=3: chunks 0+1 → shard 0, chunk 2 → shard 1.
+    bseal::io::ShardWriter writer(
+        make_writer_options(dir, two_frame_limit, ".bin", kTestChunkPlainSize, 2, 3));
+
+    write_fake_frame(writer, 0, kTestChunkPlainSize, false,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    write_fake_frame(writer, 1, kTestChunkPlainSize, false,
+                     bseal::ConstByteSpan{c1.data(), c1.size()});
+    // After chunk 1: offset == two_frame_limit → shard 0 is finalized.
+    write_fake_frame(writer, 2, kTestChunkPlainSize, true,
+                     bseal::ConstByteSpan{c2.data(), c2.size()});
+    // After chunk 2: shard 1 is open (offset < two_frame_limit).
+
+    // Simulate failure before finish(): abort.
+    writer.abort_and_remove_created_shards_noexcept();
+
+    // The two shard files created by the writer must be gone.
+    // Only keep.bin should remain with the .bin extension.
+    const auto bin_files = list_files_with_extension(dir, ".bin");
+    ASSERT_EQ(bin_files.size(), 1u);
+    EXPECT_EQ(bin_files[0], keep_bin);
+
+    // keep.txt must still exist.
+    EXPECT_TRUE(std::filesystem::exists(keep_txt));
+
+    // Contents must be byte-for-byte identical to what was written before encryption.
+    EXPECT_EQ(read_text_file(keep_bin), keep_bin_content);
+    EXPECT_EQ(read_text_file(keep_txt), keep_txt_content);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardWriter, AbortAfterNoWritesLeavesPreexistingFiles) {
+    const auto dir = make_temp_dir("bseal_shard_writer_abort_empty");
+
+    const auto keep_bin = dir / "keep.bin";
+    const std::string keep_content = "untouched";
+    write_text_file(keep_bin, keep_content);
+
+    bseal::io::ShardWriter writer(make_writer_options(dir, 256 * 1024));
+    // No writes; abort immediately.
+    writer.abort_and_remove_created_shards_noexcept();
+
+    EXPECT_TRUE(std::filesystem::exists(keep_bin));
+    EXPECT_EQ(read_text_file(keep_bin), keep_content);
+
+    const auto bin_files = list_files_with_extension(dir, ".bin");
+    ASSERT_EQ(bin_files.size(), 1u);
+
+    std::filesystem::remove_all(dir);
+}
+
+// ---------------------------------------------------------------------------
 // Mandatory per-shard AAD binding validation tests
 // ---------------------------------------------------------------------------
 

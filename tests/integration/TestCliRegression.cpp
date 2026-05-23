@@ -568,6 +568,62 @@ TEST(BlackBoxCliRegression, HardenedExtractOnFailsOnNonPosix) {
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// Failed-encrypt cleanup regression test
+// ---------------------------------------------------------------------------
+//
+// Regression: a failed encrypt must not delete pre-existing *.bin files in the
+// output directory that were not created by this ShardWriter instance.
+//
+// Strategy: place keep.bin in the output directory before running encrypt with
+// an input tree that contains an unreadable file.  plan_plaintext_size() succeeds
+// (it only stats files), but the streaming phase inside pipeline.run() fails when
+// it tries to open and read the unreadable file, so at least one shard has been
+// opened by ShardWriter before the error.  The new cleanup path removes only the
+// shards created during this run, leaving keep.bin intact.
+#if !defined(_WIN32)
+TEST(BlackBoxCliRegression, PreexistingBinFileSurvivesFailedEncrypt) {
+  TempDir temp("bseal_cli_regression_cleanup");
+
+  const auto input = temp.subdir("input");
+  const auto sealed = temp.subdir("sealed");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  // Two files: alpha.txt sorts first so it is read before zeta.bin.
+  // Writing alpha.txt produces at least one encrypted chunk, which means
+  // ShardWriter opens a shard before the pipeline hits zeta.bin and fails.
+  write_file(input / "alpha.txt", std::string(65536, 'A')); // one full chunk
+  write_binary_file(input / "zeta.bin", deterministic_bytes(4096));
+  create_keyfile(keyfile);
+
+  // Make zeta.bin unreadable so the archive streaming phase fails.
+  fs::permissions(input / "zeta.bin", fs::perms::none, fs::perm_options::replace);
+
+  // Place a pre-existing keep.bin in the output directory.
+  fs::create_directories(sealed);
+  const std::string keep_content = "pre-existing shard data - must not be removed";
+  write_file(sealed / "keep.bin", keep_content);
+
+  const auto result = run_bseal(
+      temp.subdir("encrypt-run"),
+      encrypt_args(input, sealed, keyfile),
+      kPassphrase);
+
+  // Restore permissions so temp directory cleanup succeeds.
+  fs::permissions(input / "zeta.bin", fs::perms::owner_read | fs::perms::owner_write,
+                  fs::perm_options::replace);
+
+  // Encrypt must fail (non-zero exit code).
+  EXPECT_NE(result.exit_code, 0) << result.stderr_text;
+
+  // keep.bin must still exist and be unchanged.
+  ASSERT_TRUE(fs::exists(sealed / "keep.bin"))
+      << "keep.bin was deleted by failed encrypt cleanup";
+  EXPECT_EQ(read_file(sealed / "keep.bin"), keep_content)
+      << "keep.bin was modified by failed encrypt cleanup";
+}
+#endif // !defined(_WIN32)
+
 TEST(BlackBoxCliRegression, HardenedExtractInvalidValueFails) {
   TempDir temp("bseal_cli_regression_hardened_invalid");
   const auto paths = create_encrypt_fixture(temp);

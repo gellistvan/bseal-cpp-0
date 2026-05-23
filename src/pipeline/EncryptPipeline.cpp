@@ -514,4 +514,8 @@ void EncryptPipeline::run() {
     failure_state.rethrow_if_failed();
 }
 
+void EncryptPipeline::abort_and_remove_created_shards_noexcept() noexcept {
+    shard_writer_.abort_and_remove_created_shards_noexcept();
+}
+
 } // namespace bseal::pipeline
