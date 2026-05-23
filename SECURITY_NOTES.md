@@ -85,6 +85,19 @@ rewrites both the global header bytes and the shard header MAC (using the final 
 every finalized shard before returning. Do not skip `finish()`, and do not reopen shard files
 between `finish()` returning and the reader verifying `header_mac`.
 
+## Shard filenames
+
+Shard filenames are **random labels only** — they are not authenticated metadata and carry no
+semantic meaning. Each filename is 24 characters drawn from the base62 alphabet (0–9, a–z, A–Z)
+followed by `.bin`, generated from the OS CSPRNG via `platform::random_base62_string`. This gives
+approximately 143 bits of entropy per name, making collisions negligible even for very large
+archives.
+
+The decryptor discovers and reassembles shards by reading their `ShardPublicHeaderV1` (shard index,
+chunk range, and authenticated MAC) — **never by filename**. Filenames may be freely renamed
+without affecting correctness or security. The only purpose of randomness here is to avoid leaking
+archive structure (e.g. shard ordering or count) through predictable names.
+
 ## Mandatory header MAC verification in ShardReader
 
 The production `ShardReader` constructor requires a non-zero `header_authentication_key`

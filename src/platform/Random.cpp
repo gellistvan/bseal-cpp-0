@@ -133,4 +133,33 @@ std::string random_filename_stem(std::size_t entropy_bits) {
     return base32_no_padding(ConstByteSpan{bytes.data(), bytes.size()});
 }
 
+std::string random_base62_string(std::size_t len) {
+    static constexpr char kAlphabet[] =
+        "0123456789"
+        "abcdefghijklmnopqrstuvwxyz"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    static_assert(sizeof(kAlphabet) - 1 == 62);
+
+    std::string result;
+    result.reserve(len);
+
+    // Rejection sampling: bytes [0, 247] map uniformly to [0, 61] (248 = 4 * 62).
+    // Bytes [248, 255] are discarded. Expected rejection rate: ~3.1%.
+    constexpr std::size_t kBatchSize = 64;
+    std::array<Byte, kBatchSize> buf{};
+    std::size_t buf_pos = kBatchSize;
+
+    while (result.size() < len) {
+        if (buf_pos >= kBatchSize) {
+            fill_secure_random(ByteSpan{buf.data(), buf.size()});
+            buf_pos = 0;
+        }
+        const auto b = static_cast<unsigned char>(buf[buf_pos++]);
+        if (b < 248u) {
+            result.push_back(kAlphabet[b % 62u]);
+        }
+    }
+    return result;
+}
+
 } // namespace bseal::platform

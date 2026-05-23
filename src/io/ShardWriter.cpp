@@ -2,29 +2,17 @@
 #include "io/ShardFrame.hpp"
 
 #include "common/Errors.hpp"
+#include "platform/Random.hpp"
 
 #include <algorithm>
 #include <limits>
-#include <random>
 #include <string>
 
 namespace bseal::io {
 namespace {
 
-constexpr char kFilenameAlphabet[] =
-    "0123456789"
-    "abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
 std::string random_filename(std::string_view extension) {
-    thread_local std::mt19937_64 rng{std::random_device{}()};
-    std::uniform_int_distribution<std::size_t> dist(0, sizeof(kFilenameAlphabet) - 2);
-
-    std::string name;
-    name.reserve(24 + extension.size());
-    for (std::size_t i = 0; i < 24; ++i) {
-        name.push_back(kFilenameAlphabet[dist(rng)]);
-    }
+    std::string name = platform::random_base62_string(24);
     name.append(extension);
     return name;
 }
