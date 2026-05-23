@@ -530,17 +530,22 @@ The decryptor MUST verify all shard header MACs before trusting shard ordering, 
 
 Chunk nonces are deterministic and are not stored in the file.
 
-For each frame:
+The v1 nonce formula uses a **prefix+counter** design. HKDF is called once per archive to derive a per-archive nonce prefix; the 8-byte little-endian `global_chunk_index` counter is appended to produce the final per-chunk nonce:
 
 ```text
-nonce = HKDF-SHA256(
-    ikm = nonce_derivation_key,
+prefix = HKDF-SHA256(
+    ikm  = nonce_derivation_key,
     salt = archive_id,
-    info = "BSEAL chunk nonce v1" || u16le(aead_alg_id) || u64le(global_chunk_index),
-    L = nonce_length_for_aead_alg_id)
+    info = "BSEAL chunk nonce prefix v1" || u16le(aead_alg_id),
+    L    = nonce_length_for_aead_alg_id - 8)
+
+nonce = prefix || u64le(global_chunk_index)
 ```
 
-Nonce lengths are defined by the AEAD algorithm table. Reusing the same `(chunk_encryption_key, nonce)` pair is forbidden. Since `global_chunk_index` is unique across the archive and `archive_id` is part of the key schedule and nonce derivation, each chunk in one archive has a unique nonce.
+For XChaCha20-Poly1305 (24-byte nonce): `prefix` is 16 bytes, counter is 8 bytes.
+For AES-256-GCM (12-byte nonce): `prefix` is 4 bytes, counter is 8 bytes.
+
+Nonce lengths are defined by the AEAD algorithm table. Reusing the same `(chunk_encryption_key, nonce)` pair is forbidden. Since `global_chunk_index` is unique across the archive and `archive_id` is mixed into the HKDF salt making the prefix per-archive, each chunk in one archive has a unique nonce. Uniqueness across archives is guaranteed because different archives have different `archive_id` values (32 bytes of CSPRNG output), so HKDF produces different prefixes and therefore different nonces even for the same chunk index.
 
 ## 18. AEAD AAD fields
 

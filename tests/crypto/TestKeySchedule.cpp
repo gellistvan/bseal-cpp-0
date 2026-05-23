@@ -9,6 +9,9 @@
 #include <array>
 #include <cstdint>
 #include <exception>
+#include <iomanip>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace {
@@ -62,6 +65,39 @@ std::uint64_t read_le64_from_tail(const Bytes& bytes) {
         value |= static_cast<std::uint64_t>(bytes[offset + static_cast<std::size_t>(i)]) << (8 * i);
     }
     return value;
+}
+
+std::string bytes_to_hex(const Bytes& bytes) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (const auto b : bytes) {
+        oss << std::setw(2) << static_cast<unsigned>(b);
+    }
+    return oss.str();
+}
+
+// Fixed-input nonce derivation key for known-answer tests.
+ConstByteSpan kat_nonce_derivation_key() {
+    static Bytes key(32, static_cast<Byte>(0xAB));
+    return ConstByteSpan{key.data(), key.size()};
+}
+
+// Fixed-input archive_id for known-answer tests (XChaCha20-Poly1305 suite).
+std::array<Byte, 32> kat_archive_id_xchacha() {
+    std::array<Byte, 32> id{};
+    for (std::size_t i = 0; i < id.size(); ++i) {
+        id[i] = static_cast<Byte>(0x11u + static_cast<Byte>(i));
+    }
+    return id;
+}
+
+// Fixed-input archive_id for known-answer tests (AES-256-GCM suite).
+std::array<Byte, 32> kat_archive_id_aesgcm() {
+    std::array<Byte, 32> id{};
+    for (std::size_t i = 0; i < id.size(); ++i) {
+        id[i] = static_cast<Byte>(0x55u ^ static_cast<Byte>(i * 7u));
+    }
+    return id;
 }
 
 } // namespace
@@ -237,4 +273,179 @@ TEST(KeySchedule, RejectsEmptyNonceDerivationKey) {
     EXPECT_TRUE((throws_exception<InvalidArgument>([&] {
         derive_chunk_nonce(ConstByteSpan{empty.data(), empty.size()}, context, 0);
     })));
+}
+
+// ---------------------------------------------------------------------------
+// Structural nonce property tests (required by FORMAT.md §17)
+// ---------------------------------------------------------------------------
+
+TEST(KeySchedule, IndexesZeroOneTwoProduce3UniqueNonces) {
+    Bytes master = make_master_seed();
+    auto keys = expand_keys(ConstByteSpan{master.data(), master.size()},
+                            CipherSuite::XChaCha20Poly1305);
+
+    NonceContext ctx{CipherSuite::XChaCha20Poly1305, make_archive_id(0x80)};
+
+    const auto n0 = derive_chunk_nonce(keys.nonce_derivation_key.as_span(), ctx, 0);
+    const auto n1 = derive_chunk_nonce(keys.nonce_derivation_key.as_span(), ctx, 1);
+    const auto n2 = derive_chunk_nonce(keys.nonce_derivation_key.as_span(), ctx, 2);
+
+    EXPECT_NE(n0, n1) << "index 0 and 1 collide";
+    EXPECT_NE(n0, n2) << "index 0 and 2 collide";
+    EXPECT_NE(n1, n2) << "index 1 and 2 collide";
+}
+
+TEST(KeySchedule, Uint64MaxHandledWithoutOverflow) {
+    Bytes master = make_master_seed();
+    auto keys = expand_keys(ConstByteSpan{master.data(), master.size()},
+                            CipherSuite::XChaCha20Poly1305);
+
+    NonceContext ctx{CipherSuite::XChaCha20Poly1305, make_archive_id(0x90)};
+
+    constexpr std::uint64_t kMaxIndex = std::numeric_limits<std::uint64_t>::max();
+
+    Bytes nonce;
+    ASSERT_NO_THROW(nonce = derive_chunk_nonce(
+        keys.nonce_derivation_key.as_span(), ctx, kMaxIndex));
+
+    ASSERT_EQ(nonce.size(), kXChaCha20Poly1305NonceBytes);
+    EXPECT_EQ(read_le64_from_tail(nonce), kMaxIndex);
+}
+
+TEST(KeySchedule, DifferentSuitesProduceDifferentPrefixesAndLengths) {
+    Bytes master = make_master_seed();
+    auto xchacha_keys = expand_keys(ConstByteSpan{master.data(), master.size()},
+                                    CipherSuite::XChaCha20Poly1305);
+    auto aes_keys = expand_keys(ConstByteSpan{master.data(), master.size()},
+                                CipherSuite::Aes256Gcm);
+
+    const auto archive_id = make_archive_id(0xA0);
+    const std::uint64_t chunk_idx = 5;
+
+    const auto n_xchacha = derive_chunk_nonce(
+        xchacha_keys.nonce_derivation_key.as_span(),
+        NonceContext{CipherSuite::XChaCha20Poly1305, archive_id},
+        chunk_idx);
+
+    const auto n_aes = derive_chunk_nonce(
+        aes_keys.nonce_derivation_key.as_span(),
+        NonceContext{CipherSuite::Aes256Gcm, archive_id},
+        chunk_idx);
+
+    ASSERT_EQ(n_xchacha.size(), kXChaCha20Poly1305NonceBytes) << "XChaCha20 nonce must be 24 bytes";
+    ASSERT_EQ(n_aes.size(), kAesGcmRecommendedNonceBytes)     << "AES-GCM nonce must be 12 bytes";
+
+    // Prefixes differ because the info field encodes the suite id.
+    // Compare just the prefix region (both have 8-byte counter tail).
+    const std::size_t prefix_xchacha = n_xchacha.size() - 8; // 16 bytes
+    const std::size_t prefix_aes     = n_aes.size() - 8;     //  4 bytes
+    const Bytes prefix_a(n_xchacha.begin(), n_xchacha.begin() + static_cast<std::ptrdiff_t>(prefix_xchacha));
+    const Bytes prefix_b(n_aes.begin(),     n_aes.begin()     + static_cast<std::ptrdiff_t>(prefix_aes));
+
+    // XChaCha20 prefix must not equal the first prefix_aes bytes of AES prefix
+    // (different nonce_derivation_key because expand_keys is suite-specific).
+    EXPECT_NE(Bytes(prefix_a.begin(), prefix_a.begin() + static_cast<std::ptrdiff_t>(prefix_aes)),
+              prefix_b);
+}
+
+// ---------------------------------------------------------------------------
+// Known-answer tests — deterministic vectors for v1 nonce formula:
+//
+//   prefix = HKDF-SHA256(ikm  = nonce_derivation_key,
+//                        salt = archive_id,
+//                        info = "BSEAL chunk nonce prefix v1" || u16le(aead_alg_id),
+//                        L    = nonce_length - 8)
+//   nonce  = prefix || u64le(global_chunk_index)
+//
+// Inputs are fixed constants (kat_nonce_derivation_key / kat_archive_id_*).
+// Expected bytes were generated by running derive_chunk_nonce() on the first
+// correct build and are stored here to detect future regressions.
+// ---------------------------------------------------------------------------
+
+TEST(KeySchedule, KnownAnswerXChaCha20ChunkIndex0) {
+    NonceContext ctx{CipherSuite::XChaCha20Poly1305, kat_archive_id_xchacha()};
+
+    const auto nonce = derive_chunk_nonce(kat_nonce_derivation_key(), ctx, 0);
+
+    ASSERT_EQ(nonce.size(), kXChaCha20Poly1305NonceBytes)
+        << "XChaCha20-Poly1305 nonce must be 24 bytes";
+
+    // Counter tail must be u64le(0).
+    EXPECT_EQ(read_le64_from_tail(nonce), 0u);
+
+    // Full 24-byte known-answer vector.
+    // prefix = HKDF-SHA256(ikm=0xAB*32, salt=kat_archive_id_xchacha(),
+    //                      info="BSEAL chunk nonce prefix v1"\0x01\0x00, L=16)
+    // nonce  = prefix || u64le(0)
+    static const Bytes kExpected = {
+        Byte{0xc4}, Byte{0xfa}, Byte{0x3e}, Byte{0x27},
+        Byte{0x3d}, Byte{0xed}, Byte{0x58}, Byte{0xfd},
+        Byte{0xe2}, Byte{0x06}, Byte{0xb7}, Byte{0x91},
+        Byte{0xe1}, Byte{0x33}, Byte{0x5b}, Byte{0xe3},
+        Byte{0x00}, Byte{0x00}, Byte{0x00}, Byte{0x00},
+        Byte{0x00}, Byte{0x00}, Byte{0x00}, Byte{0x00},
+    };
+    EXPECT_EQ(nonce, kExpected) << "XChaCha20 chunk-0 KAT mismatch; actual: "
+                                << bytes_to_hex(nonce);
+}
+
+TEST(KeySchedule, KnownAnswerXChaCha20ChunkIndex1) {
+    NonceContext ctx{CipherSuite::XChaCha20Poly1305, kat_archive_id_xchacha()};
+
+    const auto nonce = derive_chunk_nonce(kat_nonce_derivation_key(), ctx, 1);
+
+    ASSERT_EQ(nonce.size(), kXChaCha20Poly1305NonceBytes);
+    EXPECT_EQ(read_le64_from_tail(nonce), 1u);
+
+    // nonce = prefix || u64le(1)  (prefix identical to chunk-0)
+    static const Bytes kExpected = {
+        Byte{0xc4}, Byte{0xfa}, Byte{0x3e}, Byte{0x27},
+        Byte{0x3d}, Byte{0xed}, Byte{0x58}, Byte{0xfd},
+        Byte{0xe2}, Byte{0x06}, Byte{0xb7}, Byte{0x91},
+        Byte{0xe1}, Byte{0x33}, Byte{0x5b}, Byte{0xe3},
+        Byte{0x01}, Byte{0x00}, Byte{0x00}, Byte{0x00},
+        Byte{0x00}, Byte{0x00}, Byte{0x00}, Byte{0x00},
+    };
+    EXPECT_EQ(nonce, kExpected) << "XChaCha20 chunk-1 KAT mismatch; actual: "
+                                << bytes_to_hex(nonce);
+}
+
+TEST(KeySchedule, KnownAnswerAesGcmChunkIndex0) {
+    NonceContext ctx{CipherSuite::Aes256Gcm, kat_archive_id_aesgcm()};
+
+    const auto nonce = derive_chunk_nonce(kat_nonce_derivation_key(), ctx, 0);
+
+    ASSERT_EQ(nonce.size(), kAesGcmRecommendedNonceBytes)
+        << "AES-256-GCM nonce must be 12 bytes";
+
+    EXPECT_EQ(read_le64_from_tail(nonce), 0u);
+
+    // prefix = HKDF-SHA256(ikm=0xAB*32, salt=kat_archive_id_aesgcm(),
+    //                      info="BSEAL chunk nonce prefix v1"\0x02\0x00, L=4)
+    // nonce  = prefix || u64le(0)
+    static const Bytes kExpected = {
+        Byte{0x6e}, Byte{0xd3}, Byte{0x0c}, Byte{0x66},
+        Byte{0x00}, Byte{0x00}, Byte{0x00}, Byte{0x00},
+        Byte{0x00}, Byte{0x00}, Byte{0x00}, Byte{0x00},
+    };
+    EXPECT_EQ(nonce, kExpected) << "AES-GCM chunk-0 KAT mismatch; actual: "
+                                << bytes_to_hex(nonce);
+}
+
+TEST(KeySchedule, KnownAnswerAesGcmChunkIndex1) {
+    NonceContext ctx{CipherSuite::Aes256Gcm, kat_archive_id_aesgcm()};
+
+    const auto nonce = derive_chunk_nonce(kat_nonce_derivation_key(), ctx, 1);
+
+    ASSERT_EQ(nonce.size(), kAesGcmRecommendedNonceBytes);
+    EXPECT_EQ(read_le64_from_tail(nonce), 1u);
+
+    // nonce = prefix || u64le(1)  (prefix identical to chunk-0)
+    static const Bytes kExpected = {
+        Byte{0x6e}, Byte{0xd3}, Byte{0x0c}, Byte{0x66},
+        Byte{0x01}, Byte{0x00}, Byte{0x00}, Byte{0x00},
+        Byte{0x00}, Byte{0x00}, Byte{0x00}, Byte{0x00},
+    };
+    EXPECT_EQ(nonce, kExpected) << "AES-GCM chunk-1 KAT mismatch; actual: "
+                                << bytes_to_hex(nonce);
 }
