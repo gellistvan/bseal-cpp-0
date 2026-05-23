@@ -3,11 +3,20 @@
 #include "archive/PathSanitizer.hpp"
 #include "archive/SafeOutputTree.hpp"
 #include "common/Errors.hpp"
+#include "platform/Random.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <system_error>
 #include <utility>
+
+#if !defined(_WIN32)
+#  include <cerrno>
+#  include <cstring>
+#  include <fcntl.h>
+#  include <sys/stat.h>
+#  include <unistd.h>
+#endif
 
 namespace bseal::archive {
 namespace {
@@ -44,22 +53,60 @@ ArchiveReader::ArchiveReader(ArchiveReaderOptions options) : options_(std::move(
         throw InvalidArgument("cannot canonicalize output root: " + ec.message());
     }
 
-    temp_root_ = options_.output_root / ".bseal-extract-tmp";
+    const std::string temp_suffix = platform::random_base62_string(16);
+    const std::string temp_name = ".bseal-extract-tmp." + temp_suffix;
+    temp_root_ = options_.output_root / temp_name;
 
-    // Use symlink_status (lstat) so broken symlinks and symlinks-to-directories are both caught.
-    {
-        std::error_code status_ec;
-        const auto tmp_status = std::filesystem::symlink_status(temp_root_, status_ec);
-        if (!status_ec && tmp_status.type() != std::filesystem::file_type::not_found) {
-            throw InvalidArgument("temporary extraction directory already exists: " +
-                                  temp_root_.string());
+    const bool use_hardened_tmp =
+        (options_.hardened_extract_mode == HardenedExtractMode::On) ||
+        (options_.hardened_extract_mode == HardenedExtractMode::Auto &&
+         SafeOutputTree::is_platform_supported());
+
+#if !defined(_WIN32)
+    if (use_hardened_tmp) {
+        // Open output_root without following any symlink at the root itself.
+        // mkdirat then creates the temp directory atomically — EEXIST is the
+        // only failure path for a pre-existing entry (file, dir, or symlink),
+        // eliminating the lstat→mkdir TOCTOU window.
+        const int root_fd =
+            ::open(options_.output_root.c_str(),
+                   O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (root_fd == -1) {
+            const int saved = errno;
+            throw InvalidArgument(
+                "cannot open output root for hardened temp creation: " +
+                std::string(std::strerror(saved)));
         }
+        if (::mkdirat(root_fd, temp_name.c_str(), 0700) == -1) {
+            const int saved = errno;
+            ::close(root_fd);
+            throw InvalidArgument(
+                "cannot create temporary extraction directory '" + temp_name +
+                "': " + std::strerror(saved));
+        }
+        ::close(root_fd);
+    } else {
+#endif
+        // Portable path: lstat-then-create. Not TOCTOU-hardened, but the
+        // randomized name makes a targeted pre-placement collision negligible.
+        {
+            std::error_code status_ec;
+            const auto tmp_status = std::filesystem::symlink_status(temp_root_, status_ec);
+            if (!status_ec && tmp_status.type() != std::filesystem::file_type::not_found) {
+                throw InvalidArgument(
+                    "temporary extraction directory already exists: " + temp_root_.string());
+            }
+        }
+        std::filesystem::create_directory(temp_root_, ec);
+        if (ec) {
+            throw InvalidArgument(
+                "cannot create temporary extraction directory: " + ec.message());
+        }
+#if !defined(_WIN32)
     }
-
-    std::filesystem::create_directory(temp_root_, ec);
-    if (ec) {
-        throw InvalidArgument("cannot create temporary extraction directory: " + ec.message());
-    }
+#else
+    (void)use_hardened_tmp;
+#endif
 }
 
 ArchiveReader::~ArchiveReader() {
