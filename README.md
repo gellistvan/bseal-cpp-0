@@ -170,7 +170,7 @@ Encrypt-only options:
 * `--suite xchacha20-poly1305|aes-256-gcm`
 * `--kdf fast|strong|paranoid`
 * `--chunk-size SIZE`, for example `1K`, `16M`
-* `--shard-size SIZE`, for example `16K`, `4G`
+* `--shard-size SIZE`, for example `16K`, `4G` — hard upper bound on total encoded frame bytes per shard; must be large enough to hold at least one maximum-size chunk frame (`40 + chunk_plain_size + 16` bytes for v1 AEADs)
 * `--padding none|chunk|power2|fixed-size=N`
   * `none` — no padding; plaintext size is exactly the unpadded archive stream
   * `chunk` — pad to the next multiple of `--chunk-size`

@@ -167,6 +167,7 @@ A reader MUST reject the archive if any of the following is true:
 - `padded_plaintext_size != (global_chunk_count - 1) * chunk_plain_size + final_plaintext_chunk_len`.
 - `shard_count > global_chunk_count`.
 - `max_shard_payload_len == 0`.
+- `max_shard_payload_len < frame_header_len + chunk_plain_size + min_tag_len` (i.e., `max_shard_payload_len` must accommodate at least one maximum-size chunk frame). For v1 AEADs, `min_tag_len = 16`, so the minimum is `40 + chunk_plain_size + 16` bytes.
 
 ## 6. Algorithm IDs
 

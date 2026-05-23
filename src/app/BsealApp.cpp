@@ -231,6 +231,20 @@ std::vector<ShardPlan> plan_shards(
     std::uint64_t chunk_idx = 0;
     std::uint64_t shard_idx = 0;
 
+    // Validate that a full-sized (non-final) chunk frame fits in one shard.
+    // Use checked arithmetic from the shared helper.
+    const std::uint64_t max_frame_size =
+        bseal::io::chunk_frame_v1_encoded_size_from_params(chunk_plain_size, tag_len);
+    if (max_frame_size > max_shard_payload_len) {
+        throw bseal::InvalidArgument(
+            "--chunk-size (" + std::to_string(chunk_plain_size) + " bytes) with"
+            " tag overhead produces a frame of " + std::to_string(max_frame_size) +
+            " bytes, which exceeds --shard-size (" +
+            std::to_string(max_shard_payload_len) + " bytes);"
+            " minimum --shard-size for this --chunk-size is " +
+            std::to_string(max_frame_size) + " bytes");
+    }
+
     while (chunk_idx < global_chunk_count) {
         ShardPlan sp{};
         sp.shard_index       = static_cast<std::uint32_t>(shard_idx);
@@ -246,8 +260,9 @@ std::vector<ShardPlan> plan_shards(
                 + this_plain_len
                 + static_cast<std::uint64_t>(tag_len);
 
+            // Overflow-safe: frame_size <= max_shard_payload_len (checked above).
             if (sp.chunk_count > 0 &&
-                shard_payload + frame_size > max_shard_payload_len) {
+                shard_payload > max_shard_payload_len - frame_size) {
                 break; // Start new shard.
             }
 
@@ -470,6 +485,26 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     std::filesystem::create_directories(options.output);
 
     auto context    = make_encrypt_context(options);
+
+    // Validate shard size can hold at least one full chunk frame before the
+    // expensive Argon2id key derivation.
+    {
+        const std::uint16_t v1_tag_len = 16;
+        const std::uint64_t min_shard =
+            bseal::io::chunk_frame_v1_encoded_size_from_params(
+                context.chunk_plain_size, v1_tag_len);
+        if (min_shard > options.shard_size) {
+            throw bseal::InvalidArgument(
+                "--shard-size " + std::to_string(options.shard_size) +
+                " bytes is too small: --chunk-size " +
+                std::to_string(options.chunk_size) +
+                " bytes produces a minimum frame of " +
+                std::to_string(min_shard) +
+                " bytes; set --shard-size to at least " +
+                std::to_string(min_shard) + " bytes");
+        }
+    }
+
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
     auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
     const auto header_authentication_key = copy_secret_32(keys.header_authentication_key);
