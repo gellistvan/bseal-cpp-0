@@ -224,6 +224,8 @@ This gives early detection for wrong passphrases, wrong keyfiles, and public-hea
 
 `public_header_hash` is a BLAKE3-256 digest of the global header concatenated with the per-shard header (with `header_mac` zeroed). It is computed once per shard, included as AEAD associated data for every chunk in that shard, and is therefore covered by each chunk's authentication tag. It is not a MAC and must not be treated as one — its role is to bind each ciphertext chunk to its public shard context.
 
+**Invariant:** No production chunk may be encrypted unless its shard's `public_header_hash` is known and provided to the AEAD call as associated data. `ShardWriter` enforces this at construction time: `per_shard_public_header_hashes` must be fully populated (non-empty, sized to match `shard_count`, and free of all-zero entries) before any chunk is written.
+
 ## Project layout
 
 ```text

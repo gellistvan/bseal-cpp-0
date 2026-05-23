@@ -85,6 +85,16 @@ rewrites both the global header bytes and the shard header MAC (using the final 
 every finalized shard before returning. Do not skip `finish()`, and do not reopen shard files
 between `finish()` returning and the reader verifying `header_mac`.
 
+## Mandatory per-shard public_header_hash binding
+
+Every encrypted chunk must be bound to its shard's `public_header_hash` through AEAD associated data before it is written to disk. This invariant is enforced at construction time in `ShardWriter`:
+
+- `ShardWriterOptions::per_shard_public_header_hashes` must be non-empty.
+- Its size must equal `global_header.shard_count`.
+- No entry may be all-zero.
+
+The hashes are computed by `fill_per_shard_hashes()` in `BsealApp::encrypt()` during the two-pass shard planning phase, before the first chunk is encrypted. There is no "no-AAD-binding mode" in production code. Tests that exercise low-level `ShardWriter` mechanics without real hash values must use the `UnsafeAllowMissingShardAadForTests{}` constructor tag — never in `app/` or pipeline code.
+
 ## Shard filenames
 
 Shard filenames are **random labels only** — they are not authenticated metadata and carry no
