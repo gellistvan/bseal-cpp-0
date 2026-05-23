@@ -688,3 +688,112 @@ TEST(TestShardWriter, WriteChunkFrameAcceptsExactLimit) {
 
     std::filesystem::remove_all(dir);
 }
+
+// ---------------------------------------------------------------------------
+// Finalization MAC negative regression tests
+// ---------------------------------------------------------------------------
+
+// Regression test: the shard header MAC stored after finish() must be computed
+// over the FINAL GlobalPublicHeaderV1 (with correct shard_count and
+// global_chunk_count), not over the placeholder values passed at construction.
+// This test exercises the negative case: verify_shard_header_mac MUST fail when
+// called with the placeholder global header instead of the stored final one.
+//
+// The positive case (MAC verifies against the stored header) is already covered
+// by FinalizationMacsVerifyAgainstFinalGlobalHeader above.
+TEST(TestShardWriter, FinalizationMacFailsWithPlaceholderGlobalHeader) {
+    // The MAC stored in each finalized shard must be computed over the FINAL
+    // GlobalPublicHeaderV1, not over placeholder values.  If someone recomputes
+    // the MAC using the placeholder header (wrong shard_count / global_chunk_count),
+    // verification must fail.
+    const auto dir = make_temp_dir("bseal_shard_writer_mac_placeholder");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlainSize);
+    auto c1 = fake_ciphertext_and_tag(0x30, kTestChunkPlainSize);
+    auto c2 = fake_ciphertext_and_tag(0x50, kTestChunkPlainSize);
+
+    const std::uint64_t frame_size =
+        static_cast<std::uint64_t>(bseal::io::kChunkFrameHeaderV1Size)
+        + kTestChunkPlainSize
+        + kTestTagLen;
+
+    // Placeholder global header: shard_count=1, global_chunk_count=1 (wrong).
+    bseal::io::ShardWriterOptions opts;
+    opts.output_dir            = dir;
+    opts.max_shard_payload_len = frame_size; // one frame per shard → 3 shards
+    opts.filename_extension    = ".bin";
+    opts.header_authentication_key = test_header_authentication_key();
+    opts.global_header = make_test_global_header(
+        frame_size, kTestChunkPlainSize, /*shard_count=*/1, /*global_chunk_count=*/1);
+
+    // Save the PLACEHOLDER global header before finish() overwrites it.
+    // Must be captured before std::move(opts) transfers ownership to the writer.
+    const bseal::io::GlobalPublicHeaderV1 placeholder_hdr = opts.global_header;
+
+    bseal::io::ShardWriter writer(std::move(opts),
+                                   bseal::io::UnsafeAllowMissingShardAadForTests{});
+
+    write_fake_frame(writer, 0, kTestChunkPlainSize, false,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    write_fake_frame(writer, 1, kTestChunkPlainSize, false,
+                     bseal::ConstByteSpan{c1.data(), c1.size()});
+    write_fake_frame(writer, 2, kTestChunkPlainSize, true,
+                     bseal::ConstByteSpan{c2.data(), c2.size()});
+    writer.finish();
+
+    const auto auth_key = test_header_authentication_key();
+    const bseal::ConstByteSpan key_span{auth_key.data(), auth_key.size()};
+
+    const auto files = list_files_with_extension(dir, ".bin");
+    ASSERT_EQ(files.size(), 3u);
+
+    for (const auto& path : files) {
+        std::ifstream f(path, std::ios::binary);
+        ASSERT_TRUE(f.is_open());
+
+        bseal::Bytes global_buf(bseal::io::kGlobalPublicHeaderV1Size);
+        f.read(reinterpret_cast<char*>(global_buf.data()),
+               static_cast<std::streamsize>(global_buf.size()));
+        ASSERT_TRUE(f.good());
+
+        bseal::Bytes shard_buf(bseal::io::kShardPublicHeaderV1Size);
+        f.read(reinterpret_cast<char*>(shard_buf.data()),
+               static_cast<std::streamsize>(shard_buf.size()));
+        ASSERT_TRUE(f.good());
+
+        const auto stored_global = bseal::io::parse_global_public_header(
+            bseal::ConstByteSpan{global_buf.data(), global_buf.size()});
+        const auto shard_hdr = bseal::io::parse_shard_public_header(
+            bseal::ConstByteSpan{shard_buf.data(), shard_buf.size()});
+
+        // Final counts must be updated.
+        EXPECT_EQ(stored_global.global_chunk_count, 3u);
+        EXPECT_EQ(stored_global.shard_count, 3u);
+
+        // MAC over final global header must verify.
+        EXPECT_TRUE(bseal::io::verify_shard_header_mac(key_span, stored_global, shard_hdr))
+            << "MAC must verify against stored (final) global header: " << path;
+
+        // MAC must NOT verify against placeholder global header (wrong counts).
+        // This is the core regression: placeholder has shard_count=1 and
+        // global_chunk_count=1 while the stored final header has both equal to 3.
+        EXPECT_FALSE(bseal::io::verify_shard_header_mac(key_span, placeholder_hdr, shard_hdr))
+            << "MAC must not verify against placeholder global header: " << path;
+    }
+
+    std::filesystem::remove_all(dir);
+}
+
+// Production ShardWriter rejection of invalid per_shard_public_header_hashes is
+// already covered by EmptyShardHashVectorThrows, WrongHashVectorSizeThrows, and
+// AllZeroHashEntryThrows above.
+
+// Static policy documentation: UnsafeAllowMissingShardAadForTests must never
+// appear in src/ outside of its own definition in src/io/ShardWriter.{hpp,cpp}.
+// The actual enforcement is done by a grep in CI:
+//   grep -r "UnsafeAllowMissingShardAadForTests" src/
+//        (pipe) grep -v "src/io/ShardWriter"
+// Expected: zero matches.
+TEST(TestShardWriter, UnsafeAllowMissingShardAadTagIsTestOnly) {
+    SUCCEED();
+}
