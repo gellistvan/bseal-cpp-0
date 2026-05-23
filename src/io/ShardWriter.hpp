@@ -81,11 +81,12 @@ private:
     void open_next_shard(std::uint64_t first_chunk_index);
     void close_current_shard();
     void rewrite_shard_header(
-        std::fstream&   stream,
-        std::uint32_t   shard_index,
-        std::uint64_t   first_chunk_index,
-        std::uint64_t   chunk_count,
-        std::uint64_t   payload_len);
+        std::fstream&               stream,
+        const GlobalPublicHeaderV1& global_header,
+        std::uint32_t               shard_index,
+        std::uint64_t               first_chunk_index,
+        std::uint64_t               chunk_count,
+        std::uint64_t               payload_len);
     void write_raw(ConstByteSpan bytes);
 
     ShardWriterOptions options_;

@@ -54,6 +54,19 @@ The extractor must never write outside the selected output root. Reject:
 - symlink escapes;
 - path components illegal on the target platform, if cross-platform fidelity is required.
 
+## Shard finalization invariant
+
+Every shard file must be self-consistent when fully written: the `GlobalPublicHeaderV1` bytes
+stored at offset 0 must be the **final** global header (with correct `shard_count`,
+`global_chunk_count`, `padded_plaintext_size`, and `final_plaintext_chunk_len`), and the
+`ShardPublicHeaderV1.header_mac` at offset 192 must have been computed over those exact final
+global header bytes — not over any placeholder values used during streaming.
+
+`ShardWriter::finish()` enforces this invariant: it computes the final global header first, then
+rewrites both the global header bytes and the shard header MAC (using the final global header) in
+every finalized shard before returning. Do not skip `finish()`, and do not reopen shard files
+between `finish()` returning and the reader verifying `header_mac`.
+
 ## Error messages
 
 Authentication failures should not distinguish between:
