@@ -7,11 +7,16 @@
 #include <array>
 #include <cstddef>
 #include <string>
+#include <unordered_set>
 
 namespace {
 
 bool is_base32_no_padding_char(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= '2' && c <= '7');
+}
+
+bool is_base62_char(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
 } // namespace
@@ -60,4 +65,31 @@ TEST(Random, RandomFilenameStemSupportsExplicitEntropy) {
 
 TEST(Random, RandomFilenameStemRejectsWeakEntropy) {
     EXPECT_THROW((void)bseal::platform::random_filename_stem(127), bseal::InvalidArgument);
+}
+
+TEST(Random, RandomBase62StringLengthAndExtension) {
+    // Verify the helper produces exactly the requested length and contains only base62 chars.
+    const std::string stem = bseal::platform::random_base62_string(24);
+    EXPECT_EQ(stem.size(), 24u);
+
+    const std::string name = stem + ".bin";
+    EXPECT_EQ(name.size(), 28u);
+    EXPECT_EQ(name.substr(24), ".bin");
+}
+
+TEST(Random, RandomBase62StringUsesBase62Alphabet) {
+    const std::string stem = bseal::platform::random_base62_string(24);
+    EXPECT_TRUE(std::all_of(stem.begin(), stem.end(), is_base62_char));
+}
+
+TEST(Random, RandomBase62StringNoBatchCollisions) {
+    // 10,000 names from a 62^24 space: expected collisions ≈ 5e-39, so any collision is a bug.
+    constexpr std::size_t kBatch = 10'000;
+    std::unordered_set<std::string> seen;
+    seen.reserve(kBatch);
+    for (std::size_t i = 0; i < kBatch; ++i) {
+        auto name = bseal::platform::random_base62_string(24);
+        ASSERT_TRUE(seen.insert(std::move(name)).second) << "collision at iteration " << i;
+    }
+    EXPECT_EQ(seen.size(), kBatch);
 }

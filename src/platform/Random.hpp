@@ -20,4 +20,9 @@ void fill_secure_random(ByteSpan output);
 // Use base32/base64url without path separators. Default target: >= 192 bits entropy.
 [[nodiscard]] std::string random_filename_stem(std::size_t entropy_bits = 192);
 
+// Generates a random string of exactly `len` characters from the base62 alphabet
+// (0-9, a-z, A-Z) using the OS CSPRNG. Uses rejection sampling for unbiased output.
+// Each character provides ~5.95 bits of entropy; len=24 gives ~143 bits.
+[[nodiscard]] std::string random_base62_string(std::size_t len);
+
 } // namespace bseal::platform
