@@ -128,12 +128,12 @@ void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
 }
 
 void ShardWriter::rewrite_shard_header(
-    std::fstream&  stream,
-    std::uint32_t  shard_index,
-    std::uint64_t  first_chunk_index,
-    std::uint64_t  chunk_count,
-    std::uint64_t  payload_len) {
-    // Build the ShardPublicHeaderV1.
+    std::fstream&               stream,
+    const GlobalPublicHeaderV1& global_header,
+    std::uint32_t               shard_index,
+    std::uint64_t               first_chunk_index,
+    std::uint64_t               chunk_count,
+    std::uint64_t               payload_len) {
     ShardPublicHeaderV1 sh{};
     sh.shard_magic             = kShardHeaderV1Magic;
     sh.shard_header_len        = static_cast<std::uint32_t>(kShardPublicHeaderV1Size);
@@ -143,11 +143,10 @@ void ShardWriter::rewrite_shard_header(
     sh.shard_payload_len       = payload_len;
     sh.reserved0               = 0;
 
-    // Compute MAC.
     sh.header_mac = compute_shard_header_mac(
         ConstByteSpan{options_.header_authentication_key.data(),
                       options_.header_authentication_key.size()},
-        options_.global_header,
+        global_header,
         sh);
 
     const auto encoded = serialize_shard_public_header(sh);
@@ -187,6 +186,7 @@ void ShardWriter::close_current_shard() {
 
         rewrite_shard_header(
             rw,
+            options_.global_header,
             current_shard_index_,
             current_first_chunk_index_,
             current_chunk_count_,
@@ -331,6 +331,8 @@ void ShardWriter::finish() {
             throw Error("failed to reopen finalized shard for global header update: "
                         + fs.path.string());
         }
+
+        // Rewrite global header at offset 0.
         rw.seekp(0, std::ios::beg);
         rw.write(
             reinterpret_cast<const char*>(global_bytes.data()),
@@ -339,6 +341,17 @@ void ShardWriter::finish() {
             throw Error("failed to rewrite global header in finalized shard: "
                         + fs.path.string());
         }
+
+        // Rewrite shard header MAC computed over the final global header.
+        // This must happen after the global header rewrite so both headers are
+        // self-consistent on disk: the stored MAC authenticates the stored global bytes.
+        rewrite_shard_header(
+            rw,
+            final_global,
+            fs.shard_index,
+            fs.first_chunk_index,
+            fs.chunk_count,
+            fs.payload_len);
     }
 
     finished_ = true;

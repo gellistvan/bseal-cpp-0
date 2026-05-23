@@ -19,11 +19,6 @@ void append_bytes(Bytes& out, ConstByteSpan bytes) {
     out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
-void append_u16_le(Bytes& out, std::uint16_t value) {
-    out.push_back(static_cast<Byte>(value & 0xffu));
-    out.push_back(static_cast<Byte>((value >> 8u) & 0xffu));
-}
-
 void append_u32_le(Bytes& out, std::uint32_t value) {
     for (int i = 0; i < 4; ++i) {
         out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));

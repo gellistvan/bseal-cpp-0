@@ -130,7 +130,6 @@ TEST(EncryptPipeline, EmitsOneChunkForEmptyInputTreeWhenConfigured) {
 
     std::filesystem::create_directories(input_root.path());
 
-    TestAeadBackend* backend = nullptr;
     const auto result = run_test_encryption(input_root.path(), sealed_root.path());
 
     const auto bin_files = list_bin_files(sealed_root.path());

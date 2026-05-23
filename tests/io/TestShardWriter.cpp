@@ -335,3 +335,91 @@ TEST(TestShardWriter, ZeroShardSizeThrows) {
     EXPECT_TRUE(threw);
     std::filesystem::remove_all(dir);
 }
+
+// Regression test: finish() must recompute every shard's header_mac using the
+// final GlobalPublicHeaderV1 (not the placeholder values passed at construction).
+// This test deliberately passes a placeholder global header whose shard_count and
+// global_chunk_count differ from what will actually be written, then verifies that
+// every shard on disk can be authenticated against the global header actually stored
+// in that shard after finalization.
+TEST(TestShardWriter, FinalizationMacsVerifyAgainstFinalGlobalHeader) {
+    const auto dir = make_temp_dir("bseal_shard_writer_mac_verify");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlainSize);
+    auto c1 = fake_ciphertext_and_tag(0x30, kTestChunkPlainSize);
+    auto c2 = fake_ciphertext_and_tag(0x50, kTestChunkPlainSize);
+
+    const std::uint64_t frame_size =
+        static_cast<std::uint64_t>(bseal::io::kChunkFrameHeaderV1Size)
+        + kTestChunkPlainSize
+        + kTestTagLen;
+
+    // Build a global header with placeholder counts: shard_count=1, global_chunk_count=1.
+    // After writing 3 chunks (one per shard), finish() must update these to 3 and
+    // recompute every shard's header_mac against the corrected global header.
+    bseal::io::ShardWriterOptions opts;
+    opts.output_dir            = dir;
+    opts.max_shard_payload_len = frame_size; // one frame per shard => 3 shards
+    opts.filename_extension    = ".bin";
+    opts.header_authentication_key = test_header_authentication_key();
+    opts.global_header = make_test_global_header(
+        frame_size, kTestChunkPlainSize,
+        /*shard_count=*/1, /*global_chunk_count=*/1); // placeholder — wrong counts
+
+    bseal::io::ShardWriter writer(std::move(opts));
+
+    write_fake_frame(writer, 0, kTestChunkPlainSize, false,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    write_fake_frame(writer, 1, kTestChunkPlainSize, false,
+                     bseal::ConstByteSpan{c1.data(), c1.size()});
+    write_fake_frame(writer, 2, kTestChunkPlainSize, true,
+                     bseal::ConstByteSpan{c2.data(), c2.size()});
+
+    writer.finish();
+
+    const auto auth_key = test_header_authentication_key();
+    const bseal::ConstByteSpan key_span{auth_key.data(), auth_key.size()};
+
+    const auto files = list_files_with_extension(dir, ".bin");
+    ASSERT_EQ(files.size(), 3u);
+
+    for (const auto& path : files) {
+        std::ifstream f(path, std::ios::binary);
+        ASSERT_TRUE(f.is_open()) << "cannot open shard: " << path;
+
+        bseal::Bytes global_buf(bseal::io::kGlobalPublicHeaderV1Size);
+        f.read(reinterpret_cast<char*>(global_buf.data()),
+               static_cast<std::streamsize>(global_buf.size()));
+        ASSERT_TRUE(f.good()) << "short read on global header: " << path;
+
+        bseal::Bytes shard_buf(bseal::io::kShardPublicHeaderV1Size);
+        f.read(reinterpret_cast<char*>(shard_buf.data()),
+               static_cast<std::streamsize>(shard_buf.size()));
+        ASSERT_TRUE(f.good()) << "short read on shard header: " << path;
+
+        // Both headers must parse cleanly (proves final counts are valid).
+        bseal::io::GlobalPublicHeaderV1 global_hdr;
+        ASSERT_NO_THROW(
+            global_hdr = bseal::io::parse_global_public_header(
+                bseal::ConstByteSpan{global_buf.data(), global_buf.size()}))
+            << "parse_global_public_header failed for: " << path;
+
+        bseal::io::ShardPublicHeaderV1 shard_hdr;
+        ASSERT_NO_THROW(
+            shard_hdr = bseal::io::parse_shard_public_header(
+                bseal::ConstByteSpan{shard_buf.data(), shard_buf.size()}))
+            << "parse_shard_public_header failed for: " << path;
+
+        // The stored shard_count must reflect the actual number of shards written.
+        EXPECT_EQ(global_hdr.shard_count, 3u) << "wrong shard_count in: " << path;
+        EXPECT_EQ(global_hdr.global_chunk_count, 3u)
+            << "wrong global_chunk_count in: " << path;
+
+        // The header_mac must verify against the final global header bytes stored
+        // in the same shard — this is the core invariant being tested.
+        EXPECT_TRUE(bseal::io::verify_shard_header_mac(key_span, global_hdr, shard_hdr))
+            << "header_mac failed to verify against final global header for: " << path;
+    }
+
+    std::filesystem::remove_all(dir);
+}
