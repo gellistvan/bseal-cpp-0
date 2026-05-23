@@ -1122,6 +1122,33 @@ TEST(BlackBoxCli, PaddingFixedSizeTooSmallFails) {
         << "expected size-too-small error in stderr: " << result.stderr_text;
 }
 
+TEST(BlackBoxCli, PaddingFixedSizeNotMultipleOfChunkSizeFails) {
+    TempDir temp("bseal_integration_padding_fixed_not_multiple");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "payload");
+
+    // 100K = 102400 bytes. 102400 % 65536 (64K) = 36864 ≠ 0.
+    // fixed-size must be a multiple of chunk-size per FORMAT.md §14.
+    const auto result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+            "--padding", "fixed-size=100K",
+        },
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+    EXPECT_TRUE(contains_text(result.stderr_text, "not a multiple"))
+        << "expected chunk-multiple error in stderr: " << result.stderr_text;
+}
+
 TEST(BlackBoxCli, EncryptOutputCleanedUpOnFailure) {
     // Verify that a failed encryption does not leave stale .bin shards in the output directory.
     // We trigger failure by passing a non-existent input directory.

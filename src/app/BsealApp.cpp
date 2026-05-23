@@ -353,6 +353,10 @@ PaddingResult compute_padding(
         if (raw_size == 0) return {0, 2, 0};
         std::uint64_t target = 1;
         while (target < raw_size) target <<= 1;
+        // FORMAT.md §14: padded_plaintext_size must be a positive multiple of
+        // chunk_plain_size. chunk_plain_size is always a power of two, so
+        // max(target, chunk_plain_size) is also a power of two and a multiple.
+        if (target < chunk_plain_size) target = chunk_plain_size;
         const std::uint64_t gap = target - raw_size;
         if (gap > 0 && gap < bseal::archive::kRecordPrefixSize) {
             target <<= 1;
@@ -367,6 +371,14 @@ PaddingResult compute_padding(
                 "fixed-size padding target (" + std::to_string(N) +
                 " bytes) is smaller than the unpadded archive (" +
                 std::to_string(raw_size) + " bytes)");
+        }
+        // FORMAT.md §14: fixed-size padded_plaintext_size must be a positive
+        // multiple of chunk_plain_size.
+        if (N % chunk_plain_size != 0) {
+            throw bseal::InvalidArgument(
+                "fixed-size padding target (" + std::to_string(N) +
+                " bytes) is not a multiple of chunk-size (" +
+                std::to_string(chunk_plain_size) + " bytes)");
         }
         const std::uint64_t gap = N - raw_size;
         if (gap > 0 && gap < bseal::archive::kRecordPrefixSize) {
@@ -638,14 +650,15 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
     });
 
     bseal::pipeline::DecryptPipelineOptions pipeline_options;
-    pipeline_options.chunk_plain_size  = context.chunk_plain_size;
-    pipeline_options.worker_count      = 0;
-    pipeline_options.queue_depth       = 0;
-    pipeline_options.archive_id        = context.archive_id;
-    pipeline_options.public_header_hash = per_shard_hashes.empty()
+    pipeline_options.chunk_plain_size       = context.chunk_plain_size;
+    pipeline_options.worker_count           = 0;
+    pipeline_options.queue_depth            = 0;
+    pipeline_options.archive_id             = context.archive_id;
+    pipeline_options.public_header_hash     = per_shard_hashes.empty()
         ? std::array<Byte, 32>{}
         : per_shard_hashes.front();
     pipeline_options.per_shard_public_header_hashes = std::move(per_shard_hashes);
+    pipeline_options.padded_plaintext_size  = context.global_header.padded_plaintext_size;
 
     bseal::pipeline::DecryptPipeline pipeline(
         pipeline_options,

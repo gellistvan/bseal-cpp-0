@@ -35,6 +35,11 @@ namespace bseal::pipeline {
         // (i.e. computed from fill_per_shard_hashes() with the actual planned layout).
         std::vector<std::array<Byte, 32>> per_shard_public_header_hashes;
 
+        // Expected total decrypted plaintext bytes (padded_plaintext_size from the global header).
+        // When non-zero, the pipeline verifies the sum of all decrypted chunk lengths equals
+        // this value after all chunks are processed. Mismatch throws InvalidArgument.
+        std::uint64_t padded_plaintext_size{0};
+
         // See EncryptPipelineOptions::aad_shard_index.
         std::uint32_t aad_shard_index{0};
     };

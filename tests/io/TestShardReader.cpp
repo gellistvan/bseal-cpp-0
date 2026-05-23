@@ -882,3 +882,159 @@ TEST(TestShardReader, RejectsCorruptedShardHeaderMac) {
 
     std::filesystem::remove_all(dir);
 }
+
+// ---------------------------------------------------------------------------
+// parse_global_public_header padding policy validation tests
+//
+// These tests construct GlobalPublicHeaderV1 structs directly, serialize them,
+// and feed the bytes to parse_global_public_header() to verify that the parser
+// enforces FORMAT.md §14 padding policy constraints.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bseal::io::GlobalPublicHeaderV1 make_parseable_none_header() {
+    bseal::io::GlobalPublicHeaderV1 h{};
+    h.magic             = bseal::io::kGlobalHeaderV1Magic;
+    h.format_major      = 1;
+    h.format_minor      = 0;
+    h.global_header_len = static_cast<std::uint32_t>(bseal::io::kGlobalPublicHeaderV1Size);
+    h.shard_header_len  = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
+    h.frame_header_len  = static_cast<std::uint16_t>(bseal::io::kChunkFrameHeaderV1Size);
+    h.global_flags      = 0;
+    h.archive_id        = test_archive_id();
+    h.aead_alg_id       = bseal::io::kAeadAlgIdXChaCha20Poly1305;
+    h.kdf_alg_id        = bseal::io::kKdfAlgIdArgon2idHkdf;
+    h.hash_alg_id       = bseal::io::kHashAlgIdBlake3;
+    h.mac_alg_id        = bseal::io::kMacAlgIdHmacSha256;
+    h.kdf_salt.fill(bseal::Byte{0x11});
+    h.argon2_version     = 0x13;
+    h.argon2_memory_kib  = bseal::crypto::kArgon2MemoryKiBMin;
+    h.argon2_iterations  = 1;
+    h.argon2_parallelism = 1;
+    h.chunk_plain_size   = kTestChunkPlain;
+    h.shard_count        = 1;
+    h.global_chunk_count = 1;
+    h.padded_plaintext_size     = kTestChunkPlain; // one full chunk
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    h.padding_policy_id    = 0; // none
+    h.reserved0            = 0;
+    h.padding_policy_value = 0;
+    h.max_shard_payload_len  = 4ull * 1024ull * 1024ull;
+    h.required_feature_flags = 0;
+    h.reserved1.fill(bseal::Byte{0});
+    return h;
+}
+
+void parse_header(const bseal::io::GlobalPublicHeaderV1& h) {
+    auto bytes = bseal::io::serialize_global_public_header(h);
+    (void)bseal::io::parse_global_public_header(
+        bseal::ConstByteSpan{bytes.data(), bytes.size()});
+}
+
+} // namespace
+
+TEST(TestShardReader, ParsePolicyNoneAcceptsPartialFinalChunk) {
+    auto h = make_parseable_none_header();
+    h.padded_plaintext_size     = kTestChunkPlain / 2;
+    h.final_plaintext_chunk_len = kTestChunkPlain / 2;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
+TEST(TestShardReader, ParsePolicyNoneRejectsNonZeroPolicyValue) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_value = 1;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyChunkAcceptsFullAlignedSize) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 1;
+    h.padding_policy_value = 0;
+    h.global_chunk_count   = 3;
+    h.padded_plaintext_size     = kTestChunkPlain * 3;
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
+TEST(TestShardReader, ParsePolicyChunkRejectsPartialFinalChunk) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 1;
+    h.padding_policy_value = 0;
+    // 1.5 chunks: not a multiple of chunk_plain_size
+    h.global_chunk_count        = 2;
+    h.padded_plaintext_size     = kTestChunkPlain + kTestChunkPlain / 2;
+    h.final_plaintext_chunk_len = kTestChunkPlain / 2;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyChunkRejectsNonZeroPolicyValue) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 1;
+    h.padding_policy_value = 42;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyPower2AcceptsValidPowerOfTwo) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 2;
+    h.padding_policy_value = 0;
+    h.global_chunk_count   = 2;
+    h.padded_plaintext_size     = kTestChunkPlain * 2; // 2 is a power of 2
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
+TEST(TestShardReader, ParsePolicyPower2RejectsNonPowerOfTwo) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 2;
+    h.padding_policy_value = 0;
+    // 3 * chunk_plain_size is not a power of 2
+    h.global_chunk_count        = 3;
+    h.padded_plaintext_size     = kTestChunkPlain * 3;
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyPower2RejectsNonZeroPolicyValue) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 2;
+    h.padding_policy_value = 1;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyFixedSizeAcceptsValidHeader) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id  = 3;
+    h.global_chunk_count = 4;
+    h.padded_plaintext_size     = kTestChunkPlain * 4;
+    h.padding_policy_value      = kTestChunkPlain * 4; // must equal padded_plaintext_size
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
+TEST(TestShardReader, ParsePolicyFixedSizeRejectsMismatchedPolicyValue) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id         = 3;
+    h.padded_plaintext_size     = kTestChunkPlain;
+    h.padding_policy_value      = kTestChunkPlain * 2; // mismatch
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyFixedSizeRejectsNonChunkMultiple) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id = 3;
+    // Set padded_plaintext_size to 1.5 * chunk_plain_size — not a multiple
+    h.global_chunk_count        = 2;
+    h.padded_plaintext_size     = kTestChunkPlain + kTestChunkPlain / 2;
+    h.padding_policy_value      = kTestChunkPlain + kTestChunkPlain / 2;
+    h.final_plaintext_chunk_len = kTestChunkPlain / 2;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParseRejectsUnknownPaddingPolicyId) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id = 99;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
