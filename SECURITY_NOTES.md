@@ -28,20 +28,26 @@ The following must remain encrypted:
 
 ## Nonce design
 
-Preferred nonce derivation:
+The v1 nonce formula is a **prefix+counter** scheme. HKDF is invoked once per archive to produce a
+per-archive prefix; the 8-byte little-endian `global_chunk_index` counter is appended to make the
+nonce unique per chunk:
 
 ```text
-nonce = first_24_bytes(HKDF(K_nonce, "chunk nonce" || uint64(global_chunk_index)))
+prefix = HKDF-SHA256(ikm  = nonce_derivation_key,
+                     salt = archive_id,
+                     info = "BSEAL chunk nonce prefix v1" || u16le(aead_alg_id),
+                     L    = nonce_length - 8)
+
+nonce = prefix || u64le(global_chunk_index)
 ```
 
-or, for an AEAD that allows structured nonces:
+For XChaCha20-Poly1305 (24-byte nonce) the prefix is 16 bytes.
+For AES-256-GCM (12-byte nonce) the prefix is 4 bytes.
 
-```text
-nonce = archive_nonce_prefix || uint64(global_chunk_index)
-```
-
-Never use random nonces for AES-GCM at this scale unless collision probabilities are formally
-bounded and documented. Deterministic unique nonces are simpler to audit.
+Never use random nonces. The deterministic prefix+counter design is cheaper (one HKDF call per
+archive rather than per chunk), simpler to audit, and produces unique nonces up to 2^64 chunks per
+archive. Cross-archive uniqueness is guaranteed by `archive_id` (32 bytes of CSPRNG output) in the
+HKDF salt, which produces a different prefix for every archive even under the same passphrase.
 
 ## Restore safety
 

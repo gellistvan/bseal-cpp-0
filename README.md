@@ -36,7 +36,7 @@ Implemented today:
 Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
-* The archive/container format is not stable and has no compatibility guarantee.
+* The archive/container format is not stable and has no compatibility guarantee. In particular, archives created on the `develop` branch before the nonce derivation spec/code alignment (commit that introduced known-answer tests in `TestKeySchedule.cpp`) cannot be decrypted by later builds because the normative v1 nonce formula has been clarified and locked to the prefix+counter design (`"BSEAL chunk nonce prefix v1"`). Do not rely on cross-build compatibility for pre-release archives.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 * Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
 
