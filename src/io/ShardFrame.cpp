@@ -42,9 +42,6 @@ void append_bytes(Bytes& out, ConstByteSpan bytes) {
     out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
-void append_zeros(Bytes& out, std::size_t count) {
-    out.insert(out.end(), count, Byte{0});
-}
 
 bool all_zero(ConstByteSpan bytes) {
     return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });

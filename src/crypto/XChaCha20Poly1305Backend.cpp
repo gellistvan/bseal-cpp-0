@@ -17,17 +17,6 @@ void ensure_sodium_initialized() {
     }
 }
 
-void append_le32(Bytes& out, std::uint32_t value) {
-    for (int i = 0; i < 4; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-void append_le64(Bytes& out, std::uint64_t value) {
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
 
 unsigned long long checked_ull_size(std::size_t value, const char* what) {
     if (value > static_cast<std::size_t>(std::numeric_limits<unsigned long long>::max())) {
