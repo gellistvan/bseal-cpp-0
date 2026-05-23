@@ -192,6 +192,131 @@ TEST(TestArchiveReader, RejectsExistingOutputWithoutOverwrite) {
     EXPECT_EQ(read_text_file(output.path() / "hello.txt"), "existing");
 }
 
+// ---------------------------------------------------------------------------
+// RandomPadding grammar enforcement
+// ---------------------------------------------------------------------------
+// The format grammar is:
+//   ArchiveBegin (content records)* ArchiveEnd RandomPadding*
+// RandomPadding anywhere other than after ArchiveEnd must be rejected.
+
+TEST(TestArchiveReader, RejectsRandomPaddingBeforeArchiveBegin) {
+    TemporaryDirectory output;
+
+    ArchiveReaderOptions options;
+    options.output_root = output.path();
+    options.restore_permissions = false;
+    options.restore_timestamps = false;
+
+    ArchiveReader reader(options);
+
+    EXPECT_TRUE(throws_invalid_argument([&] {
+        consume_in_fragments(reader,
+                             record_bytes(RecordType::RandomPadding, Bytes{0x42}));
+    }));
+}
+
+TEST(TestArchiveReader, RejectsRandomPaddingAfterArchiveBeginBeforeArchiveEnd) {
+    TemporaryDirectory output;
+
+    ArchiveReaderOptions options;
+    options.output_root = output.path();
+    options.restore_permissions = false;
+    options.restore_timestamps = false;
+
+    ArchiveReader reader(options);
+
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+
+    EXPECT_TRUE(throws_invalid_argument([&] {
+        consume_in_fragments(reader,
+                             record_bytes(RecordType::RandomPadding, Bytes{0x42}));
+    }));
+}
+
+TEST(TestArchiveReader, RejectsRandomPaddingInsideOpenFile) {
+    TemporaryDirectory output;
+
+    ArchiveReaderOptions options;
+    options.output_root = output.path();
+    options.restore_permissions = false;
+    options.restore_timestamps = false;
+
+    ArchiveReader reader(options);
+
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+    consume_in_fragments(reader,
+                         record_bytes(RecordType::FileEntry,
+                                      serialize_entry_metadata(file_metadata("f.txt", 4))));
+
+    EXPECT_TRUE(throws_invalid_argument([&] {
+        consume_in_fragments(reader,
+                             record_bytes(RecordType::RandomPadding, Bytes{0x01, 0x02}));
+    }));
+}
+
+TEST(TestArchiveReader, RejectsRandomPaddingBetweenFileEndAndArchiveEnd) {
+    TemporaryDirectory output;
+
+    ArchiveReaderOptions options;
+    options.output_root = output.path();
+    options.restore_permissions = false;
+    options.restore_timestamps = false;
+
+    ArchiveReader reader(options);
+
+    const auto data = bytes_from_string("data");
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+    consume_in_fragments(reader,
+                         record_bytes(RecordType::FileEntry,
+                                      serialize_entry_metadata(file_metadata("f.txt",
+                                                                             data.size()))));
+    consume_in_fragments(reader, record_bytes(RecordType::FileBytes, data));
+    consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
+
+    EXPECT_TRUE(throws_invalid_argument([&] {
+        consume_in_fragments(reader,
+                             record_bytes(RecordType::RandomPadding, Bytes{0x55}));
+    }));
+}
+
+TEST(TestArchiveReader, AcceptsRandomPaddingAfterArchiveEnd) {
+    TemporaryDirectory output;
+
+    ArchiveReaderOptions options;
+    options.output_root = output.path();
+    options.restore_permissions = false;
+    options.restore_timestamps = false;
+
+    ArchiveReader reader(options);
+
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveEnd));
+    consume_in_fragments(reader, record_bytes(RecordType::RandomPadding, Bytes(64, Byte{0xFF})));
+    consume_in_fragments(reader, record_bytes(RecordType::RandomPadding, Bytes(32, Byte{0xAB})));
+
+    EXPECT_NO_THROW(reader.finish());
+}
+
+TEST(TestArchiveReader, RejectsNonPaddingAfterArchiveEnd) {
+    TemporaryDirectory output;
+
+    ArchiveReaderOptions options;
+    options.output_root = output.path();
+    options.restore_permissions = false;
+    options.restore_timestamps = false;
+
+    ArchiveReader reader(options);
+
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveEnd));
+
+    EXPECT_TRUE(throws_invalid_argument([&] {
+        consume_in_fragments(reader,
+                             record_bytes(RecordType::DirectoryEntry,
+                                          serialize_entry_metadata(directory_metadata("x"))));
+    }));
+}
+
 TEST(TestArchiveReader, OverwriteExistingOutputWhenEnabled) {
     TemporaryDirectory output;
 

@@ -200,7 +200,9 @@ void ArchiveReader::process_record(const ArchiveRecord& record) {
             break;
 
         case RecordType::RandomPadding:
-            // Padding is authenticated by the outer AEAD layer and intentionally ignored here.
+            if (!archive_end_seen_) {
+                throw InvalidArgument("RandomPadding record is only valid after ArchiveEnd");
+            }
             break;
     }
 }
