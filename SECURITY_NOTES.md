@@ -85,6 +85,16 @@ rewrites both the global header bytes and the shard header MAC (using the final 
 every finalized shard before returning. Do not skip `finish()`, and do not reopen shard files
 between `finish()` returning and the reader verifying `header_mac`.
 
+**Invariant: shard header MAC authenticates the final global header.**
+Every `ShardPublicHeaderV1.header_mac` is computed after the final `GlobalPublicHeaderV1` (with
+correct `global_chunk_count` and `shard_count`) has been written to the shard file. A MAC computed
+over placeholder values and not recomputed after the global header update would not authenticate
+the stored global bytes. `ShardWriter::finish()` enforces this order: it rewrites the global header
+into every shard first, then recomputes and rewrites the shard header MAC over the final global
+header. A `verify_shard_header_mac` call using a placeholder `GlobalPublicHeaderV1` (with wrong
+counts) will fail — this is the intended behavior and is covered by
+`FinalizationMacFailsWithPlaceholderGlobalHeader` in `tests/io/TestShardWriter.cpp`.
+
 ## Mandatory per-shard public_header_hash binding
 
 Every encrypted chunk must be bound to its shard's `public_header_hash` through AEAD associated data before it is written to disk. This invariant is enforced at construction time in `ShardWriter`:

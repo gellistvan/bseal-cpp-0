@@ -546,6 +546,12 @@ header_mac = HMAC-SHA256(
 
 The full 32-byte HMAC output is stored in the `header_mac` field.
 
+`header_mac` authenticates the exact bytes of the final stored `GlobalPublicHeaderV1` (at offset 0
+of the shard file) concatenated with the `ShardPublicHeaderV1` bytes with `header_mac` zeroed. The
+MAC is recomputed after the global header receives its final `global_chunk_count` and `shard_count`
+values; a MAC computed over placeholder values written during shard streaming will not match the
+final stored global header bytes.
+
 A decryptor MUST verify `header_mac` for every shard after deriving `header_authentication_key` and before decrypting any chunk. Verification MUST use a constant-time comparison. If any shard header MAC fails, the decryptor MUST reject the entire archive and MUST NOT attempt to recover partial plaintext.
 
 The decryptor MUST verify all shard header MACs before trusting shard ordering, chunk ranges, padding policy, or public sizes for output behavior. It may perform bounded structural parsing before authentication only to locate and validate fields needed for KDF and header MAC verification.
