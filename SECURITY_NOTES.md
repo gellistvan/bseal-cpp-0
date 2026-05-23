@@ -54,6 +54,18 @@ The extractor must never write outside the selected output root. Reject:
 - symlink escapes;
 - path components illegal on the target platform, if cross-platform fidelity is required.
 
+## RandomPadding placement enforcement
+
+`RandomPadding` records are only valid **after** `ArchiveEnd`. `ArchiveReader` rejects a
+`RandomPadding` record at any other position — before `ArchiveBegin`, between `ArchiveBegin` and
+`ArchiveEnd`, inside a file sequence (`FileEntry`…`FileEnd`), or between records and `ArchiveEnd`.
+Non-padding records after `ArchiveEnd` are also rejected.
+
+This enforcement happens during `consume()`, before any output is committed to disk. A partial
+extraction is discarded when the destructor runs without a successful `finish()`.
+
+The allowed grammar is: `ArchiveBegin content* ArchiveEnd RandomPadding*`.
+
 ## Shard finalization invariant
 
 Every shard file must be self-consistent when fully written: the `GlobalPublicHeaderV1` bytes

@@ -464,6 +464,18 @@ Padding policy is represented by `padding_policy_id` and `padding_policy_value` 
 
 Padding is part of the encrypted plaintext archive stream. Padding bytes MUST be encoded as encrypted `RandomPadding` archive records after `ArchiveEnd`, not as unauthenticated bytes outside AEAD.
 
+### Archive record grammar
+
+The archive record stream MUST conform to the following grammar exactly:
+
+```
+stream      ::= ArchiveBegin content* ArchiveEnd RandomPadding*
+content     ::= DirectoryEntry | file | SymlinkEntry
+file        ::= FileEntry FileBytes* FileEnd
+```
+
+A `RandomPadding` record MUST NOT appear before `ArchiveEnd`. A decryptor MUST reject the archive if `RandomPadding` is encountered at any other position: before `ArchiveBegin`, between `ArchiveBegin` and `ArchiveEnd`, inside a file sequence, or between records and `ArchiveEnd`. Non-padding records after `ArchiveEnd` MUST also be rejected.
+
 Policy rules:
 
 - `none`: `padded_plaintext_size` is the archive record stream size without added `RandomPadding` records. The final chunk MAY be partial.
