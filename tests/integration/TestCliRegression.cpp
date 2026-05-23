@@ -293,8 +293,8 @@ std::vector<std::string> encrypt_args(const fs::path& input,
       "--keyfile", keyfile.string(),
       "--suite", "xchacha20-poly1305",
       "--kdf", "fast",
-      "--chunk-size", "64K",   // minimum valid per FORMAT.md §3 (65536 bytes)
-      "--shard-size", "64K",   // 64K < one frame (65592 bytes) → forces a new shard per chunk
+      "--chunk-size", "64K",    // minimum valid per FORMAT.md §3 (65536 bytes)
+      "--shard-size", "65592",  // exactly one frame per shard (40 header + 65536 data + 16 tag)
       "--padding", "none",
   };
 }
@@ -491,4 +491,207 @@ TEST(BlackBoxCliRegression, DuplicateShardFailsOrIsRejectedDeterministically) {
   EXPECT_NE(first_result.exit_code, 0) << first_result.stderr_text;
   EXPECT_EQ(second_result.exit_code, first_result.exit_code)
       << "duplicate-shard rejection should be deterministic";
+}
+
+// ---------------------------------------------------------------------------
+// --hardened-extract tests
+// ---------------------------------------------------------------------------
+
+TEST(BlackBoxCliRegression, HardenedExtractAutoRoundTrip) {
+  // --hardened-extract=auto (default) should produce identical output to the
+  // normal round-trip path.
+  TempDir temp("bseal_cli_regression_hardened_auto");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("auto");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+  expect_output_tree_matches_input_tree(paths.input, paths.output);
+}
+
+TEST(BlackBoxCliRegression, HardenedExtractOffRoundTrip) {
+  // --hardened-extract=off uses the portable backend; the round-trip must
+  // still succeed and produce byte-for-byte identical output.
+  TempDir temp("bseal_cli_regression_hardened_off");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("off");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+  expect_output_tree_matches_input_tree(paths.input, paths.output);
+}
+
+TEST(BlackBoxCliRegression, HardenedExtractOnRoundTripOnPosix) {
+  // --hardened-extract=on: succeeds on POSIX, fails on non-POSIX.
+  TempDir temp("bseal_cli_regression_hardened_on");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("on");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+
+#if !defined(_WIN32)
+  EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+  expect_output_tree_matches_input_tree(paths.input, paths.output);
+#else
+  EXPECT_NE(result.exit_code, 0)
+      << "--hardened-extract=on should fail on non-POSIX platforms";
+#endif
+}
+
+TEST(BlackBoxCliRegression, HardenedExtractOnFailsOnNonPosix) {
+#if defined(_WIN32)
+  TempDir temp("bseal_cli_regression_hardened_on_nonposix");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("on");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+  EXPECT_NE(result.exit_code, 0)
+      << "--hardened-extract=on must fail on non-POSIX platforms";
+  EXPECT_NE(result.exit_code, 3)
+      << "failure should be exit code 1 (invalid argument), not 3 (auth failure)";
+#else
+  GTEST_SKIP() << "this test is only relevant on non-POSIX platforms";
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Failed-encrypt cleanup regression test
+// ---------------------------------------------------------------------------
+//
+// Regression: a failed encrypt must not delete pre-existing *.bin files in the
+// output directory that were not created by this ShardWriter instance.
+//
+// Strategy: place keep.bin in the output directory before running encrypt with
+// an input tree that contains an unreadable file.  plan_plaintext_size() succeeds
+// (it only stats files), but the streaming phase inside pipeline.run() fails when
+// it tries to open and read the unreadable file, so at least one shard has been
+// opened by ShardWriter before the error.  The new cleanup path removes only the
+// shards created during this run, leaving keep.bin intact.
+#if !defined(_WIN32)
+TEST(BlackBoxCliRegression, PreexistingBinFileSurvivesFailedEncrypt) {
+  TempDir temp("bseal_cli_regression_cleanup");
+
+  const auto input = temp.subdir("input");
+  const auto sealed = temp.subdir("sealed");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  // Two files: alpha.txt sorts first so it is read before zeta.bin.
+  // Writing alpha.txt produces at least one encrypted chunk, which means
+  // ShardWriter opens a shard before the pipeline hits zeta.bin and fails.
+  write_file(input / "alpha.txt", std::string(65536, 'A')); // one full chunk
+  write_binary_file(input / "zeta.bin", deterministic_bytes(4096));
+  create_keyfile(keyfile);
+
+  // Make zeta.bin unreadable so the archive streaming phase fails.
+  fs::permissions(input / "zeta.bin", fs::perms::none, fs::perm_options::replace);
+
+  // Place a pre-existing keep.bin in the output directory.
+  fs::create_directories(sealed);
+  const std::string keep_content = "pre-existing shard data - must not be removed";
+  write_file(sealed / "keep.bin", keep_content);
+
+  const auto result = run_bseal(
+      temp.subdir("encrypt-run"),
+      encrypt_args(input, sealed, keyfile),
+      kPassphrase);
+
+  // Restore permissions so temp directory cleanup succeeds.
+  fs::permissions(input / "zeta.bin", fs::perms::owner_read | fs::perms::owner_write,
+                  fs::perm_options::replace);
+
+  // Encrypt must fail (non-zero exit code).
+  EXPECT_NE(result.exit_code, 0) << result.stderr_text;
+
+  // keep.bin must still exist and be unchanged.
+  ASSERT_TRUE(fs::exists(sealed / "keep.bin"))
+      << "keep.bin was deleted by failed encrypt cleanup";
+  EXPECT_EQ(read_file(sealed / "keep.bin"), keep_content)
+      << "keep.bin was modified by failed encrypt cleanup";
+}
+#endif // !defined(_WIN32)
+
+TEST(BlackBoxCliRegression, ShardSizeTooSmallForChunkFails) {
+  // --chunk-size 64K produces frames of exactly 65592 bytes (40 header + 65536 data + 16 tag).
+  // --shard-size 65591 is one byte too small → must fail with exit code 1 (bad arguments).
+  TempDir temp("bseal_cli_regression_shard_too_small");
+  const auto input = temp.subdir("input");
+  const auto sealed = temp.subdir("sealed");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  const auto result = run_bseal(
+      temp.subdir("run"),
+      {"encrypt",
+       "--input",   input.string(),
+       "--output",  sealed.string(),
+       "--keyfile", keyfile.string(),
+       "--suite",   "xchacha20-poly1305",
+       "--kdf",     "fast",
+       "--chunk-size", "64K",
+       "--shard-size", "65591",
+       "--padding", "none"},
+      kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, ShardSizeExactlyOneFrameSucceeds) {
+  // --shard-size 65592 is exactly one frame → must succeed.
+  TempDir temp("bseal_cli_regression_shard_exact");
+  const auto input = temp.subdir("input");
+  const auto sealed = temp.subdir("sealed");
+  const auto output = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  const auto enc = run_bseal(
+      temp.subdir("enc-run"),
+      {"encrypt",
+       "--input",   input.string(),
+       "--output",  sealed.string(),
+       "--keyfile", keyfile.string(),
+       "--suite",   "xchacha20-poly1305",
+       "--kdf",     "fast",
+       "--chunk-size", "64K",
+       "--shard-size", "65592",
+       "--padding", "none"},
+      kPassphrase);
+
+  EXPECT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+  const auto dec = run_bseal(
+      temp.subdir("dec-run"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+
+  EXPECT_EQ(dec.exit_code, 0) << dec.stderr_text;
+  EXPECT_EQ(read_file(output / "tiny.txt"), "hello");
+}
+
+TEST(BlackBoxCliRegression, HardenedExtractInvalidValueFails) {
+  TempDir temp("bseal_cli_regression_hardened_invalid");
+  const auto paths = create_encrypt_fixture(temp);
+
+  std::vector<std::string> args = decrypt_args(paths.sealed, paths.output, paths.keyfile);
+  args.push_back("--hardened-extract");
+  args.push_back("invalid-value");
+
+  const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
 }

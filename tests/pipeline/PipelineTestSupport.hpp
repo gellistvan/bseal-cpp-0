@@ -240,6 +240,10 @@ inline io::ShardWriterOptions make_test_shard_writer_options(
     options.filename_extension    = ".bin";
     options.global_header         = make_test_global_header(shard_payload_size);
     options.header_authentication_key = test_header_authentication_key();
+    // global_header.shard_count = 1 — supply one non-zero placeholder hash.
+    std::array<Byte, 32> placeholder_hash{};
+    placeholder_hash.fill(Byte{0x01});
+    options.per_shard_public_header_hashes = {placeholder_hash};
     return options;
 }
 
@@ -596,7 +600,8 @@ inline io::ShardReader make_valid_test_shard_reader(
     pipeline.run();
 
     auto discovered_shards = io::ShardReader::discover(sealed_dir);
-    return io::ShardReader(std::move(discovered_shards));
+    return io::ShardReader(
+        std::move(discovered_shards), io::UnsafeSkipHeaderAuthenticationForTests{});
 }
 
 inline DecryptionRunResult run_test_decryption(
@@ -608,7 +613,8 @@ inline DecryptionRunResult run_test_decryption(
     auto* backend_raw = backend.get();
 
     auto discovered_shards = io::ShardReader::discover(sealed_dir);
-    io::ShardReader shard_reader(std::move(discovered_shards));
+    io::ShardReader shard_reader(
+        std::move(discovered_shards), io::UnsafeSkipHeaderAuthenticationForTests{});
 
     archive::ArchiveReader archive_reader(
         archive::ArchiveReaderOptions{

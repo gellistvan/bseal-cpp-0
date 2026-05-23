@@ -1,30 +1,19 @@
 #include "io/ShardWriter.hpp"
 #include "io/ShardFrame.hpp"
 
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
+#include "platform/Random.hpp"
 
 #include <algorithm>
 #include <limits>
-#include <random>
 #include <string>
 
 namespace bseal::io {
 namespace {
 
-constexpr char kFilenameAlphabet[] =
-    "0123456789"
-    "abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
 std::string random_filename(std::string_view extension) {
-    thread_local std::mt19937_64 rng{std::random_device{}()};
-    std::uniform_int_distribution<std::size_t> dist(0, sizeof(kFilenameAlphabet) - 2);
-
-    std::string name;
-    name.reserve(24 + extension.size());
-    for (std::size_t i = 0; i < 24; ++i) {
-        name.push_back(kFilenameAlphabet[dist(rng)]);
-    }
+    std::string name = platform::random_base62_string(24);
     name.append(extension);
     return name;
 }
@@ -50,6 +39,17 @@ std::uint64_t checked_frame_body_size(std::uint64_t ciphertext_len, std::uint16_
 } // namespace
 
 ShardWriter::ShardWriter(ShardWriterOptions options)
+    : options_(std::move(options)) {
+    validate_and_normalize_options();
+    validate_shard_hash_vector();
+    std::filesystem::create_directories(options_.output_dir);
+    if (all_zero(ConstByteSpan{options_.header_authentication_key.data(),
+                               options_.header_authentication_key.size()})) {
+        throw InvalidArgument("ShardWriter header_authentication_key is missing");
+    }
+}
+
+ShardWriter::ShardWriter(ShardWriterOptions options, UnsafeAllowMissingShardAadForTests)
     : options_(std::move(options)) {
     validate_and_normalize_options();
     std::filesystem::create_directories(options_.output_dir);
@@ -80,6 +80,30 @@ void ShardWriter::validate_and_normalize_options() {
     // global_header.chunk_plain_size is used for planners; validate it is set.
     if (options_.global_header.chunk_plain_size == 0) {
         throw InvalidArgument("ShardWriter global_header.chunk_plain_size is missing");
+    }
+}
+
+void ShardWriter::validate_shard_hash_vector() {
+    const auto& hashes = options_.per_shard_public_header_hashes;
+
+    if (hashes.empty()) {
+        throw InvalidArgument(
+            "ShardWriter per_shard_public_header_hashes must not be empty: "
+            "every chunk must be bound to its shard's public_header_hash via AEAD AAD");
+    }
+
+    if (hashes.size() != static_cast<std::size_t>(options_.global_header.shard_count)) {
+        throw InvalidArgument(
+            "ShardWriter per_shard_public_header_hashes size does not match "
+            "global_header.shard_count");
+    }
+
+    for (std::size_t i = 0; i < hashes.size(); ++i) {
+        if (all_zero(ConstByteSpan{hashes[i].data(), hashes[i].size()})) {
+            throw InvalidArgument(
+                "ShardWriter per_shard_public_header_hashes contains an all-zero "
+                "hash at shard index " + std::to_string(i));
+        }
     }
 }
 
@@ -128,12 +152,12 @@ void ShardWriter::open_next_shard(std::uint64_t first_chunk_index) {
 }
 
 void ShardWriter::rewrite_shard_header(
-    std::fstream&  stream,
-    std::uint32_t  shard_index,
-    std::uint64_t  first_chunk_index,
-    std::uint64_t  chunk_count,
-    std::uint64_t  payload_len) {
-    // Build the ShardPublicHeaderV1.
+    std::fstream&               stream,
+    const GlobalPublicHeaderV1& global_header,
+    std::uint32_t               shard_index,
+    std::uint64_t               first_chunk_index,
+    std::uint64_t               chunk_count,
+    std::uint64_t               payload_len) {
     ShardPublicHeaderV1 sh{};
     sh.shard_magic             = kShardHeaderV1Magic;
     sh.shard_header_len        = static_cast<std::uint32_t>(kShardPublicHeaderV1Size);
@@ -143,11 +167,10 @@ void ShardWriter::rewrite_shard_header(
     sh.shard_payload_len       = payload_len;
     sh.reserved0               = 0;
 
-    // Compute MAC.
     sh.header_mac = compute_shard_header_mac(
         ConstByteSpan{options_.header_authentication_key.data(),
                       options_.header_authentication_key.size()},
-        options_.global_header,
+        global_header,
         sh);
 
     const auto encoded = serialize_shard_public_header(sh);
@@ -187,6 +210,7 @@ void ShardWriter::close_current_shard() {
 
         rewrite_shard_header(
             rw,
+            options_.global_header,
             current_shard_index_,
             current_first_chunk_index_,
             current_chunk_count_,
@@ -253,11 +277,17 @@ ShardWritePosition ShardWriter::write_chunk_frame(
 
     const auto frame_size = chunk_frame_v1_encoded_size(header);
 
+    if (frame_size > options_.max_shard_payload_len) {
+        throw InvalidArgument(
+            "chunk frame (" + std::to_string(frame_size) + " bytes) exceeds"
+            " max_shard_payload_len (" + std::to_string(options_.max_shard_payload_len) +
+            " bytes); increase --shard-size or decrease --chunk-size");
+    }
+
+    // Overflow-safe: frame_size <= max_shard_payload_len (checked above).
     if (!current_stream_.is_open()) {
         open_next_shard(header.global_chunk_index);
-    } else if (
-        current_payload_offset_ > 0 &&
-        current_payload_offset_ + frame_size > options_.max_shard_payload_len) {
+    } else if (current_payload_offset_ > options_.max_shard_payload_len - frame_size) {
         close_current_shard();
         open_next_shard(header.global_chunk_index);
     }
@@ -292,6 +322,24 @@ ShardWritePosition ShardWriter::write_chunk_frame(
     return position;
 }
 
+void ShardWriter::abort_and_remove_created_shards_noexcept() noexcept {
+    if (current_stream_.is_open()) {
+        current_stream_.close();
+    }
+
+    if (!current_path_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(current_path_, ec);
+        current_path_.clear();
+    }
+
+    for (const auto& shard : finalized_shards_) {
+        std::error_code ec;
+        std::filesystem::remove(shard.path, ec);
+    }
+    finalized_shards_.clear();
+}
+
 void ShardWriter::finish() {
     if (finished_) {
         return;
@@ -317,10 +365,12 @@ void ShardWriter::finish() {
     if (total_chunks > 0 && final_chunk_plaintext_len_ > 0) {
         final_global.final_plaintext_chunk_len =
             static_cast<std::uint32_t>(final_chunk_plaintext_len_);
-        final_global.padded_plaintext_size =
-            (total_chunks - 1u)
-            * static_cast<std::uint64_t>(final_global.chunk_plain_size)
-            + final_chunk_plaintext_len_;
+        final_global.padded_plaintext_size = checked_add_u64(
+            checked_mul_u64(total_chunks - 1u,
+                            static_cast<std::uint64_t>(final_global.chunk_plain_size),
+                            "ShardWriter: padded plaintext size"),
+            final_chunk_plaintext_len_,
+            "ShardWriter: padded plaintext size");
     }
 
     const auto global_bytes = serialize_global_public_header(final_global);
@@ -331,6 +381,8 @@ void ShardWriter::finish() {
             throw Error("failed to reopen finalized shard for global header update: "
                         + fs.path.string());
         }
+
+        // Rewrite global header at offset 0.
         rw.seekp(0, std::ios::beg);
         rw.write(
             reinterpret_cast<const char*>(global_bytes.data()),
@@ -339,6 +391,17 @@ void ShardWriter::finish() {
             throw Error("failed to rewrite global header in finalized shard: "
                         + fs.path.string());
         }
+
+        // Rewrite shard header MAC computed over the final global header.
+        // This must happen after the global header rewrite so both headers are
+        // self-consistent on disk: the stored MAC authenticates the stored global bytes.
+        rewrite_shard_header(
+            rw,
+            final_global,
+            fs.shard_index,
+            fs.first_chunk_index,
+            fs.chunk_count,
+            fs.payload_len);
     }
 
     finished_ = true;
@@ -376,8 +439,15 @@ PlannedChunkFrame ShardWriter::plan_chunk_frame(
 
     const auto frame_size = chunk_frame_v1_encoded_size(header);
 
-    if (planned_payload_offset_ > 0 &&
-        planned_payload_offset_ + frame_size > options_.max_shard_payload_len) {
+    if (frame_size > options_.max_shard_payload_len) {
+        throw InvalidArgument(
+            "chunk frame (" + std::to_string(frame_size) + " bytes) exceeds"
+            " max_shard_payload_len (" + std::to_string(options_.max_shard_payload_len) +
+            " bytes); increase --shard-size or decrease --chunk-size");
+    }
+
+    // Overflow-safe: frame_size <= max_shard_payload_len (checked above).
+    if (planned_payload_offset_ > options_.max_shard_payload_len - frame_size) {
         ++planned_shard_index_;
         planned_payload_offset_ = 0;
         header.shard_index = planned_shard_index_;

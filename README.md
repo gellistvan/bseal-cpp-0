@@ -8,7 +8,15 @@ It is still **not production-ready cryptography**. Treat the repository as a har
 
 ## Current status
 
-Implemented today:
+### Format stability
+
+The BSEAL-F1 on-disk format is now **frozen** at the byte level. `docs/FORMAT.md` is the normative specification. Any serialization, key derivation, or nonce derivation change that silently alters the byte output is caught by the known-answer tests in `tests/io/TestFormatV1Kat.cpp`. The fixture files in `tests/fixtures/format-v1/` are committed ground truth.
+
+This means archives produced by the current build will continue to decrypt correctly with future builds, as long as no breaking format change is made. Breaking changes require bumping `format_major`.
+
+No external cryptographic audit has been performed. Do not rely on this for production secrets until after an audit.
+
+### Implemented features
 
 * `bseal encrypt` and `bseal decrypt` are wired through the CLI and app layer.
 * Directory trees can be archived into encrypted shard files and restored.
@@ -24,7 +32,7 @@ Implemented today:
 * Archive records cover archive begin/end, directories, regular files, file bytes, file end markers, symlinks in the record format, and random padding records.
 * All four padding policies are implemented end-to-end: `none`, `chunk` (pad to next chunk-size multiple), `power2` (pad to next power-of-two total), and `fixed-size=N` (pad to exact byte count). Padding is represented as encrypted `RandomPadding` archive records so it is authenticated by AEAD and indistinguishable from real data.
 * Archive serialization is streaming: `ArchiveWriter` plans the total plaintext size from filesystem metadata alone before reading any file content, then streams file bytes directly into the encryption pipeline. No full-archive plaintext buffer is held in memory. File content is bounded only by chunk and buffer sizes, so large archives do not require proportional RAM.
-* A per-file size check detects source-file changes between planning and reading: if a file grows or shrinks while being streamed, encryption fails immediately. If the pipeline fails partway through, all partially written `.bin` shards are removed from the output directory.
+* A per-file size check detects source-file changes between planning and reading: if a file grows or shrinks while being streamed, encryption fails immediately. If the pipeline fails partway through, only the shard files created by that encrypt run are removed from the output directory; pre-existing files are never touched.
 * Chunk encryption binds the immutable per-shard BLAKE3-256 public-header hash and global chunk index into AEAD associated data.
 * Shards use explicit per-shard headers and chunk records. Decrypt scans `*.bin`
   files, parses shard headers from file contents, rejects malformed garbage
@@ -36,7 +44,7 @@ Implemented today:
 Still unsafe or incomplete:
 
 * No external cryptographic audit has been performed.
-* The archive/container format is not stable and has no compatibility guarantee.
+* The archive/container format is not stable and has no compatibility guarantee. In particular, archives created on the `develop` branch before the nonce derivation spec/code alignment (commit that introduced known-answer tests in `TestKeySchedule.cpp`) cannot be decrypted by later builds because the normative v1 nonce formula has been clarified and locked to the prefix+counter design (`"BSEAL chunk nonce prefix v1"`). Do not rely on cross-build compatibility for pre-release archives.
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 * Performance tuning and benchmarks are not yet the priority; correctness and hardening come first.
 
@@ -162,17 +170,25 @@ Encrypt-only options:
 * `--suite xchacha20-poly1305|aes-256-gcm`
 * `--kdf fast|strong|paranoid`
 * `--chunk-size SIZE`, for example `1K`, `16M`
-* `--shard-size SIZE`, for example `16K`, `4G`
+* `--shard-size SIZE`, for example `16K`, `4G` — hard upper bound on total encoded frame bytes per shard; must be large enough to hold at least one maximum-size chunk frame (`40 + chunk_plain_size + 16` bytes for v1 AEADs)
 * `--padding none|chunk|power2|fixed-size=N`
   * `none` — no padding; plaintext size is exactly the unpadded archive stream
   * `chunk` — pad to the next multiple of `--chunk-size`
-  * `power2` — pad to the next power-of-two total plaintext size
-  * `fixed-size=N` — pad to exactly N bytes (fails if the archive is already larger, or if the gap is too small to hold a padding record header)
+  * `power2` — pad to the next power-of-two total plaintext size, with a minimum of one full chunk
+  * `fixed-size=N` — pad to exactly N bytes; N must be a positive multiple of `--chunk-size` (fails if the archive is already larger, if N is not a chunk-size multiple, or if the gap is too small to hold a padding record header)
   * Padding is represented as an encrypted `RandomPadding` archive record so it is authenticated by AEAD and indistinguishable from file data
 
 Decrypt-only options:
 
 * `--overwrite`, allows restoring into an existing non-empty output directory
+* `--hardened-extract auto|on|off` — extraction filesystem safety mode (default: `auto`)
+  * `auto`: use the hardened POSIX backend when available (Linux/macOS); fall back to the portable backend on other platforms
+  * `on`: require the hardened POSIX backend; fail immediately (exit 1) if the platform does not support it
+  * `off`: always use the portable backend (TOCTOU window is not closed)
+  * The hardened POSIX backend traverses intermediate directories using `openat(2)` with `O_NOFOLLOW`, so a local attacker who races a directory replacement with a symlink cannot redirect extraction outside the output root. See `SECURITY_NOTES.md` for the full threat model.
+* `--max-kdf-memory SIZE` — reject archives whose Argon2id memory cost exceeds SIZE (default: `2G`; covers all built-in KDF presets including `paranoid`)
+* `--max-kdf-iterations N` — reject archives whose Argon2id iteration count exceeds N (default: `4`)
+* `--max-kdf-parallelism N` — reject archives whose Argon2id parallelism exceeds N (default: `8`)
 
 Current exit codes:
 
@@ -223,6 +239,8 @@ Those fields are now authenticated with a real keyed MAC:
 This gives early detection for wrong passphrases, wrong keyfiles, and public-header tampering. It also prevents unauthenticated changes to fields such as suite id, archive id, KDF salt, chunk size, shard size, and shard index.
 
 `public_header_hash` is a BLAKE3-256 digest of the global header concatenated with the per-shard header (with `header_mac` zeroed). It is computed once per shard, included as AEAD associated data for every chunk in that shard, and is therefore covered by each chunk's authentication tag. It is not a MAC and must not be treated as one — its role is to bind each ciphertext chunk to its public shard context.
+
+**Invariant:** No production chunk may be encrypted unless its shard's `public_header_hash` is known and provided to the AEAD call as associated data. `ShardWriter` enforces this at construction time: `per_shard_public_header_hashes` must be fully populated (non-empty, sized to match `shard_count`, and free of all-zero entries) before any chunk is written.
 
 ## Project layout
 

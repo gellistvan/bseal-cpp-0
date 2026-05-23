@@ -42,9 +42,6 @@ void append_bytes(Bytes& out, ConstByteSpan bytes) {
     out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
-void append_zeros(Bytes& out, std::size_t count) {
-    out.insert(out.end(), count, Byte{0});
-}
 
 bool all_zero(ConstByteSpan bytes) {
     return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
@@ -306,6 +303,70 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     }
     if (h.shard_count > h.global_chunk_count) {
         throw InvalidArgument("shard_count > global_chunk_count");
+    }
+    // Padding policy constraints (FORMAT.md §14).
+    switch (h.padding_policy_id) {
+    case 0: // none
+        if (h.padding_policy_value != 0) {
+            throw InvalidArgument("padding_policy_value must be 0 for 'none' padding policy");
+        }
+        break;
+    case 1: // chunk — padded_plaintext_size must be a positive multiple of chunk_plain_size
+        if (h.padding_policy_value != 0) {
+            throw InvalidArgument("padding_policy_value must be 0 for 'chunk' padding policy");
+        }
+        if (h.padded_plaintext_size % h.chunk_plain_size != 0) {
+            throw InvalidArgument(
+                "padded_plaintext_size is not a multiple of chunk_plain_size "
+                "for 'chunk' padding policy");
+        }
+        if (h.final_plaintext_chunk_len != h.chunk_plain_size) {
+            throw InvalidArgument(
+                "final_plaintext_chunk_len must equal chunk_plain_size "
+                "for 'chunk' padding policy");
+        }
+        break;
+    case 2: { // power2 — padded_plaintext_size must be a power of two and a multiple of chunk_plain_size
+        if (h.padding_policy_value != 0) {
+            throw InvalidArgument("padding_policy_value must be 0 for 'power2' padding policy");
+        }
+        if (!is_power_of_two(h.padded_plaintext_size)) {
+            throw InvalidArgument(
+                "padded_plaintext_size is not a power of two "
+                "for 'power2' padding policy");
+        }
+        if (h.padded_plaintext_size % h.chunk_plain_size != 0) {
+            throw InvalidArgument(
+                "padded_plaintext_size is not a multiple of chunk_plain_size "
+                "for 'power2' padding policy");
+        }
+        if (h.final_plaintext_chunk_len != h.chunk_plain_size) {
+            throw InvalidArgument(
+                "final_plaintext_chunk_len must equal chunk_plain_size "
+                "for 'power2' padding policy");
+        }
+        break;
+    }
+    case 3: // fixed-size — padding_policy_value must equal padded_plaintext_size and be a chunk multiple
+        if (h.padding_policy_value != h.padded_plaintext_size) {
+            throw InvalidArgument(
+                "padding_policy_value must equal padded_plaintext_size "
+                "for 'fixed-size' padding policy");
+        }
+        if (h.padded_plaintext_size % h.chunk_plain_size != 0) {
+            throw InvalidArgument(
+                "padded_plaintext_size is not a multiple of chunk_plain_size "
+                "for 'fixed-size' padding policy");
+        }
+        if (h.final_plaintext_chunk_len != h.chunk_plain_size) {
+            throw InvalidArgument(
+                "final_plaintext_chunk_len must equal chunk_plain_size "
+                "for 'fixed-size' padding policy");
+        }
+        break;
+    default:
+        throw InvalidArgument(
+            "unsupported padding_policy_id: " + std::to_string(h.padding_policy_id));
     }
     if (h.max_shard_payload_len == 0) {
         throw InvalidArgument("max_shard_payload_len is zero");
@@ -575,6 +636,19 @@ std::uint64_t chunk_frame_v1_encoded_size(const ChunkFrameHeaderV1& header) {
     }
 
     return encoded_len;
+}
+
+std::uint64_t chunk_frame_v1_encoded_size_from_params(
+    std::uint64_t plaintext_len, std::uint16_t tag_len) {
+    const auto body = plaintext_len + static_cast<std::uint64_t>(tag_len);
+    if (body < plaintext_len) {
+        throw InvalidArgument("chunk frame body length overflow");
+    }
+    const auto total = static_cast<std::uint64_t>(kChunkFrameHeaderV1Size) + body;
+    if (total < body) {
+        throw InvalidArgument("chunk frame encoded length overflow");
+    }
+    return total;
 }
 
 } // namespace bseal::io

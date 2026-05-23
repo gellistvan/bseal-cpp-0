@@ -47,8 +47,18 @@ struct EncryptOptions : CommonOptions {
     PaddingPolicy padding{};
 };
 
+enum class HardenedExtractMode {
+    Auto, // Use hardened POSIX backend when available; fall back to portable.
+    On,   // Require hardened POSIX backend; fail immediately if unavailable.
+    Off,  // Always use the portable backend (not TOCTOU-hardened).
+};
+
 struct DecryptOptions : CommonOptions {
     bool overwrite{false};
+    /// Runtime KDF resource policy; overridable via --max-kdf-memory / --max-kdf-iterations /
+    /// --max-kdf-parallelism.  Defaults cover every built-in CLI preset.
+    crypto::KdfResourcePolicy kdf_policy{};
+    HardenedExtractMode hardened_extract{HardenedExtractMode::Auto};
 };
 
 struct ParsedArgs {

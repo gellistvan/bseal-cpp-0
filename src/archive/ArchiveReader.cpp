@@ -1,6 +1,7 @@
 #include "archive/ArchiveReader.hpp"
 
 #include "archive/PathSanitizer.hpp"
+#include "archive/SafeOutputTree.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -45,9 +46,14 @@ ArchiveReader::ArchiveReader(ArchiveReaderOptions options) : options_(std::move(
 
     temp_root_ = options_.output_root / ".bseal-extract-tmp";
 
-    if (std::filesystem::exists(temp_root_)) {
-        throw InvalidArgument("temporary extraction directory already exists: " +
-                              temp_root_.string());
+    // Use symlink_status (lstat) so broken symlinks and symlinks-to-directories are both caught.
+    {
+        std::error_code status_ec;
+        const auto tmp_status = std::filesystem::symlink_status(temp_root_, status_ec);
+        if (!status_ec && tmp_status.type() != std::filesystem::file_type::not_found) {
+            throw InvalidArgument("temporary extraction directory already exists: " +
+                                  temp_root_.string());
+        }
     }
 
     std::filesystem::create_directory(temp_root_, ec);
@@ -200,7 +206,9 @@ void ArchiveReader::process_record(const ArchiveRecord& record) {
             break;
 
         case RecordType::RandomPadding:
-            // Padding is authenticated by the outer AEAD layer and intentionally ignored here.
+            if (!archive_end_seen_) {
+                throw InvalidArgument("RandomPadding record is only valid after ArchiveEnd");
+            }
             break;
     }
 }
@@ -356,57 +364,34 @@ void ArchiveReader::create_symlink(const EntryMetadata& metadata) {
 }
 
 void ArchiveReader::commit_temp_tree() {
-    std::vector<std::filesystem::path> paths;
+    SafeOutputTree safe_tree(options_.output_root,
+                             options_.hardened_extract_mode);
 
+    std::vector<std::filesystem::path> paths;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(temp_root_)) {
         paths.push_back(entry.path());
     }
 
+    // Parents before children so directories are created before files within them.
     std::ranges::sort(paths, [](const auto& a, const auto& b) {
-        // Parents before children.
         return std::distance(a.begin(), a.end()) < std::distance(b.begin(), b.end());
     });
 
     std::error_code ec;
-
     for (const auto& src : paths) {
         const auto rel = std::filesystem::relative(src, temp_root_, ec);
         if (ec) {
-            throw InvalidArgument("cannot compute temporary relative path: " + ec.message());
+            throw InvalidArgument(
+                "cannot compute temporary relative path: " + ec.message());
         }
 
-        const auto dst = final_path_for(rel);
-
         if (std::filesystem::is_directory(src, ec) && !std::filesystem::is_symlink(src, ec)) {
-            std::filesystem::create_directories(dst, ec);
-            if (ec) {
-                throw InvalidArgument("cannot create final directory: " + ec.message());
-            }
+            safe_tree.ensure_dirs(rel);
             continue;
         }
 
-        if (std::filesystem::exists(dst, ec)) {
-            if (!options_.overwrite_existing) {
-                throw InvalidArgument("output path already exists: " + dst.string());
-            }
-
-            std::filesystem::remove_all(dst, ec);
-            if (ec) {
-                throw InvalidArgument("cannot remove existing output path: " + ec.message());
-            }
-        }
-
-        std::filesystem::create_directories(dst.parent_path(), ec);
-        if (ec) {
-            throw InvalidArgument("cannot create final parent directory: " + ec.message());
-        }
-
-        // This is atomic for individual files/symlinks on the same filesystem. The temporary root
-        // lives under output_root to make cross-device rename unlikely.
-        std::filesystem::rename(src, dst, ec);
-        if (ec) {
-            throw InvalidArgument("cannot promote temporary output file: " + ec.message());
-        }
+        // For files and symlinks: ensure the parent exists then atomically promote.
+        safe_tree.rename_into(src, rel, options_.overwrite_existing);
     }
 }
 

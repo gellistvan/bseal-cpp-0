@@ -1,0 +1,3 @@
+BSEAL v1 archive fixture
+This file is used for format freeze / round-trip tests.
+Its content must remain identical across builds.

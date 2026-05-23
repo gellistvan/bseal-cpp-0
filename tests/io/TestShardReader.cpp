@@ -93,6 +93,12 @@ bseal::io::GlobalPublicHeaderV1 make_test_global_header(
     return h;
 }
 
+std::array<bseal::Byte, 32> fake_shard_hash(std::uint32_t shard_index) {
+    std::array<bseal::Byte, 32> h{};
+    h.fill(static_cast<bseal::Byte>((shard_index + 1u) & 0xFFu));
+    return h;
+}
+
 bseal::io::ShardWriterOptions make_writer_options(
     const std::filesystem::path& dir,
     std::uint64_t max_payload_size,
@@ -106,6 +112,10 @@ bseal::io::ShardWriterOptions make_writer_options(
     options.global_header         = make_test_global_header(
         max_payload_size, chunk_plain_size, shard_count, global_chunk_count);
     options.header_authentication_key = test_header_authentication_key();
+    options.per_shard_public_header_hashes.reserve(shard_count);
+    for (std::uint32_t i = 0; i < shard_count; ++i) {
+        options.per_shard_public_header_hashes.push_back(fake_shard_hash(i));
+    }
     return options;
 }
 
@@ -280,7 +290,8 @@ TEST(TestShardReader, ReadsMultipleChunkFramesFromOneShard) {
     EXPECT_EQ(shards[0].first_chunk_index(), 0u);
     EXPECT_EQ(shards[0].chunk_count(), 2u);
 
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     auto r0 = reader.read_next_chunk_record();
     ASSERT_TRUE(r0.has_value());
@@ -348,7 +359,8 @@ TEST(TestShardReader, ReadsMultipleShardsUsingMetadataNotFilenameOrder) {
     auto rediscovered = bseal::io::ShardReader::discover(dir);
     ASSERT_EQ(rediscovered.size(), 2u);
 
-    bseal::io::ShardReader reader(std::move(rediscovered));
+    bseal::io::ShardReader reader(
+        std::move(rediscovered), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
     auto r0 = reader.read_next_chunk_record();
     auto r1 = reader.read_next_chunk_record();
 
@@ -423,7 +435,8 @@ TEST(TestShardReader, RejectsTamperedFrameLength) {
     write_u64_le_at(file, frame_ciphertext_len_offset(first_frame_offset()), 1);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     EXPECT_THROW(
         { (void)reader.read_next_chunk_record(); },
@@ -453,7 +466,8 @@ TEST(TestShardReader, RejectsTamperedChunkIndex) {
         2);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     auto first = reader.read_next_chunk_record();
     ASSERT_TRUE(first.has_value());
@@ -486,7 +500,8 @@ TEST(TestShardReader, RejectsDuplicateFrame) {
         0);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     auto first = reader.read_next_chunk_record();
     ASSERT_TRUE(first.has_value());
@@ -511,7 +526,8 @@ TEST(TestShardReader, RejectsInvalidFinalChunkMarker) {
     writer.finish();
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     EXPECT_THROW(
         { (void)reader.read_next_chunk_record(); },
@@ -541,7 +557,8 @@ TEST(TestShardReader, RejectsUnexpectedFinalChunkMarker) {
         bseal::io::kChunkFrameFlagFinalChunk);
 
     auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(std::move(shards));
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
     EXPECT_THROW(
         { (void)reader.read_next_chunk_record(); },
@@ -569,7 +586,8 @@ TEST(TestShardReader, AcceptsExplicitValidationMatchingShardMetadata) {
     validation.chunk_plain_size = shards[0].global_header.chunk_plain_size;
     validation.public_header_hash = shards[0].public_header_hash;
 
-    bseal::io::ShardReader reader(std::move(shards), validation);
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation);
 
     auto r0 = reader.read_next_chunk_record();
     ASSERT_TRUE(r0.has_value());
@@ -599,7 +617,8 @@ TEST(TestShardReader, RejectsExplicitValidationSuiteIdMismatch) {
         shards[0].global_header.aead_alg_id + 1u);
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards), validation); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -626,7 +645,8 @@ TEST(TestShardReader, RejectsExplicitValidationArchiveIdMismatch) {
     validation.archive_id = wrong_archive_id;
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards), validation); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -649,7 +669,8 @@ TEST(TestShardReader, RejectsExplicitValidationChunkPlainSizeMismatch) {
     validation.chunk_plain_size = shards[0].global_header.chunk_plain_size + 1u;
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards), validation); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -676,7 +697,8 @@ TEST(TestShardReader, RejectsExplicitValidationPublicHeaderHashMismatch) {
     validation.public_header_hash = wrong_hash;
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards), validation); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -706,7 +728,8 @@ TEST(TestShardReader, RejectsDuplicateShardIndex) {
     auto shards = bseal::io::ShardReader::discover(dir);
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards)); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -738,7 +761,8 @@ TEST(TestShardReader, RejectsMissingShardIndex) {
     auto shards = bseal::io::ShardReader::discover(dir);
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards)); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);
@@ -803,10 +827,224 @@ TEST(TestShardReader, RejectsMismatchedArchiveIdAcrossShards) {
     auto shards = bseal::io::ShardReader::discover(mixed);
 
     EXPECT_THROW(
-        { bseal::io::ShardReader reader(std::move(shards)); },
+        { bseal::io::ShardReader reader(std::move(shards),
+              bseal::io::UnsafeSkipHeaderAuthenticationForTests{}); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir_a);
     std::filesystem::remove_all(dir_b);
     std::filesystem::remove_all(mixed);
+}
+
+TEST(TestShardReader, RejectsConstructionWithAllZeroHeaderAuthKey) {
+    const auto dir = make_temp_dir("bseal_shard_reader_zero_auth_key");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
+    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                      kTestChunkPlain, 1, 1));
+    write_fake_frame(writer, 0, kTestChunkPlain, true,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    const std::array<bseal::Byte, 32> zero_key{};
+    EXPECT_THROW(
+        { bseal::io::ShardReader reader(std::move(shards), zero_key); },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(TestShardReader, RejectsCorruptedShardHeaderMac) {
+    const auto dir = make_temp_dir("bseal_shard_reader_corrupt_mac");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
+    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                      kTestChunkPlain, 1, 1));
+    write_fake_frame(writer, 0, kTestChunkPlain, true,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    writer.finish();
+
+    // Tamper with the first byte of the 32-byte header_mac field.
+    // In ShardPublicHeaderV1 the mac is at bytes [40..72) of the shard header,
+    // which lives at file offset 192 (global) + 40 = 232.
+    const auto file = only_bin_file(dir);
+    {
+        std::fstream f(file, std::ios::binary | std::ios::in | std::ios::out);
+        ASSERT_TRUE(f.good());
+        constexpr std::streamoff kShardMacOffset =
+            static_cast<std::streamoff>(bseal::io::kGlobalPublicHeaderV1Size) + 40;
+        f.seekp(kShardMacOffset, std::ios::beg);
+        ASSERT_TRUE(f.good());
+        const char flip = static_cast<char>(0xFFu);
+        f.write(&flip, 1);
+        ASSERT_TRUE(f.good());
+    }
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    ASSERT_EQ(shards.size(), 1u);
+
+    EXPECT_THROW(
+        { bseal::io::ShardReader reader(std::move(shards), test_header_authentication_key()); },
+        bseal::InvalidArgument);
+
+    std::filesystem::remove_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// parse_global_public_header padding policy validation tests
+//
+// These tests construct GlobalPublicHeaderV1 structs directly, serialize them,
+// and feed the bytes to parse_global_public_header() to verify that the parser
+// enforces FORMAT.md §14 padding policy constraints.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bseal::io::GlobalPublicHeaderV1 make_parseable_none_header() {
+    bseal::io::GlobalPublicHeaderV1 h{};
+    h.magic             = bseal::io::kGlobalHeaderV1Magic;
+    h.format_major      = 1;
+    h.format_minor      = 0;
+    h.global_header_len = static_cast<std::uint32_t>(bseal::io::kGlobalPublicHeaderV1Size);
+    h.shard_header_len  = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
+    h.frame_header_len  = static_cast<std::uint16_t>(bseal::io::kChunkFrameHeaderV1Size);
+    h.global_flags      = 0;
+    h.archive_id        = test_archive_id();
+    h.aead_alg_id       = bseal::io::kAeadAlgIdXChaCha20Poly1305;
+    h.kdf_alg_id        = bseal::io::kKdfAlgIdArgon2idHkdf;
+    h.hash_alg_id       = bseal::io::kHashAlgIdBlake3;
+    h.mac_alg_id        = bseal::io::kMacAlgIdHmacSha256;
+    h.kdf_salt.fill(bseal::Byte{0x11});
+    h.argon2_version     = 0x13;
+    h.argon2_memory_kib  = bseal::crypto::kArgon2MemoryKiBMin;
+    h.argon2_iterations  = 1;
+    h.argon2_parallelism = 1;
+    h.chunk_plain_size   = kTestChunkPlain;
+    h.shard_count        = 1;
+    h.global_chunk_count = 1;
+    h.padded_plaintext_size     = kTestChunkPlain; // one full chunk
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    h.padding_policy_id    = 0; // none
+    h.reserved0            = 0;
+    h.padding_policy_value = 0;
+    h.max_shard_payload_len  = 4ull * 1024ull * 1024ull;
+    h.required_feature_flags = 0;
+    h.reserved1.fill(bseal::Byte{0});
+    return h;
+}
+
+void parse_header(const bseal::io::GlobalPublicHeaderV1& h) {
+    auto bytes = bseal::io::serialize_global_public_header(h);
+    (void)bseal::io::parse_global_public_header(
+        bseal::ConstByteSpan{bytes.data(), bytes.size()});
+}
+
+} // namespace
+
+TEST(TestShardReader, ParsePolicyNoneAcceptsPartialFinalChunk) {
+    auto h = make_parseable_none_header();
+    h.padded_plaintext_size     = kTestChunkPlain / 2;
+    h.final_plaintext_chunk_len = kTestChunkPlain / 2;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
+TEST(TestShardReader, ParsePolicyNoneRejectsNonZeroPolicyValue) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_value = 1;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyChunkAcceptsFullAlignedSize) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 1;
+    h.padding_policy_value = 0;
+    h.global_chunk_count   = 3;
+    h.padded_plaintext_size     = kTestChunkPlain * 3;
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
+TEST(TestShardReader, ParsePolicyChunkRejectsPartialFinalChunk) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 1;
+    h.padding_policy_value = 0;
+    // 1.5 chunks: not a multiple of chunk_plain_size
+    h.global_chunk_count        = 2;
+    h.padded_plaintext_size     = kTestChunkPlain + kTestChunkPlain / 2;
+    h.final_plaintext_chunk_len = kTestChunkPlain / 2;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyChunkRejectsNonZeroPolicyValue) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 1;
+    h.padding_policy_value = 42;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyPower2AcceptsValidPowerOfTwo) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 2;
+    h.padding_policy_value = 0;
+    h.global_chunk_count   = 2;
+    h.padded_plaintext_size     = kTestChunkPlain * 2; // 2 is a power of 2
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
+TEST(TestShardReader, ParsePolicyPower2RejectsNonPowerOfTwo) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 2;
+    h.padding_policy_value = 0;
+    // 3 * chunk_plain_size is not a power of 2
+    h.global_chunk_count        = 3;
+    h.padded_plaintext_size     = kTestChunkPlain * 3;
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyPower2RejectsNonZeroPolicyValue) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 2;
+    h.padding_policy_value = 1;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyFixedSizeAcceptsValidHeader) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id  = 3;
+    h.global_chunk_count = 4;
+    h.padded_plaintext_size     = kTestChunkPlain * 4;
+    h.padding_policy_value      = kTestChunkPlain * 4; // must equal padded_plaintext_size
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
+TEST(TestShardReader, ParsePolicyFixedSizeRejectsMismatchedPolicyValue) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id         = 3;
+    h.padded_plaintext_size     = kTestChunkPlain;
+    h.padding_policy_value      = kTestChunkPlain * 2; // mismatch
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParsePolicyFixedSizeRejectsNonChunkMultiple) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id = 3;
+    // Set padded_plaintext_size to 1.5 * chunk_plain_size — not a multiple
+    h.global_chunk_count        = 2;
+    h.padded_plaintext_size     = kTestChunkPlain + kTestChunkPlain / 2;
+    h.padding_policy_value      = kTestChunkPlain + kTestChunkPlain / 2;
+    h.final_plaintext_chunk_len = kTestChunkPlain / 2;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
+}
+
+TEST(TestShardReader, ParseRejectsUnknownPaddingPolicyId) {
+    auto h = make_parseable_none_header();
+    h.padding_policy_id = 99;
+    EXPECT_THROW(parse_header(h), bseal::InvalidArgument);
 }

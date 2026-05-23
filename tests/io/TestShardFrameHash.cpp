@@ -66,16 +66,6 @@ bseal::io::ShardPublicHeaderV1 make_test_shard_header(std::uint32_t idx) {
     return sh;
 }
 
-// Compute BLAKE3-256 of a flat byte sequence.
-std::array<Byte, 32> raw_blake3(const bseal::Bytes& data) {
-    blake3_hasher h;
-    blake3_hasher_init(&h);
-    blake3_hasher_update(&h, data.data(), data.size());
-    std::array<Byte, 32> out{};
-    blake3_hasher_finalize(&h, out.data(), out.size());
-    return out;
-}
-
 // hex_bytes: parse a lowercase hex string into a 32-byte array.
 std::array<Byte, 32> hex32(const char* s) {
     std::array<Byte, 32> out{};

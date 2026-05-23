@@ -28,17 +28,6 @@ int checked_int_size(std::size_t value, const char* what) {
     return static_cast<int>(value);
 }
 
-void append_le32(Bytes& out, std::uint32_t value) {
-    for (int i = 0; i < 4; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-void append_le64(Bytes& out, std::uint64_t value) {
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
 
 void validate_request(const AeadKeyView& key,
                       const AeadNonceView& nonce,

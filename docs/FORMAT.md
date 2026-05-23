@@ -1,6 +1,6 @@
 # BSEAL archive shard format
 
-Status: normative specification for the first real BSEAL encrypted archive format.
+Status: **normative and frozen**. This document is the authoritative specification for the BSEAL-F1 archive format. The serialization, algorithm IDs, key derivation contract, and validation rules defined here are locked. Any implementation change that silently produces different bytes for the same inputs is a breaking change and must be caught by the known-answer tests in `tests/io/TestFormatV1Kat.cpp`.
 
 This document defines the on-disk format for a BSEAL encrypted archive stored as one or more randomized `.bin` shard files. Filenames are not part of the format and are never used for shard ordering, chunk ordering, authentication, or decryption.
 
@@ -167,6 +167,7 @@ A reader MUST reject the archive if any of the following is true:
 - `padded_plaintext_size != (global_chunk_count - 1) * chunk_plain_size + final_plaintext_chunk_len`.
 - `shard_count > global_chunk_count`.
 - `max_shard_payload_len == 0`.
+- `max_shard_payload_len < frame_header_len + chunk_plain_size + min_tag_len` (i.e., `max_shard_payload_len` must accommodate at least one maximum-size chunk frame). For v1 AEADs, `min_tag_len = 16`, so the minimum is `40 + chunk_plain_size + 16` bytes.
 
 ## 6. Algorithm IDs
 
@@ -233,7 +234,9 @@ They are still untrusted until `header_mac` verifies. The only allowed v1 KDF pa
 | `argon2_parallelism` | `1..32`, inclusive |
 | Argon2id output length | exactly 32 bytes; not stored in the file |
 
-A decryptor MUST reject values outside these limits before allocating Argon2 memory. A decryptor MAY also fail closed if local policy sets a lower maximum memory or parallelism limit; that failure is an unsupported-parameters failure, not a successful password check.
+A decryptor MUST reject values outside these limits before allocating Argon2 memory. A decryptor MAY also fail closed if local policy sets a lower maximum memory or parallelism limit; that failure is an unsupported-parameters failure (exit code 1), not a successful password check (exit code 3).
+
+The BSEAL CLI exposes a runtime KDF resource policy — separate from the format-level bounds above — through the decrypt flags `--max-kdf-memory`, `--max-kdf-iterations`, and `--max-kdf-parallelism`. The defaults cover all built-in CLI presets (`paranoid` is the ceiling: 2 GiB / 4 iterations / 8 threads). Operators on constrained hosts should lower these limits. Policy violations are reported with the name of the flag that can override the limit.
 
 All three cost parameters — `argon2_memory_kib`, `argon2_iterations`, and `argon2_parallelism` — MUST be honored exactly by both the encryptor and decryptor. These parameters are not advisory or best-effort; they determine the Argon2id output and therefore the entire derived key schedule. Changing any one of them changes the master seed and all expanded keys.
 
@@ -278,14 +281,35 @@ master_seed = HKDF-SHA256(
 
 If no keyfiles are supplied, `keyfile_count` is `0` and `keyfile_mix` is still computed from the domain string and the zero count.
 
-The expanded keys are:
+The expanded keys are derived with an **empty HKDF salt** and each info string has the two-byte little-endian AEAD algorithm ID appended for domain separation across cipher suites:
 
 ```text
-chunk_encryption_key = HKDF-SHA256(master_seed, salt = archive_id, info = "BSEAL chunk encryption key v1", L = AEAD key length)
-manifest_key = HKDF-SHA256(master_seed, salt = archive_id, info = "BSEAL manifest key v1", L = 32)
-header_authentication_key = HKDF-SHA256(master_seed, salt = archive_id, info = "BSEAL header authentication key v1", L = 32)
-nonce_derivation_key = HKDF-SHA256(master_seed, salt = archive_id, info = "BSEAL nonce derivation key v1", L = 32)
+chunk_encryption_key = HKDF-SHA256(
+    ikm  = master_seed,
+    salt = {},
+    info = "BSEAL chunk encryption key v1" || u16le(aead_alg_id),
+    L    = AEAD key length)
+
+manifest_key = HKDF-SHA256(
+    ikm  = master_seed,
+    salt = {},
+    info = "BSEAL manifest key v1" || u16le(aead_alg_id),
+    L    = 32)
+
+header_authentication_key = HKDF-SHA256(
+    ikm  = master_seed,
+    salt = {},
+    info = "BSEAL header authentication key v1" || u16le(aead_alg_id),
+    L    = 32)
+
+nonce_derivation_key = HKDF-SHA256(
+    ikm  = master_seed,
+    salt = {},
+    info = "BSEAL nonce derivation key v1" || u16le(aead_alg_id),
+    L    = 32)
 ```
+
+`{}` denotes an empty salt; per RFC 5869 §2.2, when the salt is not provided, HKDF uses a string of `HashLen` zero bytes internally. Unlike `master_seed` derivation, these four calls do not bind `archive_id` in the salt — archive binding happens through the nonce prefix and the AEAD AAD, not through the key expansion step. The `|| u16le(aead_alg_id)` suffix ensures that XChaCha20-Poly1305 and AES-256-GCM archives produce different expanded keys from the same master seed.
 
 The `manifest_key` is reserved for encrypted archive-record metadata authentication in higher-level archive code. It is derived here for domain separation, even when this shard format does not use it directly.
 
@@ -464,6 +488,18 @@ Padding policy is represented by `padding_policy_id` and `padding_policy_value` 
 
 Padding is part of the encrypted plaintext archive stream. Padding bytes MUST be encoded as encrypted `RandomPadding` archive records after `ArchiveEnd`, not as unauthenticated bytes outside AEAD.
 
+### Archive record grammar
+
+The archive record stream MUST conform to the following grammar exactly:
+
+```
+stream      ::= ArchiveBegin content* ArchiveEnd RandomPadding*
+content     ::= DirectoryEntry | file | SymlinkEntry
+file        ::= FileEntry FileBytes* FileEnd
+```
+
+A `RandomPadding` record MUST NOT appear before `ArchiveEnd`. A decryptor MUST reject the archive if `RandomPadding` is encountered at any other position: before `ArchiveBegin`, between `ArchiveBegin` and `ArchiveEnd`, inside a file sequence, or between records and `ArchiveEnd`. Non-padding records after `ArchiveEnd` MUST also be rejected.
+
 Policy rules:
 
 - `none`: `padded_plaintext_size` is the archive record stream size without added `RandomPadding` records. The final chunk MAY be partial.
@@ -510,6 +546,12 @@ header_mac = HMAC-SHA256(
 
 The full 32-byte HMAC output is stored in the `header_mac` field.
 
+`header_mac` authenticates the exact bytes of the final stored `GlobalPublicHeaderV1` (at offset 0
+of the shard file) concatenated with the `ShardPublicHeaderV1` bytes with `header_mac` zeroed. The
+MAC is recomputed after the global header receives its final `global_chunk_count` and `shard_count`
+values; a MAC computed over placeholder values written during shard streaming will not match the
+final stored global header bytes.
+
 A decryptor MUST verify `header_mac` for every shard after deriving `header_authentication_key` and before decrypting any chunk. Verification MUST use a constant-time comparison. If any shard header MAC fails, the decryptor MUST reject the entire archive and MUST NOT attempt to recover partial plaintext.
 
 The decryptor MUST verify all shard header MACs before trusting shard ordering, chunk ranges, padding policy, or public sizes for output behavior. It may perform bounded structural parsing before authentication only to locate and validate fields needed for KDF and header MAC verification.
@@ -518,17 +560,22 @@ The decryptor MUST verify all shard header MACs before trusting shard ordering, 
 
 Chunk nonces are deterministic and are not stored in the file.
 
-For each frame:
+The v1 nonce formula uses a **prefix+counter** design. HKDF is called once per archive to derive a per-archive nonce prefix; the 8-byte little-endian `global_chunk_index` counter is appended to produce the final per-chunk nonce:
 
 ```text
-nonce = HKDF-SHA256(
-    ikm = nonce_derivation_key,
+prefix = HKDF-SHA256(
+    ikm  = nonce_derivation_key,
     salt = archive_id,
-    info = "BSEAL chunk nonce v1" || u16le(aead_alg_id) || u64le(global_chunk_index),
-    L = nonce_length_for_aead_alg_id)
+    info = "BSEAL chunk nonce prefix v1" || u16le(aead_alg_id),
+    L    = nonce_length_for_aead_alg_id - 8)
+
+nonce = prefix || u64le(global_chunk_index)
 ```
 
-Nonce lengths are defined by the AEAD algorithm table. Reusing the same `(chunk_encryption_key, nonce)` pair is forbidden. Since `global_chunk_index` is unique across the archive and `archive_id` is part of the key schedule and nonce derivation, each chunk in one archive has a unique nonce.
+For XChaCha20-Poly1305 (24-byte nonce): `prefix` is 16 bytes, counter is 8 bytes.
+For AES-256-GCM (12-byte nonce): `prefix` is 4 bytes, counter is 8 bytes.
+
+Nonce lengths are defined by the AEAD algorithm table. Reusing the same `(chunk_encryption_key, nonce)` pair is forbidden. Since `global_chunk_index` is unique across the archive and `archive_id` is mixed into the HKDF salt making the prefix per-archive, each chunk in one archive has a unique nonce. Uniqueness across archives is guaranteed because different archives have different `archive_id` values (32 bytes of CSPRNG output), so HKDF produces different prefixes and therefore different nonces even for the same chunk index.
 
 ## 18. AEAD AAD fields
 
@@ -718,3 +765,42 @@ required_feature_flags
 ```
 
 A reader that does not explicitly implement that future revision MUST fail closed.
+
+## 23. Compatibility promise and known-answer tests
+
+### 23.1 Stability guarantee
+
+The following aspects of the BSEAL-F1 format are now **frozen** and MUST NOT change without bumping the format version:
+
+- All field offsets and byte widths in `GlobalPublicHeaderV1`, `ShardPublicHeaderV1`, and `ChunkFrameHeaderV1`.
+- All magic byte sequences.
+- The exact domain strings used in `public_header_hash` and `header_mac` computations (including their NUL terminators).
+- The key derivation contract in §8, including the Argon2id usage, BLAKE3 keyfile framing, HKDF call structure, and the exact info strings with their `u16le(aead_alg_id)` suffixes.
+- The nonce derivation formula in §17.
+- The AEAD AAD construction in §18.
+
+### 23.2 Known-answer tests
+
+The test file `tests/io/TestFormatV1Kat.cpp` contains known-answer tests (KATs) that verify:
+
+1. `GlobalPublicHeaderV1` serializes to the exact 192-byte sequence stored in `tests/fixtures/format-v1/global_header.bin`.
+2. `ShardPublicHeaderV1` serializes to the exact 80-byte sequence stored in `tests/fixtures/format-v1/shard_header.bin`.
+3. `ChunkFrameHeaderV1` serializes to the exact 40-byte sequence stored in `tests/fixtures/format-v1/chunk_frame_header.bin`.
+4. `compute_public_header_hash` produces the exact 32 bytes in `tests/fixtures/format-v1/public_header_hash.bin`.
+5. `compute_shard_header_mac` produces the exact 32 bytes in `tests/fixtures/format-v1/header_mac.bin`.
+6. `expand_keys` (XChaCha20-Poly1305) produces the exact chunk key in `tests/fixtures/format-v1/xchacha20_chunk_key.bin`.
+7. `derive_chunk_nonce` (XChaCha20-Poly1305, chunks 0 and 1) produces the exact nonces in `tests/fixtures/format-v1/xchacha20_nonce_chunk{0,1}.bin`.
+8. `expand_keys` (AES-256-GCM) and `derive_chunk_nonce` (AES-256-GCM, chunks 0 and 1) produce the corresponding AES-GCM fixtures.
+9. `serialize_chunk_aad_v1` produces the exact bytes in `tests/fixtures/format-v1/chunk_aad.bin`.
+
+The fixture files are committed to source control. The test binary fails immediately when any computed value deviates from the stored fixture, making format drift detectable in CI.
+
+### 23.3 Fixture regeneration
+
+Running the test binary with the environment variable `BSEAL_REGENERATE_FIXTURES=1` overwrites all fixture files with the values computed by the current implementation. Use this only after a deliberate, reviewed format change and after verifying the new vectors against an independent implementation. Commit the updated fixtures alongside the code change.
+
+The deterministic test inputs used for all KAT fixtures are documented in `tests/fixtures/format-v1/README.md`.
+
+### 23.4 Pre-release caveat
+
+Despite the format now being frozen at the byte level, **no external cryptographic audit has been performed**. The design should not yet be relied upon for production secrets, long-term backups, or irreplaceable data. Format stability and security are independent properties: the former means the bytes won't change silently; the latter requires an audit.
