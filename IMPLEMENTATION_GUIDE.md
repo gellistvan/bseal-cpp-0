@@ -118,10 +118,12 @@ Still missing from the perf suite:
 
 The design goal is that end-to-end encryption/decryption is limited by storage throughput, not crypto.
 
-## Checked arithmetic policy
+## Common utility headers
 
-All size computations in the planning and padding code paths use the helpers in
-`src/common/CheckedArithmetic.hpp` rather than bare C++ arithmetic:
+### `src/common/CheckedArithmetic.hpp`
+
+All size computations in the planning and padding code paths use these inline helpers rather than
+bare C++ arithmetic:
 
 | Helper | Replaces |
 |---|---|
@@ -130,13 +132,42 @@ All size computations in the planning and padding code paths use the helpers in
 | `checked_mul_u64(a, b, ctx)` | `a * b` on `uint64_t` sizes |
 | `checked_ceil_div_u64(a, b, ctx)` | `(a + b - 1) / b` ceiling division |
 | `checked_next_power_of_two_u64(x, ctx)` | iterative left-shift power-of-two rounding |
+| `checked_int_size(n, what)` | cast `size_t` → `int` for OpenSSL/HMAC C APIs |
+| `checked_ull_size(n, what)` | cast `size_t` → `unsigned long long` for libsodium C APIs |
 
 All helpers throw `bseal::InvalidArgument` on overflow/underflow/zero-divisor, propagating as exit
-code 1. The `ctx` string names the call site so error messages are actionable.
+code 1. The `ctx`/`what` string names the call site so error messages are actionable.
 
 Functions that already perform manual overflow checks (e.g. `chunk_frame_v1_encoded_size` in
 `src/io/ShardFrame.cpp`) are intentionally left unchanged; they predate this policy and are
 correct as-is.
+
+### `src/common/Endian.hpp`
+
+All little-endian serialisation uses these inline helpers rather than per-module copies:
+
+| Helper | Writes |
+|---|---|
+| `append_u8(out, v)` | 1 byte |
+| `append_u16_le(out, v)` | 2 bytes, LE |
+| `append_u32_le(out, v)` | 4 bytes, LE |
+| `append_u64_le(out, v)` | 8 bytes, LE |
+| `append_i64_le(out, v)` | 8 bytes, LE (two's complement) |
+| `append_bytes(out, span)` | raw byte span |
+
+Used by: `archive/RecordFormat.cpp`, `archive/ArchiveWriter.cpp`, `io/ShardFrame.cpp`,
+`crypto/Kdf.cpp`, `crypto/KeySchedule.cpp`.
+
+### `src/crypto/Kdf.hpp` — shared `hkdf_sha256`
+
+`hkdf_sha256(ikm, salt, info, output_len)` is the single HKDF-SHA-256 implementation,
+defined in `Kdf.cpp` and shared by `KeySchedule.cpp`. Both callers derive domain-separated
+sub-keys from the same master seed using different `info` strings.
+
+### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition
+
+`validate_aead_request(key, nonce, expected_key_size, expected_nonce_size)` is the shared
+inline guard used by both AEAD backends before any OpenSSL or libsodium call.
 
 ## Malformed input coverage
 
