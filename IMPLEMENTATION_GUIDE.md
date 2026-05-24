@@ -169,6 +169,33 @@ sub-keys from the same master seed using different `info` strings.
 `validate_aead_request(key, nonce, expected_key_size, expected_nonce_size)` is the shared
 inline guard used by both AEAD backends before any OpenSSL or libsodium call.
 
+### `src/common/Endian.hpp`
+
+All little-endian serialisation uses these inline helpers rather than per-module copies:
+
+| Helper | Writes |
+|---|---|
+| `append_u8(out, v)` | 1 byte |
+| `append_u16_le(out, v)` | 2 bytes, LE |
+| `append_u32_le(out, v)` | 4 bytes, LE |
+| `append_u64_le(out, v)` | 8 bytes, LE |
+| `append_i64_le(out, v)` | 8 bytes, LE (two's complement) |
+| `append_bytes(out, span)` | raw byte span |
+
+Used by: `archive/RecordFormat.cpp`, `archive/ArchiveWriter.cpp`, `io/ShardFrame.cpp`,
+`crypto/Kdf.cpp`, `crypto/KeySchedule.cpp`.
+
+### `src/crypto/Kdf.hpp` — shared `hkdf_sha256`
+
+`hkdf_sha256(ikm, salt, info, output_len)` is the single HKDF-SHA-256 implementation,
+defined in `Kdf.cpp` and shared by `KeySchedule.cpp`. Both callers derive domain-separated
+sub-keys from the same master seed using different `info` strings.
+
+### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition
+
+`validate_aead_request(key, nonce, expected_key_size, expected_nonce_size)` is the shared
+inline guard used by both AEAD backends before any OpenSSL or libsodium call.
+
 ## Malformed input coverage
 
 Every byte of an archive is treated as attacker-controlled until authenticated. The test suite
