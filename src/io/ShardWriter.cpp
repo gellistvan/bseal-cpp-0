@@ -43,8 +43,7 @@ ShardWriter::ShardWriter(ShardWriterOptions options)
     validate_and_normalize_options();
     validate_shard_hash_vector();
     std::filesystem::create_directories(options_.output_dir);
-    if (all_zero(ConstByteSpan{options_.header_authentication_key.data(),
-                               options_.header_authentication_key.size()})) {
+    if (all_zero(options_.header_authentication_key.as_span())) {
         throw InvalidArgument("ShardWriter header_authentication_key is missing");
     }
 }
@@ -53,8 +52,7 @@ ShardWriter::ShardWriter(ShardWriterOptions options, UnsafeAllowMissingShardAadF
     : options_(std::move(options)) {
     validate_and_normalize_options();
     std::filesystem::create_directories(options_.output_dir);
-    if (all_zero(ConstByteSpan{options_.header_authentication_key.data(),
-                               options_.header_authentication_key.size()})) {
+    if (all_zero(options_.header_authentication_key.as_span())) {
         throw InvalidArgument("ShardWriter header_authentication_key is missing");
     }
 }
@@ -168,8 +166,7 @@ void ShardWriter::rewrite_shard_header(
     sh.reserved0               = 0;
 
     sh.header_mac = compute_shard_header_mac(
-        ConstByteSpan{options_.header_authentication_key.data(),
-                      options_.header_authentication_key.size()},
+        options_.header_authentication_key.as_span(),
         global_header,
         sh);
 

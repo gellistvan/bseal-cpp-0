@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/Types.hpp"
+#include "crypto/SecureBuffer.hpp"
 #include "io/ShardFrame.hpp"
 
 #include <array>
@@ -61,8 +62,9 @@ public:
     /// Production constructor: header_mac is verified against the supplied key
     /// for every shard before any chunk data is returned. All-zero keys are
     /// rejected because they almost certainly indicate an uninitialized caller.
+    /// The key is moved in and stored as a SecureBuffer; it is wiped on destruction.
     ShardReader(std::vector<ShardInfo>   shards,
-                std::array<Byte, 32>     header_authentication_key,
+                crypto::SecureBuffer     header_authentication_key,
                 ShardReaderValidation    validation = {});
 
     /// Test-only constructor: skips header_mac verification entirely.
@@ -86,9 +88,11 @@ private:
     void open_current_shard();
     void close_current_shard_and_check_trailing_garbage();
 
-    std::vector<ShardInfo>              shards_;
-    ShardReaderValidation               validation_{};
-    std::optional<std::array<Byte, 32>> auth_key_{};
+    std::vector<ShardInfo>  shards_;
+    ShardReaderValidation   validation_{};
+    // Empty SecureBuffer means "skip MAC verification" (test-only path).
+    // Non-empty: key is verified and wiped on ShardReader destruction.
+    crypto::SecureBuffer    auth_key_{};
     std::size_t              current_shard_pos_{0};
     std::uint64_t            current_record_in_shard_{0};
     std::uint64_t            expected_total_chunk_count_{0};

@@ -53,6 +53,8 @@ struct ArchiveOpenContext {
     bseal::io::GlobalPublicHeaderV1 global_header{};
 };
 
+// Read one line from stdin (no echo suppression).  Returns a plain std::string
+// that the caller is responsible for wiping with secure_wipe_string().
 std::string read_line_from_stdin(std::string_view prompt) {
     std::cerr << prompt;
     std::string line;
@@ -63,6 +65,8 @@ std::string read_line_from_stdin(std::string_view prompt) {
     return line;
 }
 
+// Read one line from stdin with echo disabled.  Returns a plain std::string
+// that the caller is responsible for wiping with secure_wipe_string().
 std::string prompt_hidden(std::string_view prompt) {
     std::cerr << prompt;
 
@@ -88,24 +92,38 @@ std::string prompt_hidden(std::string_view prompt) {
     return line;
 }
 
-std::string obtain_passphrase(bool passphrase_prompt) {
+// Transfer a std::string into a SecureBuffer, then wipe the source string.
+bseal::crypto::SecureBuffer string_to_secure_buffer(std::string& s) {
+    bseal::crypto::SecureBuffer buf(s.size());
+    std::copy(s.begin(), s.end(), buf.as_span().begin());
+    bseal::crypto::secure_wipe_string(s);
+    return buf;
+}
+
+// Acquire the passphrase from stdin and return it in a SecureBuffer.
+// The intermediate std::string staging buffers are wiped before they go
+// out of scope.
+bseal::crypto::SecureBuffer obtain_passphrase(bool passphrase_prompt) {
     if (passphrase_prompt) {
         auto first  = prompt_hidden("Passphrase: ");
         auto second = prompt_hidden("Confirm passphrase: ");
-        if (first != second) {
+        const bool match = (first == second);
+        bseal::crypto::secure_wipe_string(second);
+        if (!match) {
+            bseal::crypto::secure_wipe_string(first);
             throw bseal::InvalidArgument("passphrases do not match");
         }
         if (first.empty()) {
             throw bseal::InvalidArgument("passphrase must not be empty");
         }
-        return first;
+        return string_to_secure_buffer(first);
     }
 
     auto passphrase = read_line_from_stdin("Passphrase: ");
     if (passphrase.empty()) {
         throw bseal::InvalidArgument("passphrase must not be empty");
     }
-    return passphrase;
+    return string_to_secure_buffer(passphrase);
 }
 
 std::unique_ptr<bseal::crypto::CryptoBackend>
@@ -183,28 +201,31 @@ template <std::size_t N> std::array<Byte, N> random_array() {
     return out;
 }
 
-std::array<Byte, 32> copy_secret_32(bseal::crypto::SecureBuffer& key) {
-    auto sp = key.as_span();
-    if (sp.size() != 32) {
-        throw bseal::InvalidArgument("expected 32-byte key");
-    }
-    std::array<Byte, 32> out{};
-    std::copy(sp.begin(), sp.end(), out.begin());
-    return out;
-}
-
+// Derive ExpandedKeys from a passphrase held in a SecureBuffer.
+//
+// The passphrase is briefly staged in a KdfInput::passphrase_utf8 std::string
+// for the Argon2id call; that string is wiped with secure_wipe_string()
+// immediately after derive_master_seed() returns.  The SecureBuffer passphrase
+// argument is wiped at function entry once the bytes have been copied.
 bseal::crypto::ExpandedKeys
 derive_expanded_keys(const ArchiveOpenContext& context,
-                     std::string passphrase,
+                     bseal::crypto::SecureBuffer passphrase,
                      const std::vector<std::filesystem::path>& keyfiles) {
     bseal::crypto::KdfInput input;
-    input.passphrase_utf8 = std::move(passphrase);
-    input.keyfiles        = keyfiles;
-    input.salt            = context.kdf_salt;
-    input.archive_id      = context.archive_id;
-    input.params          = context.kdf_params;
+
+    // Staging copy: std::string is needed by KdfInput / Argon2id API.
+    const auto pp_span = passphrase.as_span();
+    input.passphrase_utf8.assign(
+        reinterpret_cast<const char*>(pp_span.data()), pp_span.size());
+    passphrase.wipe();
+
+    input.keyfiles   = keyfiles;
+    input.salt       = context.kdf_salt;
+    input.archive_id = context.archive_id;
+    input.params     = context.kdf_params;
 
     auto master_seed = bseal::crypto::derive_master_seed(input);
+    bseal::crypto::secure_wipe_string(input.passphrase_utf8);
     return bseal::crypto::expand_keys(master_seed.as_span(), context.suite);
 }
 
@@ -511,7 +532,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
     auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
-    const auto header_authentication_key = copy_secret_32(keys.header_authentication_key);
 
     // -----------------------------------------------------------------------
     // Streaming: plan layout from filesystem metadata, then stream file bytes.
@@ -607,8 +627,11 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     shard_options.output_dir              = options.output;
     shard_options.max_shard_payload_len   = options.shard_size;
     shard_options.filename_extension      = ".bin";
-    shard_options.global_header           = gh;
-    shard_options.header_authentication_key = header_authentication_key;
+    shard_options.global_header              = gh;
+    // Move the header_authentication_key from ExpandedKeys directly into
+    // ShardWriterOptions.  EncryptPipeline does not use this key; it only
+    // needs chunk_encryption_key and nonce_derivation_key.
+    shard_options.header_authentication_key  = std::move(keys.header_authentication_key);
     shard_options.per_shard_public_header_hashes = per_shard_hashes;
 
     bseal::io::ShardWriter shard_writer(std::move(shard_options));
@@ -688,9 +711,12 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
     validation.archive_id       = context.archive_id;
     validation.chunk_plain_size = context.chunk_plain_size;
 
+    // Move the header_authentication_key directly into ShardReader (no copy).
+    // verify_all_shard_header_macs() above already consumed it via .as_span();
+    // DecryptPipeline does not use this key.
     bseal::io::ShardReader shard_reader(
         std::move(shards),
-        copy_secret_32(keys.header_authentication_key),
+        std::move(keys.header_authentication_key),
         validation);
 
     bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{

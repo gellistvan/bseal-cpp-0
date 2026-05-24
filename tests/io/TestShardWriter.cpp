@@ -48,12 +48,12 @@ std::array<bseal::Byte, 32> test_archive_id() {
     return out;
 }
 
-std::array<bseal::Byte, 32> test_header_authentication_key() {
-    std::array<bseal::Byte, 32> out{};
+bseal::crypto::SecureBuffer test_header_authentication_key() {
+    bseal::Bytes out(32);
     for (std::size_t i = 0; i < out.size(); ++i) {
         out[i] = static_cast<bseal::Byte>(0x30u + i);
     }
-    return out;
+    return bseal::crypto::SecureBuffer(std::move(out));
 }
 
 /// Build a GlobalPublicHeaderV1 suitable for unit tests.

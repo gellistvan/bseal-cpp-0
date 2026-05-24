@@ -150,3 +150,119 @@ TEST(SecureMemzero, AcceptsNullAndZeroLength) {
     EXPECT_EQ(bytes[0], 0x01);
     EXPECT_EQ(bytes[1], 0x02);
 }
+
+// ---------------------------------------------------------------------------
+// Non-copyable / move-only properties
+// ---------------------------------------------------------------------------
+
+TEST(SecureBuffer, NotCopyConstructibleOrCopyAssignable) {
+    static_assert(!std::is_copy_constructible_v<SecureBuffer>,
+                  "SecureBuffer must not be copy-constructible");
+    static_assert(!std::is_copy_assignable_v<SecureBuffer>,
+                  "SecureBuffer must not be copy-assignable");
+}
+
+// ---------------------------------------------------------------------------
+// Move semantics — moved-from state
+// ---------------------------------------------------------------------------
+
+TEST(SecureBuffer, MoveConstructorLeavesSourceEmpty) {
+    SecureBuffer source(8);
+    source.as_span()[0] = 0x42;
+
+    SecureBuffer moved(std::move(source));
+
+    EXPECT_EQ(moved.size(), 8u);
+    EXPECT_EQ(moved.as_span()[0], 0x42);
+
+    // std::vector move guarantees the source is left in a valid, empty state.
+    EXPECT_TRUE(source.empty());
+    EXPECT_EQ(source.size(), 0u);
+}
+
+TEST(SecureBuffer, MoveAssignmentLeavesSourceEmpty) {
+    SecureBuffer source(4);
+    source.as_span()[0] = 0x99;
+
+    SecureBuffer destination(2);
+    destination = std::move(source);
+
+    EXPECT_EQ(destination.size(), 4u);
+    EXPECT_EQ(destination.as_span()[0], 0x99);
+    EXPECT_TRUE(source.empty());
+}
+
+// ---------------------------------------------------------------------------
+// resize() wipes truncated data
+// ---------------------------------------------------------------------------
+
+TEST(SecureBuffer, ResizeSmallerWipesTruncatedBytes) {
+    // We cannot observe the wiped bytes after resize because the vector has
+    // shrunk.  Instead verify the contract: that wipe ran without crashing
+    // and the remaining prefix is intact.
+    SecureBuffer buffer(8);
+    for (std::size_t i = 0; i < 8; ++i) {
+        buffer.as_span()[i] = static_cast<Byte>(i + 1);
+    }
+
+    buffer.resize(3);
+
+    ASSERT_EQ(buffer.size(), 3u);
+    EXPECT_EQ(buffer.as_span()[0], 1);
+    EXPECT_EQ(buffer.as_span()[1], 2);
+    EXPECT_EQ(buffer.as_span()[2], 3);
+    // Bytes [3..7] were zeroed before the vector shrink — correctness is
+    // verified by the secure_memzero branch in resize() (no observable side
+    // effect once the allocation has shrunk, but the code path executes).
+}
+
+// ---------------------------------------------------------------------------
+// wipe() idempotency
+// ---------------------------------------------------------------------------
+
+TEST(SecureBuffer, WipeIsIdempotent) {
+    SecureBuffer buffer(8);
+    std::fill(buffer.as_span().begin(), buffer.as_span().end(), static_cast<Byte>(0xBE));
+
+    buffer.wipe();
+    for (const Byte b : buffer.as_span()) {
+        EXPECT_EQ(b, 0x00);
+    }
+
+    // Calling wipe() a second time on an already-zeroed buffer must not crash
+    // or change the observable state.
+    buffer.wipe();
+    for (const Byte b : buffer.as_span()) {
+        EXPECT_EQ(b, 0x00);
+    }
+}
+
+TEST(SecureBuffer, WipeOnEmptyBufferIsIdempotent) {
+    SecureBuffer buffer;
+    buffer.wipe();  // Must not crash on a default-constructed (empty) buffer.
+    EXPECT_TRUE(buffer.empty());
+    buffer.wipe();
+    EXPECT_TRUE(buffer.empty());
+}
+
+// ---------------------------------------------------------------------------
+// secure_wipe_string
+// ---------------------------------------------------------------------------
+
+TEST(SecureWipeString, ZerosStringContents) {
+    std::string s = "sensitive-password";
+    const std::size_t n = s.size();
+
+    bseal::crypto::secure_wipe_string(s);
+
+    for (std::size_t i = 0; i < n; ++i) {
+        EXPECT_EQ(static_cast<unsigned char>(s[i]), 0u)
+            << "byte " << i << " was not zeroed";
+    }
+}
+
+TEST(SecureWipeString, HandlesEmptyString) {
+    std::string s;
+    bseal::crypto::secure_wipe_string(s);  // Must not crash.
+    EXPECT_TRUE(s.empty());
+}
