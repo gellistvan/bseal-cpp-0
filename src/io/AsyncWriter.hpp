@@ -32,21 +32,21 @@ namespace bseal::io {
     };
 
     class AsyncWriter {
-    public:
+      public:
         AsyncWriter();
         ~AsyncWriter();
 
-        AsyncWriter(const AsyncWriter&) = delete;
-        AsyncWriter& operator=(const AsyncWriter&) = delete;
+        AsyncWriter(const AsyncWriter &) = delete;
+        AsyncWriter &operator=(const AsyncWriter &) = delete;
 
-        AsyncWriter(AsyncWriter&&) = delete;
-        AsyncWriter& operator=(AsyncWriter&&) = delete;
+        AsyncWriter(AsyncWriter &&) = delete;
+        AsyncWriter &operator=(AsyncWriter &&) = delete;
 
         // Queues a write request.
         //
-        // This implementation writes at explicit offsets, so non-overlapping writes to the same file are
-        // conceptually safe. Higher layers should still preserve ordering when the target filesystem or
-        // platform requires it.
+        // This implementation writes at explicit offsets, so non-overlapping writes to the same
+        // file are conceptually safe. Higher layers should still preserve ordering when the target
+        // filesystem or platform requires it.
         void submit(WriteRequest request);
 
         // Returns one completed write result if available.
@@ -57,7 +57,7 @@ namespace bseal::io {
         // Stops accepting new work, drains queued writes, and joins workers.
         void close();
 
-    private:
+      private:
         void worker_loop();
         void push_exception(std::exception_ptr exception);
 

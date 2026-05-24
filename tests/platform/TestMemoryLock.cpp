@@ -40,7 +40,7 @@ TEST(MemoryLock, NonEmptyRegionReportsPageAlignedCoverage) {
 
 TEST(MemoryLock, UnalignedRegionStillCoversOriginalBytes) {
     std::vector<unsigned char> bytes(8192 + 17);
-    auto* unaligned = bytes.data() + 3;
+    auto *unaligned = bytes.data() + 3;
     constexpr std::size_t requested = 4097;
 
     bseal::platform::LockedMemoryRegion lock(unaligned, requested);

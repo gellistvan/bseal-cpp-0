@@ -20,7 +20,7 @@ namespace bseal::archive {
     };
 
     class ArchiveWriter {
-    public:
+      public:
         explicit ArchiveWriter(ArchiveWriterOptions options);
 
         // Compute the total plaintext stream size from filesystem metadata only.
@@ -34,17 +34,20 @@ namespace bseal::archive {
 
         // Returns the next encoded plaintext archive record.
         //
-        // This module does not encrypt and does not pad to fixed-size AEAD chunks. The crypto pipeline
-        // should concatenate these record bytes into fixed-size encrypted chunks and then apply cover
-        // padding if required.
+        // This module does not encrypt and does not pad to fixed-size AEAD chunks. The crypto
+        // pipeline should concatenate these record bytes into fixed-size encrypted chunks and then
+        // apply cover padding if required.
         [[nodiscard]] std::optional<Bytes> next_record_bytes();
 
         // Total bytes returned by next_record_bytes() so far.
-        [[nodiscard]] std::uint64_t bytes_produced() const noexcept { return bytes_produced_; }
+        [[nodiscard]] std::uint64_t bytes_produced() const noexcept {
+            return bytes_produced_;
+        }
 
-    private:
+      private:
         [[nodiscard]] std::optional<Bytes> next_file_bytes_or_end();
-        [[nodiscard]] EntryMetadata metadata_for(const std::filesystem::directory_entry& entry) const;
+        [[nodiscard]] EntryMetadata
+        metadata_for(const std::filesystem::directory_entry &entry) const;
         [[nodiscard]] Bytes make_record(RecordType type, Bytes payload = {}) const;
 
         ArchiveWriterOptions options_;

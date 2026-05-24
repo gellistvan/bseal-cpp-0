@@ -70,9 +70,8 @@ TEST(TestMetadata, DirectoryWithNonZeroSizeIsRejected) {
 
     const auto encoded = serialize_entry_metadata(metadata);
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        parse_entry_metadata(ConstByteSpan{encoded.data(), encoded.size()});
-    }));
+    EXPECT_TRUE(throws_invalid_argument(
+        [&] { parse_entry_metadata(ConstByteSpan{encoded.data(), encoded.size()}); }));
 }
 
 TEST(TestMetadata, NonSymlinkWithSymlinkTargetIsRejected) {
@@ -81,9 +80,8 @@ TEST(TestMetadata, NonSymlinkWithSymlinkTargetIsRejected) {
 
     const auto encoded = serialize_entry_metadata(metadata);
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        parse_entry_metadata(ConstByteSpan{encoded.data(), encoded.size()});
-    }));
+    EXPECT_TRUE(throws_invalid_argument(
+        [&] { parse_entry_metadata(ConstByteSpan{encoded.data(), encoded.size()}); }));
 }
 
 TEST(TestMetadata, SymlinkWithNonZeroSizeIsRejected) {
@@ -92,7 +90,6 @@ TEST(TestMetadata, SymlinkWithNonZeroSizeIsRejected) {
 
     const auto encoded = serialize_entry_metadata(metadata);
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        parse_entry_metadata(ConstByteSpan{encoded.data(), encoded.size()});
-    }));
+    EXPECT_TRUE(throws_invalid_argument(
+        [&] { parse_entry_metadata(ConstByteSpan{encoded.data(), encoded.size()}); }));
 }

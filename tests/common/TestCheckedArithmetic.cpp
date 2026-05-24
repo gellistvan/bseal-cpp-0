@@ -8,7 +8,7 @@
 
 namespace {
 
-constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
+    constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
 
 } // namespace
 
@@ -90,16 +90,14 @@ TEST(CheckedArithmetic, NextPowerOfTwoFailsAbove2Pow63) {
 TEST(CheckedArithmetic, PowerOfTwoOverflowMimicsPaddingPolicy) {
     // raw_size just above 2^63 → next power of two would overflow → throws.
     constexpr std::uint64_t kPow63 = std::uint64_t{1} << 63;
-    EXPECT_THROW(
-        bseal::checked_next_power_of_two_u64(kPow63 + 1, "power2 padding: target size"),
-        bseal::InvalidArgument);
+    EXPECT_THROW(bseal::checked_next_power_of_two_u64(kPow63 + 1, "power2 padding: target size"),
+                 bseal::InvalidArgument);
 }
 
 TEST(CheckedArithmetic, ChunkPaddingNearMaxOverflows) {
     // Adding chunk_plain_size to a size near UINT64_MAX overflows.
     constexpr std::uint64_t nearly_max = std::numeric_limits<std::uint64_t>::max() - 10;
     constexpr std::uint64_t chunk_size = 65536;
-    EXPECT_THROW(
-        bseal::checked_add_u64(nearly_max, chunk_size, "chunk padding: padded size"),
-        bseal::InvalidArgument);
+    EXPECT_THROW(bseal::checked_add_u64(nearly_max, chunk_size, "chunk padding: padded size"),
+                 bseal::InvalidArgument);
 }

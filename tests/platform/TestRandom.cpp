@@ -1,5 +1,5 @@
-#include "platform/Random.hpp"
 #include "common/Errors.hpp"
+#include "platform/Random.hpp"
 
 #include <gtest/gtest.h>
 
@@ -11,13 +11,13 @@
 
 namespace {
 
-bool is_base32_no_padding_char(char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= '2' && c <= '7');
-}
+    bool is_base32_no_padding_char(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= '2' && c <= '7');
+    }
 
-bool is_base62_char(char c) {
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
+    bool is_base62_char(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
 
 } // namespace
 

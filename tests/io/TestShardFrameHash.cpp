@@ -16,66 +16,66 @@
 
 namespace {
 
-using bseal::Byte;
+    using bseal::Byte;
 
-// Build a fully deterministic GlobalPublicHeaderV1 suitable for hash tests.
-bseal::io::GlobalPublicHeaderV1 make_test_global_header() {
-    bseal::io::GlobalPublicHeaderV1 gh{};
-    gh.magic             = bseal::io::kGlobalHeaderV1Magic;
-    gh.format_major      = 1;
-    gh.format_minor      = 0;
-    gh.global_header_len = static_cast<std::uint32_t>(bseal::io::kGlobalPublicHeaderV1Size);
-    gh.shard_header_len  = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
-    gh.frame_header_len  = 40;
-    gh.global_flags      = 0;
-    gh.archive_id.fill(Byte{0});
-    gh.aead_alg_id       = bseal::io::kAeadAlgIdXChaCha20Poly1305;
-    gh.kdf_alg_id        = bseal::io::kKdfAlgIdArgon2idHkdf;
-    gh.hash_alg_id       = bseal::io::kHashAlgIdBlake3;
-    gh.mac_alg_id        = bseal::io::kMacAlgIdHmacSha256;
-    gh.kdf_salt.fill(Byte{0});
-    gh.argon2_version    = 0x13;
-    gh.argon2_memory_kib = 0;
-    gh.argon2_iterations = 0;
-    gh.argon2_parallelism = 0;
-    gh.chunk_plain_size  = 16u * 1024u * 1024u;
-    gh.shard_count       = 1;
-    gh.global_chunk_count = 1;
-    gh.padded_plaintext_size = 100;
-    gh.final_plaintext_chunk_len = 100;
-    gh.padding_policy_id    = 0;
-    gh.reserved0            = 0;
-    gh.padding_policy_value = 0;
-    gh.max_shard_payload_len = 4ull * 1024ull * 1024ull * 1024ull;
-    gh.required_feature_flags = 0;
-    gh.reserved1.fill(Byte{0});
-    return gh;
-}
-
-// Build a deterministic ShardPublicHeaderV1 for shard `idx`.
-bseal::io::ShardPublicHeaderV1 make_test_shard_header(std::uint32_t idx) {
-    bseal::io::ShardPublicHeaderV1 sh{};
-    sh.shard_magic             = bseal::io::kShardHeaderV1Magic;
-    sh.shard_header_len        = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
-    sh.shard_index             = idx;
-    sh.first_global_chunk_index = static_cast<std::uint64_t>(idx);
-    sh.shard_chunk_count       = 1;
-    sh.shard_payload_len       = 1000;
-    sh.header_mac.fill(Byte{0}); // zeroed — same as input to hash per FORMAT.md §15
-    sh.reserved0               = 0;
-    return sh;
-}
-
-// hex_bytes: parse a lowercase hex string into a 32-byte array.
-std::array<Byte, 32> hex32(const char* s) {
-    std::array<Byte, 32> out{};
-    for (std::size_t i = 0; i < 32; ++i) {
-        unsigned int byte_val = 0;
-        sscanf(s + 2 * i, "%02x", &byte_val);  // NOLINT
-        out[i] = static_cast<Byte>(byte_val);
+    // Build a fully deterministic GlobalPublicHeaderV1 suitable for hash tests.
+    bseal::io::GlobalPublicHeaderV1 make_test_global_header() {
+        bseal::io::GlobalPublicHeaderV1 gh{};
+        gh.magic = bseal::io::kGlobalHeaderV1Magic;
+        gh.format_major = 1;
+        gh.format_minor = 0;
+        gh.global_header_len = static_cast<std::uint32_t>(bseal::io::kGlobalPublicHeaderV1Size);
+        gh.shard_header_len = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
+        gh.frame_header_len = 40;
+        gh.global_flags = 0;
+        gh.archive_id.fill(Byte{0});
+        gh.aead_alg_id = bseal::io::kAeadAlgIdXChaCha20Poly1305;
+        gh.kdf_alg_id = bseal::io::kKdfAlgIdArgon2idHkdf;
+        gh.hash_alg_id = bseal::io::kHashAlgIdBlake3;
+        gh.mac_alg_id = bseal::io::kMacAlgIdHmacSha256;
+        gh.kdf_salt.fill(Byte{0});
+        gh.argon2_version = 0x13;
+        gh.argon2_memory_kib = 0;
+        gh.argon2_iterations = 0;
+        gh.argon2_parallelism = 0;
+        gh.chunk_plain_size = 16u * 1024u * 1024u;
+        gh.shard_count = 1;
+        gh.global_chunk_count = 1;
+        gh.padded_plaintext_size = 100;
+        gh.final_plaintext_chunk_len = 100;
+        gh.padding_policy_id = 0;
+        gh.reserved0 = 0;
+        gh.padding_policy_value = 0;
+        gh.max_shard_payload_len = 4ull * 1024ull * 1024ull * 1024ull;
+        gh.required_feature_flags = 0;
+        gh.reserved1.fill(Byte{0});
+        return gh;
     }
-    return out;
-}
+
+    // Build a deterministic ShardPublicHeaderV1 for shard `idx`.
+    bseal::io::ShardPublicHeaderV1 make_test_shard_header(std::uint32_t idx) {
+        bseal::io::ShardPublicHeaderV1 sh{};
+        sh.shard_magic = bseal::io::kShardHeaderV1Magic;
+        sh.shard_header_len = static_cast<std::uint32_t>(bseal::io::kShardPublicHeaderV1Size);
+        sh.shard_index = idx;
+        sh.first_global_chunk_index = static_cast<std::uint64_t>(idx);
+        sh.shard_chunk_count = 1;
+        sh.shard_payload_len = 1000;
+        sh.header_mac.fill(Byte{0}); // zeroed — same as input to hash per FORMAT.md §15
+        sh.reserved0 = 0;
+        return sh;
+    }
+
+    // hex_bytes: parse a lowercase hex string into a 32-byte array.
+    std::array<Byte, 32> hex32(const char *s) {
+        std::array<Byte, 32> out{};
+        for (std::size_t i = 0; i < 32; ++i) {
+            unsigned int byte_val = 0;
+            sscanf(s + 2 * i, "%02x", &byte_val); // NOLINT
+            out[i] = static_cast<Byte>(byte_val);
+        }
+        return out;
+    }
 
 } // namespace
 
@@ -111,8 +111,8 @@ TEST(ShardFrameHash, PublicHeaderHashMatchesKnownBlake3Vector) {
     static constexpr auto kExpected =
         "e91e2df1e5a70655a6fb1c02a70998fcd437cc0397c803c7d13cc537aed5913c";
 
-    const auto gh     = make_test_global_header();
-    const auto sh     = make_test_shard_header(0);
+    const auto gh = make_test_global_header();
+    const auto sh = make_test_shard_header(0);
     const auto actual = bseal::io::compute_public_header_hash(gh, sh);
 
     EXPECT_EQ(actual, hex32(kExpected))
@@ -125,13 +125,12 @@ TEST(ShardFrameHash, PublicHeaderHashMatchesKnownBlake3Vector) {
 // ---------------------------------------------------------------------------
 
 TEST(ShardFrameHash, PublicHeaderHashChangesWhenShardIndexChanges) {
-    const auto gh    = make_test_global_header();
+    const auto gh = make_test_global_header();
     const auto hash0 = bseal::io::compute_public_header_hash(gh, make_test_shard_header(0));
     const auto hash1 = bseal::io::compute_public_header_hash(gh, make_test_shard_header(1));
 
-    EXPECT_NE(hash0, hash1)
-        << "public_header_hash must differ for different shard_index values; "
-           "the per-shard binding is broken";
+    EXPECT_NE(hash0, hash1) << "public_header_hash must differ for different shard_index values; "
+                               "the per-shard binding is broken";
 
     // Also verify shard 1 matches its own known vector.
     static constexpr auto kExpectedShard1 =
@@ -152,8 +151,8 @@ TEST(ShardFrameHash, PublicHeaderHashIsNotBlake2b) {
     static constexpr auto kBlake2bSameInput =
         "49777571ae76febcf6a4990dd51ce7d9d00237d34ebf9b02b71f3af27f66d158";
 
-    const auto gh     = make_test_global_header();
-    const auto sh     = make_test_shard_header(0);
+    const auto gh = make_test_global_header();
+    const auto sh = make_test_shard_header(0);
     const auto actual = bseal::io::compute_public_header_hash(gh, sh);
 
     EXPECT_NE(actual, hex32(kBlake2bSameInput))
@@ -176,7 +175,7 @@ TEST(ShardFrameHash, PublicHeaderHashMatchesRawBlake3Computation) {
     const auto sh = make_test_shard_header(0);
 
     const auto global_bytes = bseal::io::serialize_global_public_header(gh);
-    const auto shard_bytes  = bseal::io::serialize_shard_public_header_for_mac(sh);
+    const auto shard_bytes = bseal::io::serialize_shard_public_header_for_mac(sh);
 
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);

@@ -31,20 +31,18 @@ TEST(TestArchiveReader, ExtractsDirectoryAndFilesFromRecords) {
     records.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
     records.push_back(record_bytes(RecordType::DirectoryEntry,
                                    serialize_entry_metadata(directory_metadata("dir"))));
-    records.push_back(record_bytes(RecordType::FileEntry,
-                                   serialize_entry_metadata(file_metadata("hello.txt",
-                                                                          hello.size()))));
+    records.push_back(record_bytes(
+        RecordType::FileEntry, serialize_entry_metadata(file_metadata("hello.txt", hello.size()))));
     records.push_back(record_bytes(RecordType::FileBytes, hello));
     records.push_back(record_bytes(RecordType::FileEnd));
-    records.push_back(record_bytes(RecordType::FileEntry,
-                                   serialize_entry_metadata(file_metadata("dir/nested.txt",
-                                                                          nested.size()))));
+    records.push_back(record_bytes(RecordType::FileEntry, serialize_entry_metadata(file_metadata(
+                                                              "dir/nested.txt", nested.size()))));
     records.push_back(record_bytes(RecordType::FileBytes, nested));
     records.push_back(record_bytes(RecordType::FileEnd));
     records.push_back(record_bytes(RecordType::ArchiveEnd));
     records.push_back(record_bytes(RecordType::RandomPadding, Bytes{0, 1, 2, 3}));
 
-    for (const auto& record : records) {
+    for (const auto &record : records) {
         consume_in_fragments(reader, record);
     }
 
@@ -95,9 +93,7 @@ TEST(TestArchiveReader, RejectsUnsafeArchivePath) {
     const auto bad_record =
         record_bytes(RecordType::FileEntry, serialize_entry_metadata(bad_metadata));
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        consume_in_fragments(reader, bad_record);
-    }));
+    EXPECT_TRUE(throws_invalid_argument([&] { consume_in_fragments(reader, bad_record); }));
 
     EXPECT_FALSE(std::filesystem::exists(output.path().parent_path() / "evil.txt"));
 }
@@ -140,9 +136,8 @@ TEST(TestArchiveReader, RejectsFileEndBeforeDeclaredSizeIsWritten) {
                                       serialize_entry_metadata(file_metadata("file.txt", 10))));
     consume_in_fragments(reader, record_bytes(RecordType::FileBytes, bytes_from_string("abc")));
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
-    }));
+    EXPECT_TRUE(throws_invalid_argument(
+        [&] { consume_in_fragments(reader, record_bytes(RecordType::FileEnd)); }));
 }
 
 TEST(TestArchiveReader, FinishRejectsMissingArchiveEnd) {
@@ -157,9 +152,7 @@ TEST(TestArchiveReader, FinishRejectsMissingArchiveEnd) {
 
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        reader.finish();
-    }));
+    EXPECT_TRUE(throws_invalid_argument([&] { reader.finish(); }));
 }
 
 TEST(TestArchiveReader, RejectsExistingOutputWithoutOverwrite) {
@@ -178,17 +171,14 @@ TEST(TestArchiveReader, RejectsExistingOutputWithoutOverwrite) {
     const auto replacement = bytes_from_string("replacement");
 
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-    consume_in_fragments(reader,
-                         record_bytes(RecordType::FileEntry,
-                                      serialize_entry_metadata(file_metadata("hello.txt",
-                                                                             replacement.size()))));
+    consume_in_fragments(reader, record_bytes(RecordType::FileEntry,
+                                              serialize_entry_metadata(
+                                                  file_metadata("hello.txt", replacement.size()))));
     consume_in_fragments(reader, record_bytes(RecordType::FileBytes, replacement));
     consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveEnd));
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        reader.finish();
-    }));
+    EXPECT_TRUE(throws_invalid_argument([&] { reader.finish(); }));
 
     EXPECT_EQ(read_text_file(output.path() / "hello.txt"), "existing");
 }
@@ -211,8 +201,7 @@ TEST(TestArchiveReader, RejectsRandomPaddingBeforeArchiveBegin) {
     ArchiveReader reader(options);
 
     EXPECT_TRUE(throws_invalid_argument([&] {
-        consume_in_fragments(reader,
-                             record_bytes(RecordType::RandomPadding, Bytes{0x42}));
+        consume_in_fragments(reader, record_bytes(RecordType::RandomPadding, Bytes{0x42}));
     }));
 }
 
@@ -229,8 +218,7 @@ TEST(TestArchiveReader, RejectsRandomPaddingAfterArchiveBeginBeforeArchiveEnd) {
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
 
     EXPECT_TRUE(throws_invalid_argument([&] {
-        consume_in_fragments(reader,
-                             record_bytes(RecordType::RandomPadding, Bytes{0x42}));
+        consume_in_fragments(reader, record_bytes(RecordType::RandomPadding, Bytes{0x42}));
     }));
 }
 
@@ -245,13 +233,11 @@ TEST(TestArchiveReader, RejectsRandomPaddingInsideOpenFile) {
     ArchiveReader reader(options);
 
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-    consume_in_fragments(reader,
-                         record_bytes(RecordType::FileEntry,
-                                      serialize_entry_metadata(file_metadata("f.txt", 4))));
+    consume_in_fragments(reader, record_bytes(RecordType::FileEntry,
+                                              serialize_entry_metadata(file_metadata("f.txt", 4))));
 
     EXPECT_TRUE(throws_invalid_argument([&] {
-        consume_in_fragments(reader,
-                             record_bytes(RecordType::RandomPadding, Bytes{0x01, 0x02}));
+        consume_in_fragments(reader, record_bytes(RecordType::RandomPadding, Bytes{0x01, 0x02}));
     }));
 }
 
@@ -267,16 +253,14 @@ TEST(TestArchiveReader, RejectsRandomPaddingBetweenFileEndAndArchiveEnd) {
 
     const auto data = bytes_from_string("data");
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-    consume_in_fragments(reader,
-                         record_bytes(RecordType::FileEntry,
-                                      serialize_entry_metadata(file_metadata("f.txt",
-                                                                             data.size()))));
+    consume_in_fragments(
+        reader, record_bytes(RecordType::FileEntry,
+                             serialize_entry_metadata(file_metadata("f.txt", data.size()))));
     consume_in_fragments(reader, record_bytes(RecordType::FileBytes, data));
     consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
 
     EXPECT_TRUE(throws_invalid_argument([&] {
-        consume_in_fragments(reader,
-                             record_bytes(RecordType::RandomPadding, Bytes{0x55}));
+        consume_in_fragments(reader, record_bytes(RecordType::RandomPadding, Bytes{0x55}));
     }));
 }
 
@@ -341,14 +325,14 @@ TEST(TestArchiveReader, RegularFileAtOldFixedTempNameDoesNotBlockExtraction) {
     const auto archive = [&] {
         std::vector<Bytes> recs;
         recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-        recs.push_back(record_bytes(RecordType::FileEntry,
-                                   serialize_entry_metadata(file_metadata("file.txt",
-                                                                          content.size()))));
+        recs.push_back(record_bytes(RecordType::FileEntry, serialize_entry_metadata(file_metadata(
+                                                               "file.txt", content.size()))));
         recs.push_back(record_bytes(RecordType::FileBytes, content));
         recs.push_back(record_bytes(RecordType::FileEnd));
         recs.push_back(record_bytes(RecordType::ArchiveEnd));
         Bytes all;
-        for (auto& r : recs) all.insert(all.end(), r.begin(), r.end());
+        for (auto &r : recs)
+            all.insert(all.end(), r.begin(), r.end());
         return all;
     }();
     reader.consume(ConstByteSpan{archive.data(), archive.size()});
@@ -380,14 +364,14 @@ TEST(TestArchiveReader, SymlinkAtOldFixedTempNameDoesNotBlockExtraction) {
     const auto archive = [&] {
         std::vector<Bytes> recs;
         recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-        recs.push_back(record_bytes(RecordType::FileEntry,
-                                   serialize_entry_metadata(file_metadata("file.txt",
-                                                                          content.size()))));
+        recs.push_back(record_bytes(RecordType::FileEntry, serialize_entry_metadata(file_metadata(
+                                                               "file.txt", content.size()))));
         recs.push_back(record_bytes(RecordType::FileBytes, content));
         recs.push_back(record_bytes(RecordType::FileEnd));
         recs.push_back(record_bytes(RecordType::ArchiveEnd));
         Bytes all;
-        for (auto& r : recs) all.insert(all.end(), r.begin(), r.end());
+        for (auto &r : recs)
+            all.insert(all.end(), r.begin(), r.end());
         return all;
     }();
     reader.consume(ConstByteSpan{archive.data(), archive.size()});
@@ -402,22 +386,20 @@ TEST(TestArchiveReader, SymlinkEntryRejectedByDefault) {
     TemporaryDirectory output;
 
     ArchiveReaderOptions options;
-    options.output_root       = output.path();
-    options.allow_symlinks    = false;
+    options.output_root = output.path();
+    options.allow_symlinks = false;
     options.restore_permissions = false;
-    options.restore_timestamps  = false;
+    options.restore_timestamps = false;
 
     ArchiveReader reader(options);
 
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
 
-    const auto symlink_rec = record_bytes(
-        RecordType::SymlinkEntry,
-        serialize_entry_metadata(symlink_metadata("link.txt", "target.txt")));
+    const auto symlink_rec =
+        record_bytes(RecordType::SymlinkEntry,
+                     serialize_entry_metadata(symlink_metadata("link.txt", "target.txt")));
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        consume_in_fragments(reader, symlink_rec);
-    }));
+    EXPECT_TRUE(throws_invalid_argument([&] { consume_in_fragments(reader, symlink_rec); }));
 }
 
 TEST(TestArchiveReader, OverwriteDoesNotFollowSymlinkOutsideOutputRoot) {
@@ -435,18 +417,18 @@ TEST(TestArchiveReader, OverwriteDoesNotFollowSymlinkOutsideOutputRoot) {
     ASSERT_FALSE(ec) << "test setup: create_symlink failed: " << ec.message();
 
     ArchiveReaderOptions options;
-    options.output_root       = output.path();
-    options.overwrite_existing  = true;
+    options.output_root = output.path();
+    options.overwrite_existing = true;
     options.restore_permissions = false;
-    options.restore_timestamps  = false;
+    options.restore_timestamps = false;
 
     ArchiveReader reader(options);
 
     const auto payload = bytes_from_string("pwned");
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
     consume_in_fragments(reader,
-        record_bytes(RecordType::FileEntry,
-                     serialize_entry_metadata(file_metadata("victim.txt", payload.size()))));
+                         record_bytes(RecordType::FileEntry, serialize_entry_metadata(file_metadata(
+                                                                 "victim.txt", payload.size()))));
     consume_in_fragments(reader, record_bytes(RecordType::FileBytes, payload));
     consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveEnd));
@@ -467,20 +449,19 @@ TEST(TestArchiveReader, FailedArchiveDoesNotCommitPartialOutput) {
         TemporaryDirectory output;
 
         ArchiveReaderOptions options;
-        options.output_root       = output.path();
+        options.output_root = output.path();
         options.restore_permissions = false;
-        options.restore_timestamps  = false;
+        options.restore_timestamps = false;
 
         {
             ArchiveReader reader(options);
 
             const auto payload = bytes_from_string("partial");
             consume_in_fragments(reader,
-                record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-            consume_in_fragments(reader,
-                record_bytes(RecordType::FileEntry,
-                             serialize_entry_metadata(file_metadata("partial.txt",
-                                                                     payload.size()))));
+                                 record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+            consume_in_fragments(
+                reader, record_bytes(RecordType::FileEntry, serialize_entry_metadata(file_metadata(
+                                                                "partial.txt", payload.size()))));
             consume_in_fragments(reader, record_bytes(RecordType::FileBytes, payload));
             consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
             // Intentionally no ArchiveEnd and no finish() — destructor must clean up.
@@ -495,20 +476,19 @@ TEST(TestArchiveReader, FailedArchiveDoesNotCommitPartialOutput) {
         TemporaryDirectory output;
 
         ArchiveReaderOptions options;
-        options.output_root       = output.path();
+        options.output_root = output.path();
         options.restore_permissions = false;
-        options.restore_timestamps  = false;
+        options.restore_timestamps = false;
 
         {
             ArchiveReader reader(options);
 
             const auto payload = bytes_from_string("partial");
             consume_in_fragments(reader,
-                record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-            consume_in_fragments(reader,
-                record_bytes(RecordType::FileEntry,
-                             serialize_entry_metadata(file_metadata("partial.txt",
-                                                                     payload.size()))));
+                                 record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+            consume_in_fragments(
+                reader, record_bytes(RecordType::FileEntry, serialize_entry_metadata(file_metadata(
+                                                                "partial.txt", payload.size()))));
             consume_in_fragments(reader, record_bytes(RecordType::FileBytes, payload));
             consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
             // finish() should reject the missing ArchiveEnd.
@@ -536,10 +516,9 @@ TEST(TestArchiveReader, OverwriteExistingOutputWhenEnabled) {
     const auto replacement = bytes_from_string("replacement");
 
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-    consume_in_fragments(reader,
-                         record_bytes(RecordType::FileEntry,
-                                      serialize_entry_metadata(file_metadata("hello.txt",
-                                                                             replacement.size()))));
+    consume_in_fragments(reader, record_bytes(RecordType::FileEntry,
+                                              serialize_entry_metadata(
+                                                  file_metadata("hello.txt", replacement.size()))));
     consume_in_fragments(reader, record_bytes(RecordType::FileBytes, replacement));
     consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
     consume_in_fragments(reader, record_bytes(RecordType::ArchiveEnd));
@@ -555,21 +534,21 @@ TEST(TestArchiveReader, OverwriteExistingOutputWhenEnabled) {
 
 namespace {
 
-// Builds a minimal valid archive byte stream containing a single file.
-Bytes make_minimal_archive(const Bytes& content, std::string_view filename = "file.txt") {
-    std::vector<Bytes> recs;
-    recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
-    recs.push_back(record_bytes(RecordType::FileEntry,
-                                serialize_entry_metadata(
-                                    file_metadata(std::filesystem::path(filename),
-                                                  content.size()))));
-    recs.push_back(record_bytes(RecordType::FileBytes, content));
-    recs.push_back(record_bytes(RecordType::FileEnd));
-    recs.push_back(record_bytes(RecordType::ArchiveEnd));
-    Bytes all;
-    for (auto& r : recs) all.insert(all.end(), r.begin(), r.end());
-    return all;
-}
+    // Builds a minimal valid archive byte stream containing a single file.
+    Bytes make_minimal_archive(const Bytes &content, std::string_view filename = "file.txt") {
+        std::vector<Bytes> recs;
+        recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+        recs.push_back(record_bytes(RecordType::FileEntry,
+                                    serialize_entry_metadata(file_metadata(
+                                        std::filesystem::path(filename), content.size()))));
+        recs.push_back(record_bytes(RecordType::FileBytes, content));
+        recs.push_back(record_bytes(RecordType::FileEnd));
+        recs.push_back(record_bytes(RecordType::ArchiveEnd));
+        Bytes all;
+        for (auto &r : recs)
+            all.insert(all.end(), r.begin(), r.end());
+        return all;
+    }
 
 } // namespace
 
@@ -581,8 +560,7 @@ TEST(TestArchiveReader, SymlinkAtFixedTempNameDoesNotRedirectExtraction) {
 
     // Plant a symlink at the OLD fixed temp name. The reader now uses a randomized
     // name so this symlink is never encountered during temp directory creation.
-    std::filesystem::create_symlink(attacker_dir.path(),
-                                    output.path() / ".bseal-extract-tmp");
+    std::filesystem::create_symlink(attacker_dir.path(), output.path() / ".bseal-extract-tmp");
 
     ArchiveReaderOptions opts;
     opts.output_root = output.path();
@@ -607,8 +585,7 @@ TEST(TestArchiveReader, OverwriteDoesNotFollowSymlinkInFinalDestination) {
     // External sentinel that must not be modified.
     write_text_file(external.path() / "sentinel.txt", "original");
     // Symlink in output pointing at external sentinel.
-    std::filesystem::create_symlink(external.path() / "sentinel.txt",
-                                    output.path() / "file.txt");
+    std::filesystem::create_symlink(external.path() / "sentinel.txt", output.path() / "file.txt");
 
     ArchiveReaderOptions opts;
     opts.output_root = output.path();
@@ -638,8 +615,7 @@ TEST(TestArchiveReader, HardenedModeRejectsSymlinkInFinalOutputPathComponent) {
     TemporaryDirectory external;
     std::filesystem::create_directory(external.path() / "subdir");
     // Plant a symlink in output_root so "subdir" points outside output_root.
-    std::filesystem::create_symlink(external.path() / "subdir",
-                                    output.path() / "subdir");
+    std::filesystem::create_symlink(external.path() / "subdir", output.path() / "subdir");
 
     ArchiveReaderOptions opts;
     opts.output_root = output.path();
@@ -653,14 +629,14 @@ TEST(TestArchiveReader, HardenedModeRejectsSymlinkInFinalOutputPathComponent) {
     recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
     recs.push_back(record_bytes(RecordType::DirectoryEntry,
                                 serialize_entry_metadata(directory_metadata("subdir"))));
-    recs.push_back(record_bytes(RecordType::FileEntry,
-                                serialize_entry_metadata(
-                                    file_metadata("subdir/file.txt", content.size()))));
+    recs.push_back(record_bytes(RecordType::FileEntry, serialize_entry_metadata(file_metadata(
+                                                           "subdir/file.txt", content.size()))));
     recs.push_back(record_bytes(RecordType::FileBytes, content));
     recs.push_back(record_bytes(RecordType::FileEnd));
     recs.push_back(record_bytes(RecordType::ArchiveEnd));
     Bytes all;
-    for (auto& r : recs) all.insert(all.end(), r.begin(), r.end());
+    for (auto &r : recs)
+        all.insert(all.end(), r.begin(), r.end());
 
     ArchiveReader reader(opts);
     reader.consume(ConstByteSpan{all.data(), all.size()});
@@ -695,7 +671,7 @@ TEST(TestArchiveReader, FailedDecryptCleansOnlyItsOwnRandomTempDir) {
     EXPECT_TRUE(std::filesystem::exists(sibling));
 
     // Only the sibling should remain; our random temp dir must be gone.
-    for (const auto& entry : std::filesystem::directory_iterator(output.path())) {
+    for (const auto &entry : std::filesystem::directory_iterator(output.path())) {
         const auto name = entry.path().filename().string();
         if (name.rfind(".bseal-extract-tmp.", 0) == 0) {
             EXPECT_EQ(name, ".bseal-extract-tmp.sibling000000000000000")
@@ -717,7 +693,7 @@ TEST(TestArchiveReader, RandomTempNamesDifferBetweenInstances) {
         opts.restore_permissions = false;
         opts.restore_timestamps = false;
         ArchiveReader reader(opts);
-        for (const auto& e : std::filesystem::directory_iterator(output1.path())) {
+        for (const auto &e : std::filesystem::directory_iterator(output1.path())) {
             if (e.path().filename().string().rfind(".bseal-extract-tmp.", 0) == 0) {
                 tmp1 = e.path().filename();
             }
@@ -730,7 +706,7 @@ TEST(TestArchiveReader, RandomTempNamesDifferBetweenInstances) {
         opts.restore_permissions = false;
         opts.restore_timestamps = false;
         ArchiveReader reader(opts);
-        for (const auto& e : std::filesystem::directory_iterator(output2.path())) {
+        for (const auto &e : std::filesystem::directory_iterator(output2.path())) {
             if (e.path().filename().string().rfind(".bseal-extract-tmp.", 0) == 0) {
                 tmp2 = e.path().filename();
             }

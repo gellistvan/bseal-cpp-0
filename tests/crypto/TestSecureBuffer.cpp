@@ -11,10 +11,10 @@
 
 namespace {
 
-using bseal::Byte;
-using bseal::Bytes;
-using bseal::crypto::SecureBuffer;
-using bseal::crypto::secure_memzero;
+    using bseal::Byte;
+    using bseal::Bytes;
+    using bseal::crypto::secure_memzero;
+    using bseal::crypto::SecureBuffer;
 
 } // namespace
 
@@ -239,7 +239,7 @@ TEST(SecureBuffer, WipeIsIdempotent) {
 
 TEST(SecureBuffer, WipeOnEmptyBufferIsIdempotent) {
     SecureBuffer buffer;
-    buffer.wipe();  // Must not crash on a default-constructed (empty) buffer.
+    buffer.wipe(); // Must not crash on a default-constructed (empty) buffer.
     EXPECT_TRUE(buffer.empty());
     buffer.wipe();
     EXPECT_TRUE(buffer.empty());
@@ -256,13 +256,12 @@ TEST(SecureWipeString, ZerosStringContents) {
     bseal::crypto::secure_wipe_string(s);
 
     for (std::size_t i = 0; i < n; ++i) {
-        EXPECT_EQ(static_cast<unsigned char>(s[i]), 0u)
-            << "byte " << i << " was not zeroed";
+        EXPECT_EQ(static_cast<unsigned char>(s[i]), 0u) << "byte " << i << " was not zeroed";
     }
 }
 
 TEST(SecureWipeString, HandlesEmptyString) {
     std::string s;
-    bseal::crypto::secure_wipe_string(s);  // Must not crash.
+    bseal::crypto::secure_wipe_string(s); // Must not crash.
     EXPECT_TRUE(s.empty());
 }

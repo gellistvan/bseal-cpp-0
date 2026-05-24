@@ -7,7 +7,7 @@
 
 namespace bseal::crypto {
 
-    void secure_memzero(void* ptr, std::size_t size) noexcept {
+    void secure_memzero(void *ptr, std::size_t size) noexcept {
         if (ptr == nullptr || size == 0) {
             return;
         }
@@ -20,10 +20,9 @@ namespace bseal::crypto {
 
     SecureBuffer::SecureBuffer(Bytes bytes) : bytes_(std::move(bytes)) {}
 
-    SecureBuffer::SecureBuffer(SecureBuffer&& other) noexcept
-        : bytes_(std::move(other.bytes_)) {}
+    SecureBuffer::SecureBuffer(SecureBuffer &&other) noexcept : bytes_(std::move(other.bytes_)) {}
 
-    SecureBuffer& SecureBuffer::operator=(SecureBuffer&& other) noexcept {
+    SecureBuffer &SecureBuffer::operator=(SecureBuffer &&other) noexcept {
         if (this != &other) {
             wipe();
             bytes_ = std::move(other.bytes_);
@@ -43,11 +42,11 @@ namespace bseal::crypto {
         return bytes_.empty();
     }
 
-    Byte* SecureBuffer::data() noexcept {
+    Byte *SecureBuffer::data() noexcept {
         return bytes_.data();
     }
 
-    const Byte* SecureBuffer::data() const noexcept {
+    const Byte *SecureBuffer::data() const noexcept {
         return bytes_.data();
     }
 
@@ -70,7 +69,7 @@ namespace bseal::crypto {
         secure_memzero(bytes_.data(), bytes_.size());
     }
 
-    void secure_wipe_string(std::string& s) noexcept {
+    void secure_wipe_string(std::string &s) noexcept {
         if (!s.empty()) {
             secure_memzero(s.data(), s.size());
         }

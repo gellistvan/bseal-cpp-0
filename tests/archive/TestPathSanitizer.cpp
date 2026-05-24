@@ -36,11 +36,12 @@ TEST(TestPathSanitizer, MakeSafeOutputPathRejectsTraversal) {
     TemporaryDirectory temp;
 
     EXPECT_TRUE(throws_invalid_argument([&] {
-        [[maybe_unused]] const auto ignored =make_safe_output_path(temp.path(), "../evil.txt");
+        [[maybe_unused]] const auto ignored = make_safe_output_path(temp.path(), "../evil.txt");
     }));
 
     EXPECT_TRUE(throws_invalid_argument([&] {
-        [[maybe_unused]] const auto ignored =make_safe_output_path(temp.path(), "folder/../../evil.txt");
+        [[maybe_unused]] const auto ignored =
+            make_safe_output_path(temp.path(), "folder/../../evil.txt");
     }));
 }
 

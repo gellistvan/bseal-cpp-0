@@ -48,10 +48,8 @@ TEST(TestArchiveWriter, RecursivelySerializesDirectoriesAndFiles) {
     const auto records = collect_writer_records(writer);
 
     ASSERT_FALSE(records.empty());
-    EXPECT_EQ(static_cast<int>(records.front().type),
-              static_cast<int>(RecordType::ArchiveBegin));
-    EXPECT_EQ(static_cast<int>(records.back().type),
-              static_cast<int>(RecordType::ArchiveEnd));
+    EXPECT_EQ(static_cast<int>(records.front().type), static_cast<int>(RecordType::ArchiveBegin));
+    EXPECT_EQ(static_cast<int>(records.back().type), static_cast<int>(RecordType::ArchiveEnd));
 
     std::map<std::string, std::string> extracted_file_payloads;
     std::vector<std::string> directories;
@@ -59,7 +57,7 @@ TEST(TestArchiveWriter, RecursivelySerializesDirectoriesAndFiles) {
     bool inside_file = false;
     std::string current_file;
 
-    for (const auto& record : records) {
+    for (const auto &record : records) {
         if (record.type == RecordType::DirectoryEntry) {
             const auto metadata =
                 parse_entry_metadata(ConstByteSpan{record.payload.data(), record.payload.size()});
@@ -128,7 +126,7 @@ TEST(TestArchiveWriter, SplitsLargeFileIntoMultipleFileBytesRecords) {
     std::size_t file_bytes_records = 0;
     std::string reconstructed;
 
-    for (const auto& record : records) {
+    for (const auto &record : records) {
         if (record.type == RecordType::FileBytes) {
             ++file_bytes_records;
             reconstructed += string_from_bytes(record.payload);
@@ -171,10 +169,11 @@ TEST(TestArchiveWriter, PlanPlaintextSizeMatchesBytesProduced) {
     ArchiveWriter writer(options);
     const std::uint64_t planned = writer.plan_plaintext_size();
 
-    while (writer.next_record_bytes()) {}
+    while (writer.next_record_bytes()) {
+    }
 
-    EXPECT_EQ(writer.bytes_produced(), planned)
-        << "plan_plaintext_size() must equal the sum of bytes actually returned by next_record_bytes()";
+    EXPECT_EQ(writer.bytes_produced(), planned) << "plan_plaintext_size() must equal the sum of "
+                                                   "bytes actually returned by next_record_bytes()";
 }
 
 TEST(TestArchiveWriter, PlanPlaintextSizeIsStableAcrossMultipleCalls) {
@@ -218,7 +217,7 @@ TEST(TestArchiveWriter, ThrowsWhenFileShrinksDuringStreaming) {
                 truncated = true;
             }
         }
-    } catch (const InvalidArgument&) {
+    } catch (const InvalidArgument &) {
         threw = true;
     }
 
@@ -239,7 +238,7 @@ TEST(TestArchiveWriter, TrailingPaddingRecordIsEmittedAfterArchiveEnd) {
 
     // Build a minimal RandomPadding record (kRecordPrefixSize bytes: type + 8-byte zero length).
     ArchiveRecord padding_rec;
-    padding_rec.type    = RecordType::RandomPadding;
+    padding_rec.type = RecordType::RandomPadding;
     padding_rec.payload = Bytes{};
     auto padding_bytes = serialize_record(padding_rec);
 

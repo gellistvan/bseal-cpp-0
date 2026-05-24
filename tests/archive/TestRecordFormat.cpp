@@ -44,9 +44,8 @@ TEST(TestRecordFormat, EncodedRecordSizeRejectsInvalidRecordType) {
     Bytes invalid(kRecordPrefixSize, 0);
     invalid[0] = 255;
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        encoded_record_size_if_complete(ConstByteSpan{invalid.data(), invalid.size()});
-    }));
+    EXPECT_TRUE(throws_invalid_argument(
+        [&] { encoded_record_size_if_complete(ConstByteSpan{invalid.data(), invalid.size()}); }));
 }
 
 TEST(TestRecordFormat, EntryMetadataRoundTrips) {
@@ -78,9 +77,8 @@ TEST(TestRecordFormat, EntryMetadataRejectsUnsafePath) {
     auto metadata = file_metadata("../evil.txt", 4);
     const auto encoded = serialize_entry_metadata(metadata);
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        parse_entry_metadata(ConstByteSpan{encoded.data(), encoded.size()});
-    }));
+    EXPECT_TRUE(throws_invalid_argument(
+        [&] { parse_entry_metadata(ConstByteSpan{encoded.data(), encoded.size()}); }));
 }
 
 TEST(TestRecordFormat, ParseRecordRequiresExactlyOneRecord) {
@@ -90,7 +88,6 @@ TEST(TestRecordFormat, ParseRecordRequiresExactlyOneRecord) {
     Bytes combined = first;
     combined.insert(combined.end(), second.begin(), second.end());
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        parse_record(ConstByteSpan{combined.data(), combined.size()});
-    }));
+    EXPECT_TRUE(throws_invalid_argument(
+        [&] { parse_record(ConstByteSpan{combined.data(), combined.size()}); }));
 }

@@ -13,51 +13,50 @@
 
 namespace {
 
-using bseal::AuthenticationFailed;
-using bseal::Byte;
-using bseal::Bytes;
-using bseal::ConstByteSpan;
-using bseal::InvalidArgument;
-using bseal::crypto::AeadKeyView;
-using bseal::crypto::AeadNonceView;
-using bseal::crypto::AesGcmBackend;
-using bseal::crypto::ChunkAad;
-using bseal::crypto::CipherSuite;
-using bseal::crypto::DecryptChunkRequest;
-using bseal::crypto::EncryptChunkRequest;
-using bseal::crypto::kAeadTagBytes;
-using bseal::crypto::kAes256GcmKeyBytes;
-using bseal::crypto::kAesGcmRecommendedNonceBytes;
+    using bseal::AuthenticationFailed;
+    using bseal::Byte;
+    using bseal::Bytes;
+    using bseal::ConstByteSpan;
+    using bseal::InvalidArgument;
+    using bseal::crypto::AeadKeyView;
+    using bseal::crypto::AeadNonceView;
+    using bseal::crypto::AesGcmBackend;
+    using bseal::crypto::ChunkAad;
+    using bseal::crypto::CipherSuite;
+    using bseal::crypto::DecryptChunkRequest;
+    using bseal::crypto::EncryptChunkRequest;
+    using bseal::crypto::kAeadTagBytes;
+    using bseal::crypto::kAes256GcmKeyBytes;
+    using bseal::crypto::kAesGcmRecommendedNonceBytes;
 
-template <typename ExceptionT, typename Fn>
-bool throws_exception(Fn&& fn) {
-    try {
-        fn();
-    } catch (const ExceptionT&) {
-        return true;
-    } catch (...) {
+    template <typename ExceptionT, typename Fn> bool throws_exception(Fn &&fn) {
+        try {
+            fn();
+        } catch (const ExceptionT &) {
+            return true;
+        } catch (...) {
+            return false;
+        }
         return false;
     }
-    return false;
-}
 
-Bytes make_bytes(std::size_t count, Byte seed) {
-    Bytes out(count);
-    for (std::size_t i = 0; i < count; ++i) {
-        out[i] = static_cast<Byte>(seed + static_cast<Byte>(i * 17u));
+    Bytes make_bytes(std::size_t count, Byte seed) {
+        Bytes out(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            out[i] = static_cast<Byte>(seed + static_cast<Byte>(i * 17u));
+        }
+        return out;
     }
-    return out;
-}
 
-ChunkAad make_aad() {
-    static Bytes header_hash = make_bytes(32, 0x40);
-    static Bytes frame_header = make_bytes(40, 0x50);
+    ChunkAad make_aad() {
+        static Bytes header_hash = make_bytes(32, 0x40);
+        static Bytes frame_header = make_bytes(40, 0x50);
 
-    return ChunkAad{
-        ConstByteSpan{header_hash.data(), header_hash.size()},
-        ConstByteSpan{frame_header.data(), frame_header.size()},
-    };
-}
+        return ChunkAad{
+            ConstByteSpan{header_hash.data(), header_hash.size()},
+            ConstByteSpan{frame_header.data(), frame_header.size()},
+        };
+    }
 
 } // namespace
 
@@ -79,24 +78,18 @@ TEST(AesGcmBackend, EncryptDecryptRoundTrip) {
     Bytes plaintext = make_bytes(4096, 0x30);
     ChunkAad aad = make_aad();
 
-    EncryptChunkRequest enc{
-        AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-        AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-        ConstByteSpan{plaintext.data(), plaintext.size()},
-        aad
-    };
+    EncryptChunkRequest enc{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                            ConstByteSpan{plaintext.data(), plaintext.size()}, aad};
 
     Bytes ciphertext = backend.encrypt_chunk(enc);
 
     ASSERT_EQ(ciphertext.size(), plaintext.size() + backend.tag_size());
     EXPECT_NE(ciphertext, plaintext);
 
-    DecryptChunkRequest dec{
-        AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-        AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-        ConstByteSpan{ciphertext.data(), ciphertext.size()},
-        aad
-    };
+    DecryptChunkRequest dec{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                            ConstByteSpan{ciphertext.data(), ciphertext.size()}, aad};
 
     Bytes restored = backend.decrypt_chunk(dec);
 
@@ -111,21 +104,17 @@ TEST(AesGcmBackend, EncryptDecryptEmptyPlaintext) {
     Bytes plaintext;
     ChunkAad aad = make_aad();
 
-    Bytes ciphertext = backend.encrypt_chunk(EncryptChunkRequest{
-        AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-        AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-        ConstByteSpan{plaintext.data(), plaintext.size()},
-        aad
-    });
+    Bytes ciphertext = backend.encrypt_chunk(
+        EncryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                            ConstByteSpan{plaintext.data(), plaintext.size()}, aad});
 
     EXPECT_EQ(ciphertext.size(), backend.tag_size());
 
-    Bytes restored = backend.decrypt_chunk(DecryptChunkRequest{
-        AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-        AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-        ConstByteSpan{ciphertext.data(), ciphertext.size()},
-        aad
-    });
+    Bytes restored = backend.decrypt_chunk(
+        DecryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                            ConstByteSpan{ciphertext.data(), ciphertext.size()}, aad});
 
     EXPECT_TRUE(restored.empty());
 }
@@ -138,23 +127,19 @@ TEST(AesGcmBackend, TamperedCiphertextFailsAuthentication) {
     Bytes plaintext = make_bytes(256, 0x30);
     ChunkAad aad = make_aad();
 
-    Bytes ciphertext = backend.encrypt_chunk(EncryptChunkRequest{
-        AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-        AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-        ConstByteSpan{plaintext.data(), plaintext.size()},
-        aad
-    });
+    Bytes ciphertext = backend.encrypt_chunk(
+        EncryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                            ConstByteSpan{plaintext.data(), plaintext.size()}, aad});
 
     ASSERT_FALSE(ciphertext.empty());
     ciphertext[0] ^= 0x01;
 
     EXPECT_TRUE((throws_exception<AuthenticationFailed>([&] {
-        backend.decrypt_chunk(DecryptChunkRequest{
-            AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-            ConstByteSpan{ciphertext.data(), ciphertext.size()},
-            aad
-        });
+        backend.decrypt_chunk(
+            DecryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                                AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                                ConstByteSpan{ciphertext.data(), ciphertext.size()}, aad});
     })));
 }
 
@@ -166,23 +151,19 @@ TEST(AesGcmBackend, TamperedTagFailsAuthentication) {
     Bytes plaintext = make_bytes(256, 0x30);
     ChunkAad aad = make_aad();
 
-    Bytes ciphertext = backend.encrypt_chunk(EncryptChunkRequest{
-        AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-        AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-        ConstByteSpan{plaintext.data(), plaintext.size()},
-        aad
-    });
+    Bytes ciphertext = backend.encrypt_chunk(
+        EncryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                            ConstByteSpan{plaintext.data(), plaintext.size()}, aad});
 
     ASSERT_FALSE(ciphertext.empty());
     ciphertext.back() ^= 0x01;
 
     EXPECT_TRUE((throws_exception<AuthenticationFailed>([&] {
-        backend.decrypt_chunk(DecryptChunkRequest{
-            AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-            ConstByteSpan{ciphertext.data(), ciphertext.size()},
-            aad
-        });
+        backend.decrypt_chunk(
+            DecryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                                AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                                ConstByteSpan{ciphertext.data(), ciphertext.size()}, aad});
     })));
 }
 
@@ -194,12 +175,10 @@ TEST(AesGcmBackend, WrongAadFailsAuthentication) {
     Bytes plaintext = make_bytes(256, 0x30);
     ChunkAad aad = make_aad();
 
-    Bytes ciphertext = backend.encrypt_chunk(EncryptChunkRequest{
-        AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-        AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-        ConstByteSpan{plaintext.data(), plaintext.size()},
-        aad
-    });
+    Bytes ciphertext = backend.encrypt_chunk(
+        EncryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                            ConstByteSpan{plaintext.data(), plaintext.size()}, aad});
 
     Bytes wrong_frame_header = make_bytes(40, 0x51);
 
@@ -209,12 +188,10 @@ TEST(AesGcmBackend, WrongAadFailsAuthentication) {
     };
 
     EXPECT_TRUE((throws_exception<AuthenticationFailed>([&] {
-        backend.decrypt_chunk(DecryptChunkRequest{
-            AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-            ConstByteSpan{ciphertext.data(), ciphertext.size()},
-            wrong_aad
-        });
+        backend.decrypt_chunk(
+            DecryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                                AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                                ConstByteSpan{ciphertext.data(), ciphertext.size()}, wrong_aad});
     })));
 }
 
@@ -229,21 +206,17 @@ TEST(AesGcmBackend, RejectsInvalidKeyAndNonceSizes) {
     ChunkAad aad = make_aad();
 
     EXPECT_TRUE((throws_exception<InvalidArgument>([&] {
-        backend.encrypt_chunk(EncryptChunkRequest{
-            AeadKeyView{ConstByteSpan{bad_key.data(), bad_key.size()}},
-            AeadNonceView{ConstByteSpan{good_nonce.data(), good_nonce.size()}},
-            ConstByteSpan{plaintext.data(), plaintext.size()},
-            aad
-        });
+        backend.encrypt_chunk(
+            EncryptChunkRequest{AeadKeyView{ConstByteSpan{bad_key.data(), bad_key.size()}},
+                                AeadNonceView{ConstByteSpan{good_nonce.data(), good_nonce.size()}},
+                                ConstByteSpan{plaintext.data(), plaintext.size()}, aad});
     })));
 
     EXPECT_TRUE((throws_exception<InvalidArgument>([&] {
-        backend.encrypt_chunk(EncryptChunkRequest{
-            AeadKeyView{ConstByteSpan{good_key.data(), good_key.size()}},
-            AeadNonceView{ConstByteSpan{bad_nonce.data(), bad_nonce.size()}},
-            ConstByteSpan{plaintext.data(), plaintext.size()},
-            aad
-        });
+        backend.encrypt_chunk(
+            EncryptChunkRequest{AeadKeyView{ConstByteSpan{good_key.data(), good_key.size()}},
+                                AeadNonceView{ConstByteSpan{bad_nonce.data(), bad_nonce.size()}},
+                                ConstByteSpan{plaintext.data(), plaintext.size()}, aad});
     })));
 }
 
@@ -256,11 +229,9 @@ TEST(AesGcmBackend, RejectsCiphertextShorterThanTag) {
     ChunkAad aad = make_aad();
 
     EXPECT_TRUE((throws_exception<AuthenticationFailed>([&] {
-        backend.decrypt_chunk(DecryptChunkRequest{
-            AeadKeyView{ConstByteSpan{key.data(), key.size()}},
-            AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
-            ConstByteSpan{too_short.data(), too_short.size()},
-            aad
-        });
+        backend.decrypt_chunk(
+            DecryptChunkRequest{AeadKeyView{ConstByteSpan{key.data(), key.size()}},
+                                AeadNonceView{ConstByteSpan{nonce.data(), nonce.size()}},
+                                ConstByteSpan{too_short.data(), too_short.size()}, aad});
     })));
 }

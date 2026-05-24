@@ -30,15 +30,15 @@ namespace bseal::io {
     };
 
     class AsyncReader {
-    public:
+      public:
         AsyncReader();
         ~AsyncReader();
 
-        AsyncReader(const AsyncReader&) = delete;
-        AsyncReader& operator=(const AsyncReader&) = delete;
+        AsyncReader(const AsyncReader &) = delete;
+        AsyncReader &operator=(const AsyncReader &) = delete;
 
-        AsyncReader(AsyncReader&&) = delete;
-        AsyncReader& operator=(AsyncReader&&) = delete;
+        AsyncReader(AsyncReader &&) = delete;
+        AsyncReader &operator=(AsyncReader &&) = delete;
 
         // Queues a read request.
         //
@@ -58,7 +58,7 @@ namespace bseal::io {
         // Stops accepting new work, drains queued requests, and joins workers.
         void close();
 
-    private:
+      private:
         void worker_loop();
         void push_exception(std::exception_ptr exception);
 

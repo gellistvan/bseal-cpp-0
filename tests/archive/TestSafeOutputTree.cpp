@@ -12,8 +12,8 @@
 #include <string>
 
 #if !defined(_WIN32)
-#  include <sys/stat.h>
-#  include <unistd.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 using namespace bseal::archive;
@@ -25,15 +25,17 @@ namespace fs = std::filesystem;
 // Helpers
 // ---------------------------------------------------------------------------
 
-static void write_tmp_file(const fs::path& path, std::string_view content) {
+static void write_tmp_file(const fs::path &path, std::string_view content) {
     fs::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) throw std::runtime_error("write_tmp_file: " + path.string());
+    if (!out)
+        throw std::runtime_error("write_tmp_file: " + path.string());
     out.write(content.data(), static_cast<std::streamsize>(content.size()));
-    if (!out) throw std::runtime_error("write_tmp_file write: " + path.string());
+    if (!out)
+        throw std::runtime_error("write_tmp_file write: " + path.string());
 }
 
-static std::string read_file_content(const fs::path& path) {
+static std::string read_file_content(const fs::path &path) {
     std::ifstream in(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(in), {});
 }
@@ -43,7 +45,7 @@ static std::string read_file_content(const fs::path& path) {
 // ===========================================================================
 
 class SafeOutputTreeCommon : public ::testing::TestWithParam<HardenedExtractMode> {
-protected:
+  protected:
     void SetUp() override {
         root_dir_.emplace("sot_root_");
         src_dir_.emplace("sot_src_");
@@ -106,9 +108,7 @@ TEST_P(SafeOutputTreeCommon, RenameIntoRefusesOverwriteByDefault) {
     const auto src2 = src_dir_->path() / "b.txt";
     write_tmp_file(src2, "second");
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        tree.rename_into(src2, "file.txt", false);
-    }));
+    EXPECT_TRUE(throws_invalid_argument([&] { tree.rename_into(src2, "file.txt", false); }));
     // Original content must be unchanged.
     EXPECT_EQ(read_file_content(root_dir_->path() / "file.txt"), "first");
 }
@@ -126,17 +126,19 @@ TEST_P(SafeOutputTreeCommon, RenameIntoAllowsOverwriteOfRegularFile) {
     EXPECT_EQ(read_file_content(root_dir_->path() / "file.txt"), "second");
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    BackendModes, SafeOutputTreeCommon,
-    ::testing::Values(HardenedExtractMode::Off, HardenedExtractMode::Auto),
-    [](const ::testing::TestParamInfo<HardenedExtractMode>& info) {
-        switch (info.param) {
-        case HardenedExtractMode::Off:  return "Portable";
-        case HardenedExtractMode::Auto: return "Auto";
-        case HardenedExtractMode::On:   return "HardenedOn";
-        }
-        return "Unknown";
-    });
+INSTANTIATE_TEST_SUITE_P(BackendModes, SafeOutputTreeCommon,
+                         ::testing::Values(HardenedExtractMode::Off, HardenedExtractMode::Auto),
+                         [](const ::testing::TestParamInfo<HardenedExtractMode> &info) {
+                             switch (info.param) {
+                             case HardenedExtractMode::Off:
+                                 return "Portable";
+                             case HardenedExtractMode::Auto:
+                                 return "Auto";
+                             case HardenedExtractMode::On:
+                                 return "HardenedOn";
+                             }
+                             return "Unknown";
+                         });
 
 // ===========================================================================
 // Hardened-only tests (POSIX)
@@ -144,11 +146,11 @@ INSTANTIATE_TEST_SUITE_P(
 
 #if !defined(_WIN32)
 
-#define SKIP_IF_NOT_HARDENED()                                              \
-    do {                                                                    \
-        if (!SafeOutputTree::is_platform_supported()) {                     \
-            GTEST_SKIP() << "hardened extraction not supported on this platform"; \
-        }                                                                   \
+#define SKIP_IF_NOT_HARDENED()                                                                     \
+    do {                                                                                           \
+        if (!SafeOutputTree::is_platform_supported()) {                                            \
+            GTEST_SKIP() << "hardened extraction not supported on this platform";                  \
+        }                                                                                          \
     } while (false)
 
 TEST(SafeOutputTreeHardened, EnsureDirsRejectsSymlinkIntermediateComponent) {
@@ -162,9 +164,7 @@ TEST(SafeOutputTreeHardened, EnsureDirsRejectsSymlinkIntermediateComponent) {
 
     SafeOutputTree tree(root.path(), HardenedExtractMode::On);
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        tree.ensure_dirs("subdir/nested");
-    }));
+    EXPECT_TRUE(throws_invalid_argument([&] { tree.ensure_dirs("subdir/nested"); }));
 
     // The outside directory must be untouched.
     EXPECT_TRUE(fs::is_empty(outside.path()));
@@ -185,9 +185,7 @@ TEST(SafeOutputTreeHardened, RenameIntoRejectsSymlinkIntermediateComponent) {
 
     SafeOutputTree tree(root.path(), HardenedExtractMode::On);
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        tree.rename_into(src, "evil/file.txt", false);
-    }));
+    EXPECT_TRUE(throws_invalid_argument([&] { tree.rename_into(src, "evil/file.txt", false); }));
 
     EXPECT_TRUE(fs::is_empty(outside.path()));
 }
@@ -205,8 +203,7 @@ TEST(SafeOutputTreeHardened, OverwriteSymlinkTargetDoesNotTouchSymlinkDest) {
     write_tmp_file(outside.path() / "target.txt", "original");
 
     // root/file.txt -> outside/target.txt  (dangling-ish symlink)
-    fs::create_symlink(outside.path() / "target.txt",
-                       root.path() / "file.txt");
+    fs::create_symlink(outside.path() / "target.txt", root.path() / "file.txt");
 
     const auto src = src_dir.path() / "new.txt";
     write_tmp_file(src, "new content");
@@ -219,8 +216,7 @@ TEST(SafeOutputTreeHardened, OverwriteSymlinkTargetDoesNotTouchSymlinkDest) {
         std::error_code ec;
         const auto st = fs::symlink_status(root.path() / "file.txt", ec);
         ASSERT_FALSE(ec);
-        EXPECT_NE(st.type(), fs::file_type::symlink)
-            << "destination should no longer be a symlink";
+        EXPECT_NE(st.type(), fs::file_type::symlink) << "destination should no longer be a symlink";
     }
     EXPECT_EQ(read_file_content(root.path() / "file.txt"), "new content");
 
@@ -262,9 +258,7 @@ TEST(SafeOutputTreeHardened, RaceSimulation_DirectoryReplacedWithSymlink) {
     const auto src = src_dir.path() / "race.txt";
     write_tmp_file(src, "race payload");
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        tree.rename_into(src, "subdir/race.txt", false);
-    }));
+    EXPECT_TRUE(throws_invalid_argument([&] { tree.rename_into(src, "subdir/race.txt", false); }));
 
     EXPECT_TRUE(fs::is_empty(outside.path()));
 }
@@ -288,9 +282,8 @@ TEST(SafeOutputTreeMode, AutoSelectsHardenedOnPosix) {
 TEST(SafeOutputTreeMode, OnModeFailsOnNonPosix) {
 #if defined(_WIN32)
     TemporaryDirectory root("sot_on_");
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        SafeOutputTree tree(root.path(), HardenedExtractMode::On);
-    }));
+    EXPECT_TRUE(throws_invalid_argument(
+        [&] { SafeOutputTree tree(root.path(), HardenedExtractMode::On); }));
 #else
     TemporaryDirectory root("sot_on_");
     SafeOutputTree tree(root.path(), HardenedExtractMode::On);

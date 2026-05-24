@@ -4,10 +4,11 @@
 
 namespace {
 
-bool equal_features(const bseal::platform::CpuFeatures& a, const bseal::platform::CpuFeatures& b) {
-    return a.aes_ni == b.aes_ni && a.pclmulqdq == b.pclmulqdq && a.avx2 == b.avx2 &&
-           a.avx512f == b.avx512f && a.vaes == b.vaes && a.neon == b.neon;
-}
+    bool equal_features(const bseal::platform::CpuFeatures &a,
+                        const bseal::platform::CpuFeatures &b) {
+        return a.aes_ni == b.aes_ni && a.pclmulqdq == b.pclmulqdq && a.avx2 == b.avx2 &&
+               a.avx512f == b.avx512f && a.vaes == b.vaes && a.neon == b.neon;
+    }
 
 } // namespace
 
@@ -39,9 +40,9 @@ TEST(CpuFeatures, ArchitectureSpecificBaselineIsConservative) {
 TEST(CpuFeatures, FeatureFlagsArePlainBooleans) {
     const auto features = bseal::platform::detect_cpu_features();
 
-    // Keep this test deliberately conservative. CPU feature combinations vary by vendor, generation,
-    // hypervisor policy, and kernel XSAVE support, so backend selection must not rely on untested
-    // implications between unrelated flags.
+    // Keep this test deliberately conservative. CPU feature combinations vary by vendor,
+    // generation, hypervisor policy, and kernel XSAVE support, so backend selection must not rely
+    // on untested implications between unrelated flags.
     EXPECT_TRUE(features.aes_ni == true || features.aes_ni == false);
     EXPECT_TRUE(features.pclmulqdq == true || features.pclmulqdq == false);
     EXPECT_TRUE(features.avx2 == true || features.avx2 == false);

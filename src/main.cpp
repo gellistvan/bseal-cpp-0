@@ -5,7 +5,7 @@
 #include <exception>
 #include <iostream>
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     try {
         const auto args = bseal::cli::parse_args(argc, argv);
 
@@ -18,13 +18,13 @@ int main(int argc, char** argv) {
         case bseal::cli::Command::Decrypt:
             return bseal::app::decrypt(args.decrypt);
         }
-    } catch (const bseal::AuthenticationFailed& e) {
+    } catch (const bseal::AuthenticationFailed &e) {
         std::cerr << "bseal: " << e.what() << '\n';
         return 3;
-    } catch (const bseal::Error& e) {
+    } catch (const bseal::Error &e) {
         std::cerr << "bseal: " << e.what() << '\n';
         return 1;
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "bseal: unexpected error: " << e.what() << '\n';
         return 1;
     }

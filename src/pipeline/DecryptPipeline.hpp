@@ -23,7 +23,7 @@ namespace bseal::pipeline {
         std::size_t queue_depth{0};
 
         // Must match the archive_id from the public header.
-        std::array<Byte, 32> archive_id{};  // Extended to 32 bytes per FORMAT.md §3.
+        std::array<Byte, 32> archive_id{}; // Extended to 32 bytes per FORMAT.md §3.
 
         // Must be the same public-header hash used during encryption.
         // Used as the fallback hash when per_shard_public_header_hashes is empty.
@@ -39,16 +39,13 @@ namespace bseal::pipeline {
         // When non-zero, the pipeline verifies the sum of all decrypted chunk lengths equals
         // this value after all chunks are processed. Mismatch throws InvalidArgument.
         std::uint64_t padded_plaintext_size{0};
-
     };
 
     class DecryptPipeline {
-    public:
+      public:
         DecryptPipeline(DecryptPipelineOptions options,
-                        std::unique_ptr<crypto::CryptoBackend> backend,
-                        crypto::ExpandedKeys keys,
-                        io::ShardReader shard_reader,
-                        archive::ArchiveReader archive_reader);
+                        std::unique_ptr<crypto::CryptoBackend> backend, crypto::ExpandedKeys keys,
+                        io::ShardReader shard_reader, archive::ArchiveReader archive_reader);
 
         // Runs the complete decryption pipeline:
         //
@@ -64,7 +61,7 @@ namespace bseal::pipeline {
         // - plaintext buffers are zeroed after ArchiveReader consumes them where practical.
         void run();
 
-    private:
+      private:
         DecryptPipelineOptions options_;
         std::unique_ptr<crypto::CryptoBackend> backend_;
         crypto::ExpandedKeys keys_;
