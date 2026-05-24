@@ -190,9 +190,9 @@ Decrypt-only options:
 
 Current exit codes:
 
-* `0`: success, including help
-* `1`: invalid arguments, I/O failures, format errors, and other non-authentication errors
-* `3`: authentication failure, wrong passphrase/keyfile, invalid header MAC, or corrupt archive detected by AEAD verification
+* `0`: success, including `--help`
+* `1`: invalid arguments, I/O failures, format errors, unsupported algorithm, KDF policy violations, and other non-authentication errors
+* `3`: authentication failure — wrong passphrase, wrong keyfile, reordered keyfiles, tampered header MAC, or corrupted ciphertext; the user-visible message is always generic ("authentication failed or archive is corrupt") to avoid leaking which component failed
 
 ## Security model, in brief
 

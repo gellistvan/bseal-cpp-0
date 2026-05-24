@@ -240,7 +240,7 @@ void ShardReader::validate_shards() {
                     auth_key_.as_span(),
                     shard.global_header,
                     shard.shard_header)) {
-                throw InvalidArgument("shard header_mac verification failed");
+                throw AuthenticationFailed();
             }
         }
     }

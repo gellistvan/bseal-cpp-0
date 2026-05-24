@@ -317,14 +317,37 @@ Passphrase input flow:
 - Prefer high-entropy keyfiles in addition to passphrases to reduce the value of any
   passphrase leak.
 
-## Error messages
+## Error messages and exit codes
 
-Authentication failures should not distinguish between:
+### Authentication failures — exit code 3
 
-- wrong passphrase;
-- wrong keyfile;
-- corrupt shard;
-- modified metadata;
-- invalid chunk tag.
+All of the following conditions map to `bseal::AuthenticationFailed` and CLI exit code 3:
 
-Use a generic message such as `authentication failed or archive is corrupt`.
+- Wrong passphrase or wrong keyfile (KDF produces a different master seed)
+- Reordered keyfiles (KDF mixes them in order; swapping two keyfiles produces a different seed)
+- Invalid shard header MAC (tampered public metadata)
+- AEAD tag verification failure (corrupted or tampered ciphertext)
+
+The user-visible message is always the same generic string:
+
+```
+authentication failed or archive is corrupt
+```
+
+This prevents callers from distinguishing which component of the key material is wrong, which would otherwise leak oracle information.
+
+### Format and policy errors — exit code 1
+
+These conditions produce exit code 1, not 3, because they describe local policy or structural problems rather than authentication failures:
+
+- Unrecognised magic bytes, unsupported format version, or unsupported algorithm ID
+- Malformed length fields detected before any authentication step
+- KDF memory parameter above `--max-kdf-memory` policy limit
+- Missing shards, duplicate shards, or chunk index gaps
+- Trailing garbage after the declared payload
+
+Policy-rejection messages (e.g., the KDF memory limit) name the relevant flag so users can distinguish them from authentication failures.
+
+### Implementation note
+
+`bseal::AuthenticationFailed` is a fixed-message exception with no parameters. Every code path that detects an authentication failure — `verify_all_shard_header_macs()`, `ShardReader::validate_shards()`, the AEAD backend `decrypt()` methods, and `DecryptPipeline` — throws this type. `src/main.cpp` maps it to exit code 3.
