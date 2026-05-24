@@ -109,6 +109,14 @@ std::array<Byte, 32> mix_keyfile_digests(const std::vector<KeyfileDigest>& diges
 // master = HKDF-SHA256(pass_key || keyfile_mix, archive_id || salt, "BSEAL master key v1")
 SecureBuffer derive_master_seed(const KdfInput& input);
 
+// HKDF-SHA256 via OpenSSL EVP_PKEY_derive.
+// Shared by Kdf.cpp (master seed derivation) and KeySchedule.cpp (key expansion).
+// Throws Error on OpenSSL failure; throws InvalidArgument if ikm is empty or output_len is zero.
+SecureBuffer hkdf_sha256(ConstByteSpan ikm,
+                         ConstByteSpan salt,
+                         ConstByteSpan info,
+                         std::size_t output_len);
+
 KdfParams preset_params(KdfPreset preset);
 
 } // namespace bseal::crypto

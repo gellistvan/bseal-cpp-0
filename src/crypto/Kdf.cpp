@@ -40,6 +40,15 @@ void blake3_update_bytes(blake3_hasher& hasher, ConstByteSpan bytes) {
     }
 }
 
+void require_u32_range(std::uint32_t value, std::uint32_t min_value, std::uint32_t max_value,
+        const char* name
+    ) {
+    if (value < min_value || value > max_value) {
+        throw InvalidArgument(std::string(name) + " is outside the allowed range");
+    }
+}
+} // namespace
+
 SecureBuffer hkdf_sha256(ConstByteSpan ikm,
                          ConstByteSpan salt,
                          ConstByteSpan info,
@@ -103,15 +112,6 @@ SecureBuffer hkdf_sha256(ConstByteSpan ikm,
 
     return out;
 }
-
-void require_u32_range(std::uint32_t value, std::uint32_t min_value, std::uint32_t max_value,
-        const char* name
-    ) {
-    if (value < min_value || value > max_value) {
-        throw InvalidArgument(std::string(name) + " is outside the allowed range");
-    }
-}
-} // namespace
 
 void validate_kdf_params(const KdfParams& params) {
     require_u32_range(

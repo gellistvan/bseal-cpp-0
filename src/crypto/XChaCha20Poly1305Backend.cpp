@@ -3,10 +3,8 @@
 #include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 
-#include <limits>
 #include <sodium.h>
 #include <string>
-#include <vector>
 
 namespace bseal::crypto {
 namespace {

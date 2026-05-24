@@ -3,11 +3,9 @@
 #include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 
-#include <limits>
 #include <memory>
 #include <openssl/evp.h>
 #include <string>
-#include <vector>
 
 namespace bseal::crypto {
 namespace {

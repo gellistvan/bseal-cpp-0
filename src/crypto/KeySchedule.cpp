@@ -1,14 +1,9 @@
 #include "crypto/KeySchedule.hpp"
 
-#include "common/CheckedArithmetic.hpp"
 #include "common/Endian.hpp"
 #include "common/Errors.hpp"
+#include "crypto/Kdf.hpp"
 
-#include <limits>
-#include <memory>
-#include <openssl/evp.h>
-#include <openssl/kdf.h>
-#include <string>
 #include <string_view>
 
 namespace bseal::crypto {
@@ -19,70 +14,6 @@ Bytes make_info(std::string_view label, CipherSuite suite) {
     out.reserve(label.size() + 2);
     out.insert(out.end(), label.begin(), label.end());
     append_u16_le(out, static_cast<std::uint16_t>(suite));
-    return out;
-}
-
-SecureBuffer hkdf_sha256(ConstByteSpan ikm,
-                         ConstByteSpan salt,
-                         ConstByteSpan info,
-                         std::size_t output_len) {
-    if (ikm.empty()) {
-        throw InvalidArgument("HKDF input keying material must not be empty");
-    }
-    if (output_len == 0) {
-        throw InvalidArgument("HKDF output length must not be zero");
-    }
-
-    using EvpPkeyCtxPtr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;
-
-    EvpPkeyCtxPtr ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr), &EVP_PKEY_CTX_free);
-    if (!ctx) {
-        throw Error("failed to allocate HKDF context");
-    }
-
-    if (EVP_PKEY_derive_init(ctx.get()) != 1) {
-        throw Error("HKDF initialization failed");
-    }
-
-    if (EVP_PKEY_CTX_set_hkdf_md(ctx.get(), EVP_sha256()) != 1) {
-        throw Error("HKDF digest setup failed");
-    }
-
-    if (!salt.empty()) {
-        if (EVP_PKEY_CTX_set1_hkdf_salt(
-                ctx.get(),
-                salt.data(),
-                checked_int_size(salt.size(), "HKDF salt")
-            ) != 1) {
-            throw Error("HKDF salt setup failed");
-        }
-    }
-
-    if (EVP_PKEY_CTX_set1_hkdf_key(
-            ctx.get(),
-            ikm.data(),
-            checked_int_size(ikm.size(), "HKDF IKM")
-        ) != 1) {
-        throw Error("HKDF key setup failed");
-    }
-
-    if (!info.empty()) {
-        if (EVP_PKEY_CTX_add1_hkdf_info(
-                ctx.get(),
-                info.data(),
-                checked_int_size(info.size(), "HKDF info")
-            ) != 1) {
-            throw Error("HKDF info setup failed");
-        }
-    }
-
-    SecureBuffer out(output_len);
-    std::size_t out_len = output_len;
-
-    if (EVP_PKEY_derive(ctx.get(), out.data(), &out_len) != 1 || out_len != output_len) {
-        throw Error("HKDF derivation failed");
-    }
-
     return out;
 }
 
