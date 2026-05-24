@@ -60,4 +60,22 @@ inline std::uint64_t checked_next_power_of_two_u64(
     return p;
 }
 
+/// Cast size_t to int, throwing InvalidArgument if the value exceeds INT_MAX.
+/// Used before passing sizes to OpenSSL EVP / HMAC C APIs.
+inline int checked_int_size(std::size_t value, const char* what) {
+    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw InvalidArgument(std::string(what) + " is too large for OpenSSL");
+    }
+    return static_cast<int>(value);
+}
+
+/// Cast size_t to unsigned long long, throwing InvalidArgument on overflow.
+/// Used before passing sizes to libsodium AEAD C APIs.
+inline unsigned long long checked_ull_size(std::size_t value, const char* what) {
+    if (value > static_cast<std::size_t>(std::numeric_limits<unsigned long long>::max())) {
+        throw InvalidArgument(std::string(what) + " is too large");
+    }
+    return static_cast<unsigned long long>(value);
+}
+
 } // namespace bseal

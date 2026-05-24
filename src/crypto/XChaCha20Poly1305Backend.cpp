@@ -1,5 +1,6 @@
 #include "crypto/XChaCha20Poly1305Backend.hpp"
 
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 
 #include <limits>
@@ -17,13 +18,6 @@ void ensure_sodium_initialized() {
     }
 }
 
-
-unsigned long long checked_ull_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<unsigned long long>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large");
-    }
-    return static_cast<unsigned long long>(value);
-}
 
 void validate_request(const AeadKeyView& key,
                       const AeadNonceView& nonce,

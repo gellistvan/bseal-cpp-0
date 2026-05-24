@@ -2,6 +2,7 @@
 
 #include "crypto/Kdf.hpp"
 
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -19,13 +20,6 @@ namespace bseal::crypto {
 namespace {
 
 constexpr std::size_t kIoBufferSize = 1024 * 1024;
-
-int checked_int_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large for OpenSSL EVP call");
-    }
-    return static_cast<int>(value);
-}
 
 void append_le32(Bytes& out, std::uint32_t value) {
     for (int i = 0; i < 4; ++i) {

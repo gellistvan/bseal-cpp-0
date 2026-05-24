@@ -1,5 +1,6 @@
 #include "io/ShardFrame.hpp"
 
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -45,13 +46,6 @@ void append_bytes(Bytes& out, ConstByteSpan bytes) {
 
 bool all_zero(ConstByteSpan bytes) {
     return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
-}
-
-int checked_int_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large for OpenSSL");
-    }
-    return static_cast<int>(value);
 }
 
 bool is_power_of_two(std::uint32_t v) {

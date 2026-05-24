@@ -1,5 +1,6 @@
 #include "crypto/AesGcmBackend.hpp"
 
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 
 #include <limits>
@@ -20,14 +21,6 @@ EvpCipherCtxPtr make_cipher_ctx() {
     }
     return EvpCipherCtxPtr(raw, &EVP_CIPHER_CTX_free);
 }
-
-int checked_int_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large for OpenSSL EVP call");
-    }
-    return static_cast<int>(value);
-}
-
 
 void validate_request(const AeadKeyView& key,
                       const AeadNonceView& nonce,
