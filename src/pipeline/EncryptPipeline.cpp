@@ -2,14 +2,13 @@
 
 #include "common/Errors.hpp"
 #include "io/ShardFrame.hpp"
+#include "pipeline/PipelineCommon.hpp"
 #include "pipeline/WorkQueue.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <exception>
 #include <limits>
 #include <map>
-#include <mutex>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -17,6 +16,12 @@
 namespace bseal::pipeline {
 
 namespace {
+
+using detail::FailureState;
+using detail::checked_chunk_size;
+using detail::resolve_queue_depth;
+using detail::resolve_worker_count;
+using detail::wipe_bytes;
 
 struct PlainChunk {
     std::uint64_t index{0};
@@ -32,32 +37,6 @@ struct CipherChunk {
     Bytes ciphertext_and_tag;
 };
 
-std::uint32_t resolve_worker_count(std::uint32_t requested) {
-    if (requested != 0) {
-        return requested;
-    }
-
-    const auto detected = std::thread::hardware_concurrency();
-    return detected == 0 ? 1u : detected;
-}
-
-std::size_t resolve_queue_depth(std::size_t requested, std::uint32_t worker_count) {
-    if (requested != 0) {
-        return requested;
-    }
-    return std::max<std::size_t>(2, static_cast<std::size_t>(worker_count) * 2);
-}
-
-std::size_t checked_chunk_size(std::uint64_t chunk_plain_size) {
-    if (chunk_plain_size == 0) {
-        throw InvalidArgument("chunk_plain_size must be greater than zero");
-    }
-    if (chunk_plain_size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        throw InvalidArgument("chunk_plain_size does not fit into size_t on this platform");
-    }
-    return static_cast<std::size_t>(chunk_plain_size);
-}
-
 std::uint16_t checked_tag_size(const crypto::CryptoBackend& backend) {
     if (backend.tag_size() == 0 ||
         backend.tag_size() > static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max())) {
@@ -65,48 +44,6 @@ std::uint16_t checked_tag_size(const crypto::CryptoBackend& backend) {
     }
     return static_cast<std::uint16_t>(backend.tag_size());
 }
-
-void wipe_bytes(Bytes& bytes) noexcept {
-    std::fill(bytes.begin(), bytes.end(), Byte{0});
-}
-
-class FailureState {
-public:
-    void record(std::exception_ptr exception) {
-        if (!exception) {
-            return;
-        }
-
-        {
-            std::lock_guard lock(mutex_);
-            if (!first_exception_) {
-                first_exception_ = exception;
-            }
-        }
-
-        failed_.store(true, std::memory_order_release);
-    }
-
-    [[nodiscard]] bool failed() const noexcept {
-        return failed_.load(std::memory_order_acquire);
-    }
-
-    void rethrow_if_failed() const {
-        std::exception_ptr exception;
-        {
-            std::lock_guard lock(mutex_);
-            exception = first_exception_;
-        }
-        if (exception) {
-            std::rethrow_exception(exception);
-        }
-    }
-
-private:
-    std::atomic_bool failed_{false};
-    mutable std::mutex mutex_;
-    std::exception_ptr first_exception_;
-};
 
 /// Pick the correct public_header_hash for the shard that owns this frame.
 const std::array<Byte, 32>& select_public_header_hash(
