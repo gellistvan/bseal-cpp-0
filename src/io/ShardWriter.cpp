@@ -153,7 +153,6 @@ void ShardWriter::rewrite_shard_header(
 
     const auto encoded = serialize_shard_public_header(sh);
 
-    // Seek past the 192-byte global header to position of shard header.
     stream.seekp(static_cast<std::streamoff>(kGlobalPublicHeaderV1Size), std::ios::beg);
     stream.write(
         reinterpret_cast<const char*>(encoded.data()),
@@ -359,7 +358,6 @@ void ShardWriter::finish() {
                         + fs.path.string());
         }
 
-        // Rewrite global header at offset 0.
         rw.seekp(0, std::ios::beg);
         rw.write(
             reinterpret_cast<const char*>(global_bytes.data()),

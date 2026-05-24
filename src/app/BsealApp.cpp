@@ -24,7 +24,6 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <memory>
 #include <span>
@@ -250,7 +249,6 @@ std::vector<ShardPlan> plan_shards(
     std::uint64_t shard_idx = 0;
 
     // Validate that a full-sized (non-final) chunk frame fits in one shard.
-    // Use checked arithmetic from the shared helper.
     const std::uint64_t max_frame_size =
         bseal::io::chunk_frame_v1_encoded_size_from_params(chunk_plain_size, tag_len);
     if (max_frame_size > max_shard_payload_len) {
@@ -524,7 +522,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     const std::uint64_t chunk_plain_size = context.chunk_plain_size;
     const std::uint16_t tag_len = 16; // All v1 AEADs use a 16-byte tag.
 
-    // Apply padding policy: build RandomPadding record and register with the writer.
     const auto pad = compute_padding(raw_plaintext_size, chunk_plain_size, options.padding);
     if (pad.target_size > raw_plaintext_size) {
         const std::uint64_t gap = pad.target_size - raw_plaintext_size;
@@ -538,7 +535,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     const std::uint64_t padded_plaintext_size = pad.target_size;
 
-    // Compute global chunk counts.
     std::uint64_t global_chunk_count = 0;
     std::uint32_t final_plaintext_chunk_len = 0;
 
@@ -558,10 +554,8 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
                      : static_cast<std::uint32_t>(rem);
     }
 
-    // Fill in the global header fields we now know.
-    // When padded_plaintext_size is 0 (empty archive path), use final_plaintext_chunk_len
-    // for consistency with FORMAT.md §3 validation constraint:
-    //   padded_plaintext_size == (global_chunk_count-1)*chunk_plain_size + final_plaintext_chunk_len
+    // When padded_plaintext_size is 0 (empty archive), use final_plaintext_chunk_len for
+    // consistency with FORMAT.md §3: padded_plaintext_size == (N-1)*chunk_size + final_len.
     const std::uint64_t effective_padded_size =
         padded_plaintext_size == 0
         ? static_cast<std::uint64_t>(final_plaintext_chunk_len)
@@ -649,7 +643,6 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
     auto shards  = bseal::io::ShardReader::discover(options.input);
     auto context = make_decrypt_context_from_shards(shards);
 
-    // Reject before running Argon2 if the archive KDF cost exceeds the local policy.
     bseal::crypto::check_kdf_params_against_policy(context.kdf_params, options.kdf_policy);
 
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
@@ -673,7 +666,6 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
         per_shard_hashes[shard.shard_index()] = shard.public_header_hash;
     }
 
-    // Build validation struct using new format fields.
     bseal::io::ShardReaderValidation validation{};
     validation.suite_id         = suite_to_aead_alg_id(context.suite);
     validation.archive_id       = context.archive_id;
