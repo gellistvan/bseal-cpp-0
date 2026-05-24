@@ -265,19 +265,17 @@ void ArchiveReader::begin_archive(const ArchiveRecord& record) {
         throw InvalidArgument("duplicate ArchiveBegin record");
     }
 
-    if (!record.payload.empty()) {
-        if (record.payload.size() != 4) {
-            throw InvalidArgument("invalid ArchiveBegin payload");
-        }
+    if (record.payload.size() != 4) {
+        throw InvalidArgument("invalid ArchiveBegin payload");
+    }
 
-        std::uint32_t version = 0;
-        for (int i = 0; i < 4; ++i) {
-            version |= static_cast<std::uint32_t>(record.payload[i]) << (8 * i);
-        }
+    std::uint32_t version = 0;
+    for (int i = 0; i < 4; ++i) {
+        version |= static_cast<std::uint32_t>(record.payload[i]) << (8 * i);
+    }
 
-        if (version != kArchiveFormatVersion) {
-            throw InvalidArgument("unsupported archive stream version");
-        }
+    if (version != kArchiveFormatVersion) {
+        throw InvalidArgument("unsupported archive stream version");
     }
 
     archive_begin_seen_ = true;

@@ -37,10 +37,6 @@ struct EncryptPipelineOptions {
     // Fallback single hash used when per_shard_public_header_hashes is empty.
     std::array<Byte, 32> public_header_hash{};
 
-    // aad_shard_index is kept for compatibility but ignored when
-    // per_shard_public_header_hashes is non-empty.
-    std::uint32_t aad_shard_index{0};
-
     // Ensures even an otherwise empty archive emits one authenticated fixed-size chunk.
     bool emit_final_chunk_when_empty{true};
 
