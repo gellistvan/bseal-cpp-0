@@ -503,7 +503,7 @@ bool verify_shard_header_mac(
 }
 
 // ---------------------------------------------------------------------------
-// ChunkFrameHeaderV1 — kept identical to original implementation
+// ChunkFrameHeaderV1
 // ---------------------------------------------------------------------------
 
 namespace {
