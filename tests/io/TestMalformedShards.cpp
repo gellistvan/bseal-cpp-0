@@ -46,12 +46,12 @@ std::array<bseal::Byte, 32> test_archive_id() {
     return out;
 }
 
-std::array<bseal::Byte, 32> test_header_authentication_key() {
-    std::array<bseal::Byte, 32> out{};
+bseal::crypto::SecureBuffer test_header_authentication_key() {
+    bseal::Bytes out(32);
     for (std::size_t i = 0; i < out.size(); ++i) {
         out[i] = static_cast<bseal::Byte>(0x30u + i);
     }
-    return out;
+    return bseal::crypto::SecureBuffer(std::move(out));
 }
 
 bseal::io::GlobalPublicHeaderV1 make_test_global_header(
@@ -715,7 +715,7 @@ TEST(MalformedShards, ShardReader_ArchiveIdMismatch_Throws) {
     auto c1 = fake_ciphertext_and_tag(0x30, kTestChunkPlain);
 
     {
-        bseal::io::ShardWriter writer(opts_a);
+        bseal::io::ShardWriter writer(std::move(opts_a));
         write_fake_frame(writer, 0, kTestChunkPlain, false,
                          bseal::ConstByteSpan{c0.data(), c0.size()});
         write_fake_frame(writer, 1, kTestChunkPlain, true,
@@ -723,7 +723,7 @@ TEST(MalformedShards, ShardReader_ArchiveIdMismatch_Throws) {
         writer.finish();
     }
     {
-        bseal::io::ShardWriter writer(opts_b);
+        bseal::io::ShardWriter writer(std::move(opts_b));
         write_fake_frame(writer, 0, kTestChunkPlain, false,
                          bseal::ConstByteSpan{c0.data(), c0.size()});
         write_fake_frame(writer, 1, kTestChunkPlain, true,

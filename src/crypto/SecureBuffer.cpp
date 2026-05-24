@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <sodium.h>
+#include <string>
 #include <utility>
 
 namespace bseal::crypto {
@@ -67,6 +68,12 @@ namespace bseal::crypto {
 
     void SecureBuffer::wipe() noexcept {
         secure_memzero(bytes_.data(), bytes_.size());
+    }
+
+    void secure_wipe_string(std::string& s) noexcept {
+        if (!s.empty()) {
+            secure_memzero(s.data(), s.size());
+        }
     }
 
 } // namespace bseal::crypto

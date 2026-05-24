@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -157,15 +158,17 @@ std::vector<ShardInfo> ShardReader::discover(const std::filesystem::path& input_
 }
 
 ShardReader::ShardReader(
-    std::vector<ShardInfo> shards,
-    std::array<Byte, 32>   header_authentication_key,
-    ShardReaderValidation  validation)
+    std::vector<ShardInfo>  shards,
+    crypto::SecureBuffer    header_authentication_key,
+    ShardReaderValidation   validation)
     : shards_(std::move(shards)),
       validation_(std::move(validation)),
-      auth_key_(header_authentication_key) {
-    const std::array<Byte, 32> zeros{};
-    if (header_authentication_key == zeros) {
-        throw InvalidArgument("header_authentication_key must not be all-zero");
+      auth_key_(std::move(header_authentication_key)) {
+    const auto key_span = auth_key_.as_span();
+    const bool all_zero = std::all_of(key_span.begin(), key_span.end(),
+                                      [](Byte b) { return b == Byte{0}; });
+    if (auth_key_.size() != 32 || all_zero) {
+        throw InvalidArgument("header_authentication_key must be 32 non-zero bytes");
     }
     validate_shards();
 }
@@ -176,7 +179,7 @@ ShardReader::ShardReader(
     ShardReaderValidation                  validation)
     : shards_(std::move(shards)),
       validation_(std::move(validation)),
-      auth_key_(std::nullopt) {
+      auth_key_() {
     validate_shards();
 }
 
@@ -232,9 +235,9 @@ void ShardReader::validate_shards() {
                 throw InvalidArgument("public_header_hash mismatch");
             }
         }
-        if (auth_key_) {
+        if (!auth_key_.empty()) {
             if (!verify_shard_header_mac(
-                    ConstByteSpan{auth_key_->data(), auth_key_->size()},
+                    auth_key_.as_span(),
                     shard.global_header,
                     shard.shard_header)) {
                 throw InvalidArgument("shard header_mac verification failed");

@@ -261,6 +261,62 @@ at `UINT64_MAX` and `2^63` (the largest representable power of two). The sanitiz
 (`-DBSEAL_ENABLE_SANITIZERS=ON`) additionally catches any remaining unsigned arithmetic that was
 intentionally left unchecked (e.g. bitfield masks and loop counters) via UBSan.
 
+## Secret handling
+
+### What is protected
+
+Passphrase and key material flows through the following wipe-on-destruct types:
+
+- **`SecureBuffer`** (`src/crypto/SecureBuffer.hpp`): move-only; calls `sodium_memzero()` on
+  its backing allocation in the destructor, move-assignment operator, and explicit `wipe()`.
+  All four `ExpandedKeys` members (`chunk_encryption_key`, `manifest_key`,
+  `header_authentication_key`, `nonce_derivation_key`) are `SecureBuffer` values.
+
+- **`ShardWriterOptions::header_authentication_key`** and **`ShardReader::auth_key_`** are both
+  `SecureBuffer`, so they are wiped when the ShardWriter or ShardReader is destroyed.
+
+Passphrase input flow:
+1. `obtain_passphrase()` reads the passphrase into a temporary `std::string` staging buffer,
+   transfers the bytes into a `SecureBuffer`, and calls `secure_wipe_string()` on the
+   staging string before returning.  In the double-prompt path the confirm string is wiped
+   whether or not the passphrases match.
+2. `derive_expanded_keys()` accepts a `SecureBuffer` passphrase, assigns its bytes to a
+   short-lived `KdfInput::passphrase_utf8 std::string` (needed by the Argon2id API), then
+   calls `wipe()` on the `SecureBuffer` immediately.  The string is wiped with
+   `secure_wipe_string()` immediately after `derive_master_seed()` returns.
+
+### Known limitations (outside the threat model)
+
+- **Swap / paging**: `SecureBuffer` uses `std::vector` heap memory.  On systems with swap
+  enabled the allocator may page out the backing memory before it is wiped.  Use
+  `sodium_mlock()` (not yet wired) or OS-level encrypted swap to mitigate.
+- **Compiler copies**: the C++ abstract machine may produce temporary copies of `SecureBuffer`
+  bytes (e.g. during function argument passing before NRVO).  The STL move semantics of
+  `std::vector` minimise but cannot eliminate this risk.
+- **SSO strings**: `std::string` with small-string optimisation stores characters in the
+  object itself (stack frame or inline allocation).  `secure_wipe_string()` zeroes `s.data()`
+  up to `s.size()`, covering SSO storage.  Heap-allocated strings with `capacity > size`
+  may leave up to `capacity - size` bytes unwiped in the heap buffer.
+- **OpenSSL / libsodium internals**: HKDF-SHA-256 and Argon2id operate on copies of key
+  material inside OpenSSL and libsodium.  BSEAL cannot wipe those internal copies.
+- **Crash dumps**: core files and process dumps will contain live memory including key
+  material.  Disable core dumps on production deployments.
+- **Debugger access**: a process-local debugger or `/proc/<pid>/mem` reader can read key
+  material at any point during execution.
+- **`KdfInput::passphrase_utf8`**: the `std::string` field exists because Argon2id takes a
+  raw `void*` pointer.  It is wiped via `secure_wipe_string()` immediately after
+  `derive_master_seed()` returns, but the `std::string` destructor will subsequently call
+  `free()` on already-zeroed memory, leaving the allocator free-list in a state that could
+  reveal the string's former length to a heap-inspection attacker.
+
+### Recommended operational mitigations
+
+- Run BSEAL on a machine with encrypted swap or swap disabled.
+- Disable core dumps: `ulimit -c 0` (Linux) or equivalent.
+- Do not attach debuggers to BSEAL processes in production.
+- Prefer high-entropy keyfiles in addition to passphrases to reduce the value of any
+  passphrase leak.
+
 ## Error messages
 
 Authentication failures should not distinguish between:

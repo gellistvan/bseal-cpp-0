@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/Types.hpp"
+#include "crypto/SecureBuffer.hpp"
 #include "io/ShardFrame.hpp"
 
 #include <array>
@@ -21,7 +22,8 @@ struct ShardWriterOptions {
     GlobalPublicHeaderV1 global_header{};
 
     /// Header authentication key — used to compute ShardPublicHeaderV1.header_mac.
-    std::array<Byte, 32> header_authentication_key{};
+    /// Stored as SecureBuffer so it is wiped when ShardWriterOptions is destroyed.
+    crypto::SecureBuffer header_authentication_key;
 
     /// Per-shard public_header_hash (pre-computed by caller before encryption starts).
     /// Indexed by shard_index. Must be non-empty and sized exactly to shard_count.
