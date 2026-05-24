@@ -19,18 +19,6 @@ void ensure_sodium_initialized() {
 }
 
 
-void validate_request(const AeadKeyView& key,
-                      const AeadNonceView& nonce,
-                      std::size_t expected_key_size,
-                      std::size_t expected_nonce_size) {
-    if (key.bytes.size() != expected_key_size) {
-        throw InvalidArgument("invalid AEAD key size");
-    }
-    if (nonce.bytes.size() != expected_nonce_size) {
-        throw InvalidArgument("invalid AEAD nonce size");
-    }
-}
-
 } // namespace
 
 CipherSuite XChaCha20Poly1305Backend::suite() const noexcept {
@@ -56,7 +44,7 @@ std::size_t XChaCha20Poly1305Backend::tag_size() const noexcept {
 Bytes XChaCha20Poly1305Backend::encrypt_chunk(const EncryptChunkRequest& request) {
     ensure_sodium_initialized();
 
-    validate_request(request.key, request.nonce, key_size(), nonce_size());
+    validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     const Bytes aad = serialize_chunk_aad_v1(request.aad);
 
@@ -86,7 +74,7 @@ Bytes XChaCha20Poly1305Backend::encrypt_chunk(const EncryptChunkRequest& request
 Bytes XChaCha20Poly1305Backend::decrypt_chunk(const DecryptChunkRequest& request) {
     ensure_sodium_initialized();
 
-    validate_request(request.key, request.nonce, key_size(), nonce_size());
+    validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     if (request.ciphertext_and_tag.size() < tag_size()) {
         throw AuthenticationFailed();

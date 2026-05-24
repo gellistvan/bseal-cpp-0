@@ -22,18 +22,6 @@ EvpCipherCtxPtr make_cipher_ctx() {
     return EvpCipherCtxPtr(raw, &EVP_CIPHER_CTX_free);
 }
 
-void validate_request(const AeadKeyView& key,
-                      const AeadNonceView& nonce,
-                      std::size_t expected_key_size,
-                      std::size_t expected_nonce_size) {
-    if (key.bytes.size() != expected_key_size) {
-        throw InvalidArgument("invalid AEAD key size");
-    }
-    if (nonce.bytes.size() != expected_nonce_size) {
-        throw InvalidArgument("invalid AEAD nonce size");
-    }
-}
-
 } // namespace
 
 CipherSuite AesGcmBackend::suite() const noexcept {
@@ -57,7 +45,7 @@ std::size_t AesGcmBackend::tag_size() const noexcept {
 }
 
 Bytes AesGcmBackend::encrypt_chunk(const EncryptChunkRequest& request) {
-    validate_request(request.key, request.nonce, key_size(), nonce_size());
+    validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     const Bytes aad = serialize_chunk_aad_v1(request.aad);
 
@@ -136,7 +124,7 @@ Bytes AesGcmBackend::encrypt_chunk(const EncryptChunkRequest& request) {
 }
 
 Bytes AesGcmBackend::decrypt_chunk(const DecryptChunkRequest& request) {
-    validate_request(request.key, request.nonce, key_size(), nonce_size());
+    validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     if (request.ciphertext_and_tag.size() < tag_size()) {
         throw AuthenticationFailed();
