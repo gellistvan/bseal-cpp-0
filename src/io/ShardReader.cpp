@@ -50,19 +50,6 @@ std::uint64_t checked_range_end(std::uint64_t first, std::uint64_t count) {
     return first + count;
 }
 
-std::uint64_t checked_frame_body_size(const ChunkFrameHeaderV1& frame_header) {
-    const auto body_len = frame_header.ciphertext_len +
-        static_cast<std::uint64_t>(frame_header.tag_len);
-
-    if (body_len < frame_header.ciphertext_len) {
-        throw InvalidArgument("invalid ciphertext_length");
-    }
-    if (body_len > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        throw InvalidArgument("invalid ciphertext_length");
-    }
-
-    return body_len;
-}
 
 /// Parse one shard file and return a ShardInfo.
 ShardInfo read_shard_info(const std::filesystem::path& path) {
@@ -404,7 +391,7 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
             throw InvalidArgument("non-final chunk has partial plaintext length");
         }
 
-        const auto body_len_u64 = checked_frame_body_size(frame_header);
+        const auto body_len_u64 = chunk_frame_v1_encoded_size(frame_header) - kChunkFrameHeaderV1Size;
 
         const auto after_header_pos = current_stream_.tellg();
         if (after_header_pos < std::streampos{0}) {

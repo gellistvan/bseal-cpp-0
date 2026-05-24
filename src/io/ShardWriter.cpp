@@ -19,20 +19,6 @@ std::string random_filename(std::string_view extension) {
     return name;
 }
 
-std::uint64_t checked_frame_body_size(std::uint64_t ciphertext_len, std::uint16_t tag_len) {
-    const auto body_len = ciphertext_len + static_cast<std::uint64_t>(tag_len);
-
-    if (body_len < ciphertext_len) {
-        throw InvalidArgument("chunk frame body length overflow");
-    }
-
-    if (body_len > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        throw InvalidArgument("chunk frame body too large for this platform");
-    }
-
-    return body_len;
-}
-
 } // namespace
 
 ShardWriter::ShardWriter(ShardWriterOptions options)
@@ -263,13 +249,12 @@ ShardWritePosition ShardWriter::write_chunk_frame(
         throw InvalidArgument("ChunkFrameHeaderV1 bytes do not match supplied header");
     }
 
-    const auto body_size = checked_frame_body_size(header.ciphertext_len, header.tag_len);
+    const auto frame_size = chunk_frame_v1_encoded_size(header);
+    const auto body_size  = frame_size - kChunkFrameHeaderV1Size;
 
     if (ciphertext_and_tag.size() != body_size) {
         throw InvalidArgument("ciphertext length does not match ChunkFrameHeaderV1");
     }
-
-    const auto frame_size = chunk_frame_v1_encoded_size(header);
 
     if (frame_size > options_.max_shard_payload_len) {
         throw InvalidArgument(
