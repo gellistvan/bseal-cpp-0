@@ -455,7 +455,6 @@ PaddingResult compute_padding(
 
 ArchiveOpenContext make_decrypt_context_from_shards(
     const std::vector<bseal::io::ShardInfo>& shards) {
-    // Find shard_index == 0.
     auto first_it = std::find_if(
         shards.begin(), shards.end(),
         [](const bseal::io::ShardInfo& s) { return s.shard_index() == 0; });
@@ -610,10 +609,8 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     gh.shard_count = static_cast<std::uint32_t>(shard_plans.size());
 
-    // Now compute per-shard public_header_hash (includes shard_payload_len).
     fill_per_shard_hashes(shard_plans, gh);
 
-    // Build the per_shard_public_header_hashes vector for the pipeline.
     std::vector<std::array<Byte, 32>> per_shard_hashes;
     per_shard_hashes.reserve(shard_plans.size());
     for (const auto& sp : shard_plans) {

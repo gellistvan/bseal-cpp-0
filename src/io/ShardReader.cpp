@@ -60,19 +60,16 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
         throw Error("failed to open shard file: " + path.string());
     }
 
-    // Read 192-byte global header.
     const auto global_bytes = read_exact(
         stream, kGlobalPublicHeaderV1Size, path, "truncated global public header");
     const auto global_header = parse_global_public_header(
         ConstByteSpan{global_bytes.data(), global_bytes.size()});
 
-    // Read 80-byte shard header.
     const auto shard_bytes = read_exact(
         stream, kShardPublicHeaderV1Size, path, "truncated shard public header");
     const auto shard_header = parse_shard_public_header(
         ConstByteSpan{shard_bytes.data(), shard_bytes.size()});
 
-    // Validate shard_index < shard_count (global header knows total shard count).
     if (shard_header.shard_index >= global_header.shard_count) {
         throw InvalidArgument(
             "shard_index " + std::to_string(shard_header.shard_index)
@@ -80,7 +77,6 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
             + ": " + path.string());
     }
 
-    // Validate file size: must be exactly 192 + 80 + shard_payload_len.
     const std::uint64_t expected_file_size =
         static_cast<std::uint64_t>(kGlobalPublicHeaderV1Size)
         + static_cast<std::uint64_t>(kShardPublicHeaderV1Size)
@@ -94,7 +90,6 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
             + "): " + path.string());
     }
 
-    // Compute public_header_hash for this shard.
     const auto phash = compute_public_header_hash(global_header, shard_header);
 
     return ShardInfo{
@@ -188,7 +183,6 @@ void ShardReader::validate_shards() {
                 "duplicate shard index: " + std::to_string(shard.shard_index()));
         }
 
-        // Global header must be byte-for-byte identical across all shards.
         const auto this_global_bytes =
             serialize_global_public_header(shard.global_header);
         if (this_global_bytes != reference_global_bytes) {
@@ -196,7 +190,6 @@ void ShardReader::validate_shards() {
                 "global header mismatch across shards: " + shard.path.string());
         }
 
-        // Explicit validation checks.
         if (validation_.suite_id) {
             if (shard.global_header.aead_alg_id != *validation_.suite_id) {
                 throw InvalidArgument("incompatible shard aead_alg_id");
@@ -239,14 +232,12 @@ void ShardReader::validate_shards() {
         throw InvalidArgument("shard count does not match global_header.shard_count");
     }
 
-    // Verify all shard indices 0..shard_count-1 are present.
     for (std::uint32_t i = 0; i < shard_count; ++i) {
         if (!shard_indices.contains(i)) {
             throw InvalidArgument("missing shard index: " + std::to_string(i));
         }
     }
 
-    // Sort by shard_index for sequential reading.
     std::sort(
         shards_.begin(),
         shards_.end(),
@@ -254,7 +245,6 @@ void ShardReader::validate_shards() {
             return a.shard_index() < b.shard_index();
         });
 
-    // Verify contiguous, non-overlapping chunk ranges.
     std::uint64_t expected_first_chunk = 0;
     for (const auto& shard : shards_) {
         const auto end = checked_range_end(

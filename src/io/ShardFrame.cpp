@@ -166,7 +166,6 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     Reader r(bytes.first(kGlobalPublicHeaderV1Size), "truncated global public header");
     GlobalPublicHeaderV1 h;
 
-    // magic
     h.magic = read_array<8>(r);
     // Reject old BSEAL01\0 magic and any other bad magic.
     if (!std::equal(h.magic.begin(), h.magic.end(),

@@ -44,7 +44,6 @@ ShardWriter::~ShardWriter() {
     try {
         finish();
     } catch (...) {
-        // Destructors must not throw.
     }
 }
 
@@ -58,7 +57,6 @@ void ShardWriter::validate_and_normalize_options() {
     if (options_.filename_extension.empty()) {
         options_.filename_extension = ".bin";
     }
-    // global_header.chunk_plain_size is used for planners; validate it is set.
     if (options_.global_header.chunk_plain_size == 0) {
         throw InvalidArgument("ShardWriter global_header.chunk_plain_size is missing");
     }
