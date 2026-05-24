@@ -2,6 +2,7 @@
 #include "io/ShardFrame.hpp"
 
 #include "common/CheckedArithmetic.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 #include "platform/Random.hpp"
 
@@ -16,24 +17,6 @@ std::string random_filename(std::string_view extension) {
     std::string name = platform::random_base62_string(24);
     name.append(extension);
     return name;
-}
-
-bool all_zero(ConstByteSpan bytes) {
-    return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
-}
-
-std::uint64_t checked_frame_body_size(std::uint64_t ciphertext_len, std::uint16_t tag_len) {
-    const auto body_len = ciphertext_len + static_cast<std::uint64_t>(tag_len);
-
-    if (body_len < ciphertext_len) {
-        throw InvalidArgument("chunk frame body length overflow");
-    }
-
-    if (body_len > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        throw InvalidArgument("chunk frame body too large for this platform");
-    }
-
-    return body_len;
 }
 
 } // namespace
@@ -61,7 +44,6 @@ ShardWriter::~ShardWriter() {
     try {
         finish();
     } catch (...) {
-        // Destructors must not throw.
     }
 }
 
@@ -75,7 +57,6 @@ void ShardWriter::validate_and_normalize_options() {
     if (options_.filename_extension.empty()) {
         options_.filename_extension = ".bin";
     }
-    // global_header.chunk_plain_size is used for planners; validate it is set.
     if (options_.global_header.chunk_plain_size == 0) {
         throw InvalidArgument("ShardWriter global_header.chunk_plain_size is missing");
     }
@@ -172,7 +153,6 @@ void ShardWriter::rewrite_shard_header(
 
     const auto encoded = serialize_shard_public_header(sh);
 
-    // Seek past the 192-byte global header to position of shard header.
     stream.seekp(static_cast<std::streamoff>(kGlobalPublicHeaderV1Size), std::ios::beg);
     stream.write(
         reinterpret_cast<const char*>(encoded.data()),
@@ -266,13 +246,12 @@ ShardWritePosition ShardWriter::write_chunk_frame(
         throw InvalidArgument("ChunkFrameHeaderV1 bytes do not match supplied header");
     }
 
-    const auto body_size = checked_frame_body_size(header.ciphertext_len, header.tag_len);
+    const auto frame_size = chunk_frame_v1_encoded_size(header);
+    const auto body_size  = frame_size - kChunkFrameHeaderV1Size;
 
     if (ciphertext_and_tag.size() != body_size) {
         throw InvalidArgument("ciphertext length does not match ChunkFrameHeaderV1");
     }
-
-    const auto frame_size = chunk_frame_v1_encoded_size(header);
 
     if (frame_size > options_.max_shard_payload_len) {
         throw InvalidArgument(
@@ -379,7 +358,6 @@ void ShardWriter::finish() {
                         + fs.path.string());
         }
 
-        // Rewrite global header at offset 0.
         rw.seekp(0, std::ios::beg);
         rw.write(
             reinterpret_cast<const char*>(global_bytes.data()),

@@ -24,7 +24,6 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <memory>
 #include <span>
@@ -229,10 +228,6 @@ derive_expanded_keys(const ArchiveOpenContext& context,
     return bseal::crypto::expand_keys(master_seed.as_span(), context.suite);
 }
 
-// ---------------------------------------------------------------------------
-// Two-pass shard layout planner
-// ---------------------------------------------------------------------------
-
 struct ShardPlan {
     std::uint32_t shard_index{0};
     std::uint64_t first_chunk_index{0};
@@ -254,7 +249,6 @@ std::vector<ShardPlan> plan_shards(
     std::uint64_t shard_idx = 0;
 
     // Validate that a full-sized (non-final) chunk frame fits in one shard.
-    // Use checked arithmetic from the shared helper.
     const std::uint64_t max_frame_size =
         bseal::io::chunk_frame_v1_encoded_size_from_params(chunk_plain_size, tag_len);
     if (max_frame_size > max_shard_payload_len) {
@@ -320,10 +314,6 @@ void fill_per_shard_hashes(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Encrypt path
-// ---------------------------------------------------------------------------
-
 ArchiveOpenContext make_encrypt_context(const bseal::cli::EncryptOptions& options) {
     ArchiveOpenContext context{};
     context.suite       = options.suite;
@@ -365,10 +355,6 @@ ArchiveOpenContext make_encrypt_context(const bseal::cli::EncryptOptions& option
 
     return context;
 }
-
-// ---------------------------------------------------------------------------
-// Padding helpers
-// ---------------------------------------------------------------------------
 
 struct PaddingResult {
     std::uint64_t target_size;
@@ -449,13 +435,8 @@ PaddingResult compute_padding(
     throw bseal::InvalidArgument("unsupported padding policy kind");
 }
 
-// ---------------------------------------------------------------------------
-// Decrypt path
-// ---------------------------------------------------------------------------
-
 ArchiveOpenContext make_decrypt_context_from_shards(
     const std::vector<bseal::io::ShardInfo>& shards) {
-    // Find shard_index == 0.
     auto first_it = std::find_if(
         shards.begin(), shards.end(),
         [](const bseal::io::ShardInfo& s) { return s.shard_index() == 0; });
@@ -500,10 +481,6 @@ void verify_all_shard_header_macs(
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 int encrypt(const bseal::cli::EncryptOptions& options) {
     require_directory(options.input, "input path");
     require_keyfiles_exist(options.keyfiles);
@@ -533,9 +510,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
     auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
 
-    // -----------------------------------------------------------------------
-    // Streaming: plan layout from filesystem metadata, then stream file bytes.
-    // -----------------------------------------------------------------------
     bseal::archive::ArchiveWriter archive_writer(bseal::archive::ArchiveWriterOptions{
         options.input,
         options.chunk_size,
@@ -548,7 +522,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     const std::uint64_t chunk_plain_size = context.chunk_plain_size;
     const std::uint16_t tag_len = 16; // All v1 AEADs use a 16-byte tag.
 
-    // Apply padding policy: build RandomPadding record and register with the writer.
     const auto pad = compute_padding(raw_plaintext_size, chunk_plain_size, options.padding);
     if (pad.target_size > raw_plaintext_size) {
         const std::uint64_t gap = pad.target_size - raw_plaintext_size;
@@ -562,7 +535,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     const std::uint64_t padded_plaintext_size = pad.target_size;
 
-    // Compute global chunk counts.
     std::uint64_t global_chunk_count = 0;
     std::uint32_t final_plaintext_chunk_len = 0;
 
@@ -582,10 +554,8 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
                      : static_cast<std::uint32_t>(rem);
     }
 
-    // Fill in the global header fields we now know.
-    // When padded_plaintext_size is 0 (empty archive path), use final_plaintext_chunk_len
-    // for consistency with FORMAT.md §3 validation constraint:
-    //   padded_plaintext_size == (global_chunk_count-1)*chunk_plain_size + final_plaintext_chunk_len
+    // When padded_plaintext_size is 0 (empty archive), use final_plaintext_chunk_len for
+    // consistency with FORMAT.md §3: padded_plaintext_size == (N-1)*chunk_size + final_len.
     const std::uint64_t effective_padded_size =
         padded_plaintext_size == 0
         ? static_cast<std::uint64_t>(final_plaintext_chunk_len)
@@ -598,9 +568,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     gh.padded_plaintext_size     = effective_padded_size;
     gh.final_plaintext_chunk_len = final_plaintext_chunk_len;
 
-    // -----------------------------------------------------------------------
-    // Plan shard layout.
-    // -----------------------------------------------------------------------
     auto shard_plans = plan_shards(
         global_chunk_count,
         chunk_plain_size,
@@ -610,19 +577,14 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     gh.shard_count = static_cast<std::uint32_t>(shard_plans.size());
 
-    // Now compute per-shard public_header_hash (includes shard_payload_len).
     fill_per_shard_hashes(shard_plans, gh);
 
-    // Build the per_shard_public_header_hashes vector for the pipeline.
     std::vector<std::array<Byte, 32>> per_shard_hashes;
     per_shard_hashes.reserve(shard_plans.size());
     for (const auto& sp : shard_plans) {
         per_shard_hashes.push_back(sp.public_header_hash);
     }
 
-    // -----------------------------------------------------------------------
-    // Construct ShardWriter and EncryptPipeline.
-    // -----------------------------------------------------------------------
     bseal::io::ShardWriterOptions shard_options{};
     shard_options.output_dir              = options.output;
     shard_options.max_shard_payload_len   = options.shard_size;
@@ -681,7 +643,6 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
     auto shards  = bseal::io::ShardReader::discover(options.input);
     auto context = make_decrypt_context_from_shards(shards);
 
-    // Reject before running Argon2 if the archive KDF cost exceeds the local policy.
     bseal::crypto::check_kdf_params_against_policy(context.kdf_params, options.kdf_policy);
 
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
@@ -705,7 +666,6 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
         per_shard_hashes[shard.shard_index()] = shard.public_header_hash;
     }
 
-    // Build validation struct using new format fields.
     bseal::io::ShardReaderValidation validation{};
     validation.suite_id         = suite_to_aead_alg_id(context.suite);
     validation.archive_id       = context.archive_id;

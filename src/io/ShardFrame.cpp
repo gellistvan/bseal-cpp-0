@@ -19,21 +19,10 @@
 namespace bseal::io {
 namespace {
 
-// ---------------------------------------------------------------------------
-// Serialisation helpers
-// ---------------------------------------------------------------------------
-
-bool all_zero(ConstByteSpan bytes) {
-    return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
-}
-
 bool is_power_of_two(std::uint32_t v) {
     return v != 0 && (v & (v - 1)) == 0;
 }
 
-// ---------------------------------------------------------------------------
-// Reader helper
-// ---------------------------------------------------------------------------
 
 class Reader {
 public:
@@ -104,10 +93,6 @@ constexpr std::string_view kHeaderMacDomain{
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// GlobalPublicHeaderV1 serialisation
-// ---------------------------------------------------------------------------
-
 Bytes serialize_global_public_header(const GlobalPublicHeaderV1& h) {
     Bytes out;
     out.reserve(kGlobalPublicHeaderV1Size);
@@ -170,7 +155,6 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     Reader r(bytes.first(kGlobalPublicHeaderV1Size), "truncated global public header");
     GlobalPublicHeaderV1 h;
 
-    // magic
     h.magic = read_array<8>(r);
     // Reject old BSEAL01\0 magic and any other bad magic.
     if (!std::equal(h.magic.begin(), h.magic.end(),
@@ -213,10 +197,7 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
 
     h.reserved1 = read_array<24>(r);
 
-    // -----------------------------------------------------------------------
-    // Rejection rules (FORMAT.md §rejection)
-    // -----------------------------------------------------------------------
-
+    // Rejection rules — FORMAT.md §rejection.
     if (h.format_major != 1 || h.format_minor != 0) {
         throw InvalidArgument("unsupported format version");
     }
@@ -356,10 +337,6 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     return h;
 }
 
-// ---------------------------------------------------------------------------
-// ShardPublicHeaderV1 serialisation
-// ---------------------------------------------------------------------------
-
 Bytes serialize_shard_public_header(const ShardPublicHeaderV1& h) {
     Bytes out;
     out.reserve(kShardPublicHeaderV1Size);
@@ -425,10 +402,7 @@ ShardPublicHeaderV1 parse_shard_public_header(ConstByteSpan bytes) {
     return h;
 }
 
-// ---------------------------------------------------------------------------
-// Public header hash (BLAKE3-256 per FORMAT.md §15)
-// ---------------------------------------------------------------------------
-
+// BLAKE3-256 public_header_hash per FORMAT.md §15.
 std::array<Byte, 32> compute_public_header_hash(
     const GlobalPublicHeaderV1& global_header,
     const ShardPublicHeaderV1&  shard_header) {
@@ -446,10 +420,7 @@ std::array<Byte, 32> compute_public_header_hash(
     return out;
 }
 
-// ---------------------------------------------------------------------------
-// Shard header MAC (HMAC-SHA256 via OpenSSL)
-// ---------------------------------------------------------------------------
-
+// HMAC-SHA256 shard header MAC per FORMAT.md §5.
 std::array<Byte, 32> compute_shard_header_mac(
     ConstByteSpan               header_authentication_key,
     const GlobalPublicHeaderV1& global_header,
@@ -501,10 +472,6 @@ bool verify_shard_header_mac(
         shard_header.header_mac.data(),
         expected.size()) == 0;
 }
-
-// ---------------------------------------------------------------------------
-// ChunkFrameHeaderV1 — kept identical to original implementation
-// ---------------------------------------------------------------------------
 
 namespace {
 

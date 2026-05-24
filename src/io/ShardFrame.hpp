@@ -182,7 +182,7 @@ bool verify_shard_header_mac(
     const ShardPublicHeaderV1&  shard_header);
 
 // ---------------------------------------------------------------------------
-// ChunkFrameHeaderV1 — 40 bytes.  Kept as-is from original implementation.
+// ChunkFrameHeaderV1 — 40 bytes.
 // ---------------------------------------------------------------------------
 
 inline constexpr std::array<Byte, 4> kChunkFrameV1Magic{

@@ -138,9 +138,36 @@ bare C++ arithmetic:
 All helpers throw `bseal::InvalidArgument` on overflow/underflow/zero-divisor, propagating as exit
 code 1. The `ctx`/`what` string names the call site so error messages are actionable.
 
-Functions that already perform manual overflow checks (e.g. `chunk_frame_v1_encoded_size` in
-`src/io/ShardFrame.cpp`) are intentionally left unchanged; they predate this policy and are
-correct as-is.
+`ShardReader` and `ShardWriter` derive body sizes via `chunk_frame_v1_encoded_size` from
+`src/io/ShardFrame.hpp` rather than maintaining local overflow checks.
+
+### `src/common/Endian.hpp`
+
+All little-endian serialisation and common byte-span predicates use these inline helpers:
+
+| Helper | Purpose |
+|---|---|
+| `append_u8(out, v)` | append 1 byte |
+| `append_u16_le(out, v)` | append 2 bytes, LE |
+| `append_u32_le(out, v)` | append 4 bytes, LE |
+| `append_u64_le(out, v)` | append 8 bytes, LE |
+| `append_i64_le(out, v)` | append 8 bytes, LE (two's complement) |
+| `append_bytes(out, span)` | append raw byte span |
+| `all_zero(span)` | true if every byte is 0x00 |
+
+Used by: `archive/RecordFormat.cpp`, `archive/ArchiveWriter.cpp`, `io/ShardFrame.cpp`,
+`io/ShardWriter.cpp`, `crypto/Kdf.cpp`, `crypto/KeySchedule.cpp`.
+
+### `src/crypto/Kdf.hpp` — shared `hkdf_sha256`
+
+`hkdf_sha256(ikm, salt, info, output_len)` is the single HKDF-SHA-256 implementation,
+defined in `Kdf.cpp` and shared by `KeySchedule.cpp`. Both callers derive domain-separated
+sub-keys from the same master seed using different `info` strings.
+
+### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition
+
+`validate_aead_request(key, nonce, expected_key_size, expected_nonce_size)` is the shared
+inline guard used by both AEAD backends before any OpenSSL or libsodium call.
 
 ### `src/common/Endian.hpp`
 

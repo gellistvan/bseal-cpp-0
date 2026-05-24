@@ -22,11 +22,7 @@ namespace {
 
 constexpr std::size_t kIoBufferSize = 1024 * 1024;
 
-// ---------------------------------------------------------------------------
-// BLAKE3-256 helpers
-// ---------------------------------------------------------------------------
-//
-// Used for keyfile digests and keyfile mix as required by FORMAT.md §6.3 and §8.
+// BLAKE3-256 helpers for keyfile digests and keyfile mix (FORMAT.md §6.3 and §8).
 
 /// Feed a null-terminated C string literal including its null terminator.
 /// FORMAT.md §8 domain strings include the trailing '\0'.
