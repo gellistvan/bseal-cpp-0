@@ -24,6 +24,7 @@ std::uint32_t permissions_to_bits(std::filesystem::perms perms) {
     return static_cast<std::uint32_t>(perms) & 07777u;
 }
 
+// Used only for the ArchiveBegin version payload.
 void append_u32_le(Bytes& out, std::uint32_t value) {
     for (int i = 0; i < 4; ++i) {
         out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));

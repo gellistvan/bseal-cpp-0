@@ -111,11 +111,10 @@ private:
 };
 
 template <std::size_t N>
-std::array<Byte, N> read_array(Reader& reader, std::string_view what) {
+std::array<Byte, N> read_array(Reader& reader) {
     auto span = reader.read_bytes(N);
     std::array<Byte, N> out{};
     std::copy(span.begin(), span.end(), out.begin());
-    (void)what;
     return out;
 }
 
@@ -199,7 +198,7 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     GlobalPublicHeaderV1 h;
 
     // magic
-    h.magic = read_array<8>(r, "magic");
+    h.magic = read_array<8>(r);
     // Reject old BSEAL01\0 magic and any other bad magic.
     if (!std::equal(h.magic.begin(), h.magic.end(),
                     kGlobalHeaderV1Magic.begin(), kGlobalHeaderV1Magic.end())) {
@@ -213,14 +212,14 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     h.frame_header_len  = r.read_u16_le();
     h.global_flags      = r.read_u16_le();
 
-    h.archive_id = read_array<32>(r, "archive_id");
+    h.archive_id = read_array<32>(r);
 
     h.aead_alg_id = r.read_u16_le();
     h.kdf_alg_id  = r.read_u16_le();
     h.hash_alg_id = r.read_u16_le();
     h.mac_alg_id  = r.read_u16_le();
 
-    h.kdf_salt = read_array<32>(r, "kdf_salt");
+    h.kdf_salt = read_array<32>(r);
 
     h.argon2_version     = r.read_u32_le();
     h.argon2_memory_kib  = r.read_u32_le();
@@ -239,7 +238,7 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     h.max_shard_payload_len      = r.read_u64_le();
     h.required_feature_flags     = r.read_u64_le();
 
-    h.reserved1 = read_array<24>(r, "reserved1");
+    h.reserved1 = read_array<24>(r);
 
     // -----------------------------------------------------------------------
     // Rejection rules (FORMAT.md §rejection)
@@ -422,7 +421,7 @@ ShardPublicHeaderV1 parse_shard_public_header(ConstByteSpan bytes) {
     Reader r(bytes.first(kShardPublicHeaderV1Size), "truncated shard public header");
     ShardPublicHeaderV1 h;
 
-    h.shard_magic = read_array<8>(r, "shard_magic");
+    h.shard_magic = read_array<8>(r);
     if (!std::equal(h.shard_magic.begin(), h.shard_magic.end(),
                     kShardHeaderV1Magic.begin(), kShardHeaderV1Magic.end())) {
         throw InvalidArgument("wrong shard header magic");
@@ -433,7 +432,7 @@ ShardPublicHeaderV1 parse_shard_public_header(ConstByteSpan bytes) {
     h.first_global_chunk_index = r.read_u64_le();
     h.shard_chunk_count        = r.read_u64_le();
     h.shard_payload_len        = r.read_u64_le();
-    h.header_mac               = read_array<32>(r, "header_mac");
+    h.header_mac               = read_array<32>(r);
     h.reserved0                = r.read_u64_le();
 
     // Rejection rules for shard header fields.
