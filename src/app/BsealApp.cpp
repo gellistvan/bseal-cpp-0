@@ -229,10 +229,6 @@ derive_expanded_keys(const ArchiveOpenContext& context,
     return bseal::crypto::expand_keys(master_seed.as_span(), context.suite);
 }
 
-// ---------------------------------------------------------------------------
-// Two-pass shard layout planner
-// ---------------------------------------------------------------------------
-
 struct ShardPlan {
     std::uint32_t shard_index{0};
     std::uint64_t first_chunk_index{0};
@@ -320,10 +316,6 @@ void fill_per_shard_hashes(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Encrypt path
-// ---------------------------------------------------------------------------
-
 ArchiveOpenContext make_encrypt_context(const bseal::cli::EncryptOptions& options) {
     ArchiveOpenContext context{};
     context.suite       = options.suite;
@@ -365,10 +357,6 @@ ArchiveOpenContext make_encrypt_context(const bseal::cli::EncryptOptions& option
 
     return context;
 }
-
-// ---------------------------------------------------------------------------
-// Padding helpers
-// ---------------------------------------------------------------------------
 
 struct PaddingResult {
     std::uint64_t target_size;
@@ -449,10 +437,6 @@ PaddingResult compute_padding(
     throw bseal::InvalidArgument("unsupported padding policy kind");
 }
 
-// ---------------------------------------------------------------------------
-// Decrypt path
-// ---------------------------------------------------------------------------
-
 ArchiveOpenContext make_decrypt_context_from_shards(
     const std::vector<bseal::io::ShardInfo>& shards) {
     auto first_it = std::find_if(
@@ -499,10 +483,6 @@ void verify_all_shard_header_macs(
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 int encrypt(const bseal::cli::EncryptOptions& options) {
     require_directory(options.input, "input path");
     require_keyfiles_exist(options.keyfiles);
@@ -532,9 +512,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
     auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
 
-    // -----------------------------------------------------------------------
-    // Streaming: plan layout from filesystem metadata, then stream file bytes.
-    // -----------------------------------------------------------------------
     bseal::archive::ArchiveWriter archive_writer(bseal::archive::ArchiveWriterOptions{
         options.input,
         options.chunk_size,
@@ -597,9 +574,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     gh.padded_plaintext_size     = effective_padded_size;
     gh.final_plaintext_chunk_len = final_plaintext_chunk_len;
 
-    // -----------------------------------------------------------------------
-    // Plan shard layout.
-    // -----------------------------------------------------------------------
     auto shard_plans = plan_shards(
         global_chunk_count,
         chunk_plain_size,
@@ -617,9 +591,6 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         per_shard_hashes.push_back(sp.public_header_hash);
     }
 
-    // -----------------------------------------------------------------------
-    // Construct ShardWriter and EncryptPipeline.
-    // -----------------------------------------------------------------------
     bseal::io::ShardWriterOptions shard_options{};
     shard_options.output_dir              = options.output;
     shard_options.max_shard_payload_len   = options.shard_size;
