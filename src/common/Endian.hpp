@@ -2,6 +2,7 @@
 
 #include "common/Types.hpp"
 
+#include <algorithm>
 #include <cstdint>
 
 namespace bseal {
@@ -39,6 +40,11 @@ inline void append_i64_le(Bytes& out, std::int64_t value) {
 /// Append a raw byte span.
 inline void append_bytes(Bytes& out, ConstByteSpan bytes) {
     out.insert(out.end(), bytes.begin(), bytes.end());
+}
+
+/// Return true if every byte in `bytes` is zero.
+inline bool all_zero(ConstByteSpan bytes) {
+    return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
 }
 
 } // namespace bseal

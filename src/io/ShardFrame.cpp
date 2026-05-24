@@ -23,10 +23,6 @@ namespace {
 // Serialisation helpers
 // ---------------------------------------------------------------------------
 
-bool all_zero(ConstByteSpan bytes) {
-    return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
-}
-
 bool is_power_of_two(std::uint32_t v) {
     return v != 0 && (v & (v - 1)) == 0;
 }

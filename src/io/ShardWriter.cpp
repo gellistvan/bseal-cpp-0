@@ -2,6 +2,7 @@
 #include "io/ShardFrame.hpp"
 
 #include "common/CheckedArithmetic.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 #include "platform/Random.hpp"
 
@@ -16,10 +17,6 @@ std::string random_filename(std::string_view extension) {
     std::string name = platform::random_base62_string(24);
     name.append(extension);
     return name;
-}
-
-bool all_zero(ConstByteSpan bytes) {
-    return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
 }
 
 std::uint64_t checked_frame_body_size(std::uint64_t ciphertext_len, std::uint16_t tag_len) {
