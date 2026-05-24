@@ -81,10 +81,9 @@ WriteResult perform_write(const WriteRequest& request) {
             throw Error("failed to flush file: " + request.path.string());
         }
 
-        // TODO production:
-        // - POSIX: fsync(fileno(...))
-        // - Windows: FlushFileBuffers(...)
-        // Standard C++ cannot guarantee durable persistence.
+        // NOTE: flush() reaches the OS page cache but does not guarantee durable
+        // persistence.  A production build should call fsync(fileno(...)) on POSIX
+        // or FlushFileBuffers() on Windows after flush().
     }
 
     return WriteResult{

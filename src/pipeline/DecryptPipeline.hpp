@@ -40,8 +40,6 @@ namespace bseal::pipeline {
         // this value after all chunks are processed. Mismatch throws InvalidArgument.
         std::uint64_t padded_plaintext_size{0};
 
-        // See EncryptPipelineOptions::aad_shard_index.
-        std::uint32_t aad_shard_index{0};
     };
 
     class DecryptPipeline {

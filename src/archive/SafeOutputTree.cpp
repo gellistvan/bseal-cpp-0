@@ -16,10 +16,6 @@
 
 namespace bseal::archive {
 
-// ---------------------------------------------------------------------------
-// Platform support
-// ---------------------------------------------------------------------------
-
 bool SafeOutputTree::is_platform_supported() noexcept {
 #if !defined(_WIN32)
     return true;
@@ -27,10 +23,6 @@ bool SafeOutputTree::is_platform_supported() noexcept {
     return false;
 #endif
 }
-
-// ---------------------------------------------------------------------------
-// Constructor / destructor / move
-// ---------------------------------------------------------------------------
 
 SafeOutputTree::SafeOutputTree(const std::filesystem::path& root,
                                HardenedExtractMode mode)
@@ -93,10 +85,6 @@ SafeOutputTree& SafeOutputTree::operator=(SafeOutputTree&& other) noexcept {
 bool SafeOutputTree::is_hardened() const noexcept {
     return hardened_;
 }
-
-// ---------------------------------------------------------------------------
-// POSIX-hardened helpers
-// ---------------------------------------------------------------------------
 
 #if !defined(_WIN32)
 
@@ -185,10 +173,6 @@ int SafeOutputTree::open_dir_hardened(const std::filesystem::path& rel_dir_path)
 
 #endif // !_WIN32
 
-// ---------------------------------------------------------------------------
-// ensure_dirs
-// ---------------------------------------------------------------------------
-
 void SafeOutputTree::ensure_dirs(const std::filesystem::path& rel_dir_path) {
     if (rel_dir_path.empty()) return;
 
@@ -205,10 +189,6 @@ void SafeOutputTree::ensure_dirs(const std::filesystem::path& rel_dir_path) {
         throw InvalidArgument("cannot create directory: " + ec.message());
     }
 }
-
-// ---------------------------------------------------------------------------
-// rename_into
-// ---------------------------------------------------------------------------
 
 void SafeOutputTree::rename_into(const std::filesystem::path& src_abs,
                                  const std::filesystem::path& dest_rel,

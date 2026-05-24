@@ -2,6 +2,8 @@
 
 #include "crypto/Kdf.hpp"
 
+#include "common/CheckedArithmetic.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -20,30 +22,7 @@ namespace {
 
 constexpr std::size_t kIoBufferSize = 1024 * 1024;
 
-int checked_int_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large for OpenSSL EVP call");
-    }
-    return static_cast<int>(value);
-}
-
-void append_le32(Bytes& out, std::uint32_t value) {
-    for (int i = 0; i < 4; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-void append_le64(Bytes& out, std::uint64_t value) {
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// BLAKE3-256 helpers
-// ---------------------------------------------------------------------------
-//
-// Used for keyfile digests and keyfile mix as required by FORMAT.md §6.3 and §8.
+// BLAKE3-256 helpers for keyfile digests and keyfile mix (FORMAT.md §6.3 and §8).
 
 /// Feed a null-terminated C string literal including its null terminator.
 /// FORMAT.md §8 domain strings include the trailing '\0'.
@@ -56,6 +35,15 @@ void blake3_update_bytes(blake3_hasher& hasher, ConstByteSpan bytes) {
         blake3_hasher_update(&hasher, bytes.data(), bytes.size());
     }
 }
+
+void require_u32_range(std::uint32_t value, std::uint32_t min_value, std::uint32_t max_value,
+        const char* name
+    ) {
+    if (value < min_value || value > max_value) {
+        throw InvalidArgument(std::string(name) + " is outside the allowed range");
+    }
+}
+} // namespace
 
 SecureBuffer hkdf_sha256(ConstByteSpan ikm,
                          ConstByteSpan salt,
@@ -121,15 +109,6 @@ SecureBuffer hkdf_sha256(ConstByteSpan ikm,
     return out;
 }
 
-void require_u32_range(std::uint32_t value, std::uint32_t min_value, std::uint32_t max_value,
-        const char* name
-    ) {
-    if (value < min_value || value > max_value) {
-        throw InvalidArgument(std::string(name) + " is outside the allowed range");
-    }
-}
-} // namespace
-
 void validate_kdf_params(const KdfParams& params) {
     require_u32_range(
         params.memory_kib,
@@ -192,7 +171,7 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
         blake3_update_cstr_with_nul(hasher, kDigestDomain, sizeof(kDigestDomain));
 
         Bytes size_frame;
-        append_le64(size_frame, static_cast<std::uint64_t>(file_size));
+        append_u64_le(size_frame, static_cast<std::uint64_t>(file_size));
         blake3_update_bytes(hasher, size_frame);
         secure_memzero(size_frame.data(), size_frame.size());
 
@@ -233,7 +212,7 @@ mix_keyfile_digests(const std::vector<KeyfileDigest>& digests) {
     blake3_update_cstr_with_nul(hasher, kMixDomain, sizeof(kMixDomain));
 
     Bytes count_frame;
-    append_le32(count_frame, static_cast<std::uint32_t>(digests.size()));
+    append_u32_le(count_frame, static_cast<std::uint32_t>(digests.size()));
     blake3_update_bytes(hasher, count_frame);
     secure_memzero(count_frame.data(), count_frame.size());
 

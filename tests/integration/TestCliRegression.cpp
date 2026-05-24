@@ -125,6 +125,14 @@ void create_keyfile(const fs::path& keyfile) {
                     });
 }
 
+void create_second_keyfile(const fs::path& keyfile) {
+  write_binary_file(keyfile,
+                    std::vector<std::uint8_t>{
+                        0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18,
+                        0x29, 0x3A, 0x4B, 0x5C, 0x6D, 0x7E, 0x8F, 0x90,
+                    });
+}
+
 std::vector<std::string> collect_directory_paths(const fs::path& root) {
   std::vector<std::string> paths;
   if (!fs::exists(root)) {
@@ -310,6 +318,43 @@ std::vector<std::string> decrypt_args(const fs::path& input,
   };
 }
 
+std::vector<std::string> encrypt_args_with_keyfiles(
+    const fs::path& input,
+    const fs::path& output,
+    const std::vector<fs::path>& keyfiles) {
+  std::vector<std::string> args{
+      "encrypt",
+      "--input", input.string(),
+      "--output", output.string(),
+      "--suite", "xchacha20-poly1305",
+      "--kdf", "fast",
+      "--chunk-size", "64K",
+      "--shard-size", "65592",
+      "--padding", "none",
+  };
+  for (const auto& kf : keyfiles) {
+    args.push_back("--keyfile");
+    args.push_back(kf.string());
+  }
+  return args;
+}
+
+std::vector<std::string> decrypt_args_with_keyfiles(
+    const fs::path& input,
+    const fs::path& output,
+    const std::vector<fs::path>& keyfiles) {
+  std::vector<std::string> args{
+      "decrypt",
+      "--input", input.string(),
+      "--output", output.string(),
+  };
+  for (const auto& kf : keyfiles) {
+    args.push_back("--keyfile");
+    args.push_back(kf.string());
+  }
+  return args;
+}
+
 void expect_output_tree_matches_input_tree(const fs::path& input, const fs::path& output) {
   const auto input_dirs = collect_directory_paths(input);
   const auto output_dirs = collect_directory_paths(output);
@@ -369,6 +414,23 @@ void remove_last_shard(const fs::path& sealed_dir) {
   }
 
   fs::remove(files.back());
+}
+
+void flip_byte_at_offset(const fs::path& file, std::uint64_t offset) {
+  std::fstream stream(file, std::ios::in | std::ios::out | std::ios::binary);
+  if (!stream) {
+    throw std::runtime_error("flip_byte_at_offset: cannot open " + file.string());
+  }
+  stream.seekg(static_cast<std::streamoff>(offset));
+  char byte = 0;
+  stream.read(&byte, 1);
+  if (!stream) {
+    throw std::runtime_error("flip_byte_at_offset: read failed at offset "
+                             + std::to_string(offset));
+  }
+  byte = static_cast<char>(byte ^ 0x01);
+  stream.seekp(static_cast<std::streamoff>(offset));
+  stream.write(&byte, 1);
 }
 
 void duplicate_first_shard(const fs::path& sealed_dir) {
@@ -456,7 +518,13 @@ TEST(BlackBoxCliRegression, OneByteFlippedInShardFails) {
       decrypt_args(paths.sealed, paths.output, paths.keyfile),
       kPassphrase);
 
-  EXPECT_NE(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+  EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+  EXPECT_TRUE(contains_text(to_lower_ascii(decrypt_result.stderr_text), "auth"))
+      << decrypt_result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(decrypt_result.stderr_text), " tag"))
+      << decrypt_result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(decrypt_result.stderr_text), " mac"))
+      << decrypt_result.stderr_text;
 }
 
 TEST(BlackBoxCliRegression, MissingShardFails) {
@@ -694,4 +762,358 @@ TEST(BlackBoxCliRegression, HardenedExtractInvalidValueFails) {
 
   const auto result = run_bseal(temp.subdir("decrypt-run"), args, kPassphrase);
   EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+// ---------------------------------------------------------------------------
+// Malformed container negative tests (format errors → exit 1)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void patch_file_u16_le(const fs::path& file, std::uint64_t offset, std::uint16_t value) {
+  std::fstream f(file, std::ios::binary | std::ios::in | std::ios::out);
+  if (!f) throw std::runtime_error("patch_file_u16_le: cannot open " + file.string());
+  f.seekp(static_cast<std::streamoff>(offset), std::ios::beg);
+  for (unsigned shift = 0; shift < 16; shift += 8) {
+    const char byte = static_cast<char>((value >> shift) & 0xFFu);
+    f.write(&byte, 1);
+  }
+}
+
+void patch_file_u64_le(const fs::path& file, std::uint64_t offset, std::uint64_t value) {
+  std::fstream f(file, std::ios::binary | std::ios::in | std::ios::out);
+  if (!f) throw std::runtime_error("patch_file_u64_le: cannot open " + file.string());
+  f.seekp(static_cast<std::streamoff>(offset), std::ios::beg);
+  for (unsigned shift = 0; shift < 64; shift += 8) {
+    const char byte = static_cast<char>((value >> shift) & 0xFFu);
+    f.write(&byte, 1);
+  }
+}
+
+void append_to_file(const fs::path& file, std::size_t count, std::uint8_t fill = 0xDEu) {
+  std::ofstream f(file, std::ios::binary | std::ios::app);
+  if (!f) throw std::runtime_error("append_to_file: cannot open " + file.string());
+  for (std::size_t i = 0; i < count; ++i) {
+    const char byte = static_cast<char>(fill);
+    f.write(&byte, 1);
+  }
+}
+
+} // anonymous namespace (continued)
+
+TEST(BlackBoxCliRegression, TruncatedGlobalHeader_Fails) {
+  TempDir temp("bseal_malformed_truncated_global");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto shards = list_bin_files(sealed);
+  ASSERT_EQ(shards.size(), 1u);
+  fs::resize_file(shards[0], 100);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, GlobalHeaderWrongMagic_Fails) {
+  TempDir temp("bseal_malformed_wrong_magic");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto shards = list_bin_files(sealed);
+  ASSERT_EQ(shards.size(), 1u);
+
+  // Overwrite first 8 bytes (global magic) with "BSEAL-XX"
+  {
+    std::fstream f(shards[0], std::ios::binary | std::ios::in | std::ios::out);
+    ASSERT_TRUE(f.good());
+    const std::string bad_magic = "BSEAL-XX";
+    f.write(bad_magic.data(), static_cast<std::streamsize>(bad_magic.size()));
+  }
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, UnknownAeadAlgId_Fails) {
+  TempDir temp("bseal_malformed_aead_alg");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto shards = list_bin_files(sealed);
+  ASSERT_EQ(shards.size(), 1u);
+
+  // aead_alg_id at file offset 56, u16le
+  patch_file_u16_le(shards[0], 56, 0x00FFu);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, NonzeroReservedField_Fails) {
+  TempDir temp("bseal_malformed_reserved");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto shards = list_bin_files(sealed);
+  ASSERT_EQ(shards.size(), 1u);
+
+  // reserved0 in global header at file offset 142, u16le
+  patch_file_u16_le(shards[0], 142, 0x0001u);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, ShardPayloadLenTooSmall_Fails) {
+  TempDir temp("bseal_malformed_payload_small");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto shards = list_bin_files(sealed);
+  ASSERT_EQ(shards.size(), 1u);
+
+  // shard_payload_len at file offset 224 (192 global + 32 shard-header-relative), u64le
+  patch_file_u64_le(shards[0], 224, 1u);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, TrailingGarbageInShard_Fails) {
+  TempDir temp("bseal_malformed_trailing_garbage");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto shards = list_bin_files(sealed);
+  ASSERT_EQ(shards.size(), 1u);
+
+  append_to_file(shards[0], 8);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+// ---------------------------------------------------------------------------
+// Authentication failure tests (exit 3 + generic message)
+// ---------------------------------------------------------------------------
+
+TEST(BlackBoxCliRegression, WrongKeyfileReturnsExitCode3) {
+  TempDir temp("bseal_auth_wrong_keyfile");
+  const auto input    = temp.subdir("input");
+  const auto sealed   = temp.subdir("sealed");
+  const auto output   = temp.subdir("output");
+  const auto keyfile_a = temp.subdir("keys") / "keyfile_a.bin";
+  const auto keyfile_b = temp.subdir("keys") / "keyfile_b.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile_a);
+  create_second_keyfile(keyfile_b);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile_a),
+                       kPassphrase).exit_code, 0);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile_b),
+      kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+  EXPECT_TRUE(contains_text(to_lower_ascii(result.stderr_text), "auth"))
+      << result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(result.stderr_text), "wrong keyfile"))
+      << result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(result.stderr_text), "wrong passphrase"))
+      << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, ReorderedKeyfilesReturnsExitCode3) {
+  TempDir temp("bseal_auth_reordered_keyfiles");
+  const auto input    = temp.subdir("input");
+  const auto sealed   = temp.subdir("sealed");
+  const auto output   = temp.subdir("output");
+  const auto keyfile_a = temp.subdir("keys") / "keyfile_a.bin";
+  const auto keyfile_b = temp.subdir("keys") / "keyfile_b.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile_a);
+  create_second_keyfile(keyfile_b);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"),
+                       encrypt_args_with_keyfiles(input, sealed, {keyfile_a, keyfile_b}),
+                       kPassphrase).exit_code, 0);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args_with_keyfiles(sealed, output, {keyfile_b, keyfile_a}),
+      kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+  EXPECT_TRUE(contains_text(to_lower_ascii(result.stderr_text), "auth"))
+      << result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(result.stderr_text), "keyfile"))
+      << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, TamperedShardHeaderMacReturnsExitCode3) {
+  // header_mac is at shard-header-relative offset 40, and the shard header
+  // starts at file offset 192 (after GlobalPublicHeaderV1), so the MAC begins
+  // at file offset 232.
+  TempDir temp("bseal_auth_tampered_header_mac");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto shards = list_bin_files(sealed);
+  ASSERT_EQ(shards.size(), 1u);
+  flip_byte_at_offset(shards[0], 232u);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+  EXPECT_TRUE(contains_text(to_lower_ascii(result.stderr_text), "auth"))
+      << result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(result.stderr_text), " mac"))
+      << result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(result.stderr_text), "header mac"))
+      << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, CorruptedCiphertextReturnsExitCode3) {
+  TempDir temp("bseal_auth_corrupted_ciphertext");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  // Flip a byte deep in the ciphertext/tag region (not the header).
+  // The last byte of a shard is the last byte of the AEAD tag.
+  const auto shards = list_bin_files(sealed);
+  ASSERT_FALSE(shards.empty());
+  const auto size = fs::file_size(shards.back());
+  ASSERT_GT(size, static_cast<std::uintmax_t>(272u));
+  flip_byte_at_offset(shards.back(), size - 1u);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+  EXPECT_TRUE(contains_text(to_lower_ascii(result.stderr_text), "auth"))
+      << result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(result.stderr_text), "aead tag"))
+      << result.stderr_text;
+  EXPECT_FALSE(contains_text(to_lower_ascii(result.stderr_text), "wrong passphrase"))
+      << result.stderr_text;
+}
+
+TEST(BlackBoxCliRegression, KdfPolicyViolationReturnsExitCode1) {
+  // --kdf fast requires 256 MiB; --max-kdf-memory 64M is below that limit.
+  // The CLI must reject the archive with exit code 1 and mention the policy flag.
+  TempDir temp("bseal_policy_kdf_memory");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      {"decrypt",
+       "--input",   sealed.string(),
+       "--output",  output.string(),
+       "--keyfile", keyfile.string(),
+       "--max-kdf-memory", "64M"},
+      kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+  EXPECT_NE(result.exit_code, 3)
+      << "KDF policy violation must be exit 1, not auth failure";
 }

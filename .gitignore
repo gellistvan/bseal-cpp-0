@@ -1,4 +1,6 @@
 build/
+.claude
+CLAUDE.md
 build-sani/
 cmake-build-*/
 .vscode/

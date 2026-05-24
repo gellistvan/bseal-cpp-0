@@ -1,5 +1,7 @@
 #include "io/ShardFrame.hpp"
 
+#include "common/CheckedArithmetic.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -17,50 +19,10 @@
 namespace bseal::io {
 namespace {
 
-// ---------------------------------------------------------------------------
-// Serialisation helpers
-// ---------------------------------------------------------------------------
-
-void append_u16_le(Bytes& out, std::uint16_t value) {
-    out.push_back(static_cast<Byte>(value & 0xffu));
-    out.push_back(static_cast<Byte>((value >> 8u) & 0xffu));
-}
-
-void append_u32_le(Bytes& out, std::uint32_t value) {
-    for (unsigned shift = 0; shift < 32; shift += 8) {
-        out.push_back(static_cast<Byte>((value >> shift) & 0xffu));
-    }
-}
-
-void append_u64_le(Bytes& out, std::uint64_t value) {
-    for (unsigned shift = 0; shift < 64; shift += 8) {
-        out.push_back(static_cast<Byte>((value >> shift) & 0xffu));
-    }
-}
-
-void append_bytes(Bytes& out, ConstByteSpan bytes) {
-    out.insert(out.end(), bytes.begin(), bytes.end());
-}
-
-
-bool all_zero(ConstByteSpan bytes) {
-    return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
-}
-
-int checked_int_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large for OpenSSL");
-    }
-    return static_cast<int>(value);
-}
-
 bool is_power_of_two(std::uint32_t v) {
     return v != 0 && (v & (v - 1)) == 0;
 }
 
-// ---------------------------------------------------------------------------
-// Reader helper
-// ---------------------------------------------------------------------------
 
 class Reader {
 public:
@@ -111,11 +73,10 @@ private:
 };
 
 template <std::size_t N>
-std::array<Byte, N> read_array(Reader& reader, std::string_view what) {
+std::array<Byte, N> read_array(Reader& reader) {
     auto span = reader.read_bytes(N);
     std::array<Byte, N> out{};
     std::copy(span.begin(), span.end(), out.begin());
-    (void)what;
     return out;
 }
 
@@ -131,10 +92,6 @@ constexpr std::string_view kHeaderMacDomain{
 };
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// GlobalPublicHeaderV1 serialisation
-// ---------------------------------------------------------------------------
 
 Bytes serialize_global_public_header(const GlobalPublicHeaderV1& h) {
     Bytes out;
@@ -198,8 +155,7 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     Reader r(bytes.first(kGlobalPublicHeaderV1Size), "truncated global public header");
     GlobalPublicHeaderV1 h;
 
-    // magic
-    h.magic = read_array<8>(r, "magic");
+    h.magic = read_array<8>(r);
     // Reject old BSEAL01\0 magic and any other bad magic.
     if (!std::equal(h.magic.begin(), h.magic.end(),
                     kGlobalHeaderV1Magic.begin(), kGlobalHeaderV1Magic.end())) {
@@ -213,14 +169,14 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     h.frame_header_len  = r.read_u16_le();
     h.global_flags      = r.read_u16_le();
 
-    h.archive_id = read_array<32>(r, "archive_id");
+    h.archive_id = read_array<32>(r);
 
     h.aead_alg_id = r.read_u16_le();
     h.kdf_alg_id  = r.read_u16_le();
     h.hash_alg_id = r.read_u16_le();
     h.mac_alg_id  = r.read_u16_le();
 
-    h.kdf_salt = read_array<32>(r, "kdf_salt");
+    h.kdf_salt = read_array<32>(r);
 
     h.argon2_version     = r.read_u32_le();
     h.argon2_memory_kib  = r.read_u32_le();
@@ -239,12 +195,9 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     h.max_shard_payload_len      = r.read_u64_le();
     h.required_feature_flags     = r.read_u64_le();
 
-    h.reserved1 = read_array<24>(r, "reserved1");
+    h.reserved1 = read_array<24>(r);
 
-    // -----------------------------------------------------------------------
-    // Rejection rules (FORMAT.md §rejection)
-    // -----------------------------------------------------------------------
-
+    // Rejection rules — FORMAT.md §rejection.
     if (h.format_major != 1 || h.format_minor != 0) {
         throw InvalidArgument("unsupported format version");
     }
@@ -384,10 +337,6 @@ GlobalPublicHeaderV1 parse_global_public_header(ConstByteSpan bytes) {
     return h;
 }
 
-// ---------------------------------------------------------------------------
-// ShardPublicHeaderV1 serialisation
-// ---------------------------------------------------------------------------
-
 Bytes serialize_shard_public_header(const ShardPublicHeaderV1& h) {
     Bytes out;
     out.reserve(kShardPublicHeaderV1Size);
@@ -422,7 +371,7 @@ ShardPublicHeaderV1 parse_shard_public_header(ConstByteSpan bytes) {
     Reader r(bytes.first(kShardPublicHeaderV1Size), "truncated shard public header");
     ShardPublicHeaderV1 h;
 
-    h.shard_magic = read_array<8>(r, "shard_magic");
+    h.shard_magic = read_array<8>(r);
     if (!std::equal(h.shard_magic.begin(), h.shard_magic.end(),
                     kShardHeaderV1Magic.begin(), kShardHeaderV1Magic.end())) {
         throw InvalidArgument("wrong shard header magic");
@@ -433,7 +382,7 @@ ShardPublicHeaderV1 parse_shard_public_header(ConstByteSpan bytes) {
     h.first_global_chunk_index = r.read_u64_le();
     h.shard_chunk_count        = r.read_u64_le();
     h.shard_payload_len        = r.read_u64_le();
-    h.header_mac               = read_array<32>(r, "header_mac");
+    h.header_mac               = read_array<32>(r);
     h.reserved0                = r.read_u64_le();
 
     // Rejection rules for shard header fields.
@@ -453,10 +402,7 @@ ShardPublicHeaderV1 parse_shard_public_header(ConstByteSpan bytes) {
     return h;
 }
 
-// ---------------------------------------------------------------------------
-// Public header hash (BLAKE3-256 per FORMAT.md §15)
-// ---------------------------------------------------------------------------
-
+// BLAKE3-256 public_header_hash per FORMAT.md §15.
 std::array<Byte, 32> compute_public_header_hash(
     const GlobalPublicHeaderV1& global_header,
     const ShardPublicHeaderV1&  shard_header) {
@@ -474,10 +420,7 @@ std::array<Byte, 32> compute_public_header_hash(
     return out;
 }
 
-// ---------------------------------------------------------------------------
-// Shard header MAC (HMAC-SHA256 via OpenSSL)
-// ---------------------------------------------------------------------------
-
+// HMAC-SHA256 shard header MAC per FORMAT.md §5.
 std::array<Byte, 32> compute_shard_header_mac(
     ConstByteSpan               header_authentication_key,
     const GlobalPublicHeaderV1& global_header,
@@ -529,10 +472,6 @@ bool verify_shard_header_mac(
         shard_header.header_mac.data(),
         expected.size()) == 0;
 }
-
-// ---------------------------------------------------------------------------
-// ChunkFrameHeaderV1 — kept identical to original implementation
-// ---------------------------------------------------------------------------
 
 namespace {
 

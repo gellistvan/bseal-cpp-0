@@ -156,12 +156,12 @@ inline std::array<Byte, 32> test_archive_id() {
     return out;
 }
 
-inline std::array<Byte, 32> test_header_authentication_key() {
-    std::array<Byte, 32> out{};
+inline crypto::SecureBuffer test_header_authentication_key() {
+    Bytes out(32);
     for (std::size_t i = 0; i < out.size(); ++i) {
         out[i] = static_cast<Byte>(0x60u + i);
     }
-    return out;
+    return crypto::SecureBuffer(std::move(out));
 }
 
 // chunk_plain_size must be a power-of-two in [65536, 67108864] to pass

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -49,19 +50,6 @@ std::uint64_t checked_range_end(std::uint64_t first, std::uint64_t count) {
     return first + count;
 }
 
-std::uint64_t checked_frame_body_size(const ChunkFrameHeaderV1& frame_header) {
-    const auto body_len = frame_header.ciphertext_len +
-        static_cast<std::uint64_t>(frame_header.tag_len);
-
-    if (body_len < frame_header.ciphertext_len) {
-        throw InvalidArgument("invalid ciphertext_length");
-    }
-    if (body_len > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        throw InvalidArgument("invalid ciphertext_length");
-    }
-
-    return body_len;
-}
 
 /// Parse one shard file and return a ShardInfo.
 ShardInfo read_shard_info(const std::filesystem::path& path) {
@@ -72,19 +60,16 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
         throw Error("failed to open shard file: " + path.string());
     }
 
-    // Read 192-byte global header.
     const auto global_bytes = read_exact(
         stream, kGlobalPublicHeaderV1Size, path, "truncated global public header");
     const auto global_header = parse_global_public_header(
         ConstByteSpan{global_bytes.data(), global_bytes.size()});
 
-    // Read 80-byte shard header.
     const auto shard_bytes = read_exact(
         stream, kShardPublicHeaderV1Size, path, "truncated shard public header");
     const auto shard_header = parse_shard_public_header(
         ConstByteSpan{shard_bytes.data(), shard_bytes.size()});
 
-    // Validate shard_index < shard_count (global header knows total shard count).
     if (shard_header.shard_index >= global_header.shard_count) {
         throw InvalidArgument(
             "shard_index " + std::to_string(shard_header.shard_index)
@@ -92,7 +77,6 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
             + ": " + path.string());
     }
 
-    // Validate file size: must be exactly 192 + 80 + shard_payload_len.
     const std::uint64_t expected_file_size =
         static_cast<std::uint64_t>(kGlobalPublicHeaderV1Size)
         + static_cast<std::uint64_t>(kShardPublicHeaderV1Size)
@@ -106,7 +90,6 @@ ShardInfo read_shard_info(const std::filesystem::path& path) {
             + "): " + path.string());
     }
 
-    // Compute public_header_hash for this shard.
     const auto phash = compute_public_header_hash(global_header, shard_header);
 
     return ShardInfo{
@@ -157,15 +140,17 @@ std::vector<ShardInfo> ShardReader::discover(const std::filesystem::path& input_
 }
 
 ShardReader::ShardReader(
-    std::vector<ShardInfo> shards,
-    std::array<Byte, 32>   header_authentication_key,
-    ShardReaderValidation  validation)
+    std::vector<ShardInfo>  shards,
+    crypto::SecureBuffer    header_authentication_key,
+    ShardReaderValidation   validation)
     : shards_(std::move(shards)),
       validation_(std::move(validation)),
-      auth_key_(header_authentication_key) {
-    const std::array<Byte, 32> zeros{};
-    if (header_authentication_key == zeros) {
-        throw InvalidArgument("header_authentication_key must not be all-zero");
+      auth_key_(std::move(header_authentication_key)) {
+    const auto key_span = auth_key_.as_span();
+    const bool all_zero = std::all_of(key_span.begin(), key_span.end(),
+                                      [](Byte b) { return b == Byte{0}; });
+    if (auth_key_.size() != 32 || all_zero) {
+        throw InvalidArgument("header_authentication_key must be 32 non-zero bytes");
     }
     validate_shards();
 }
@@ -176,7 +161,7 @@ ShardReader::ShardReader(
     ShardReaderValidation                  validation)
     : shards_(std::move(shards)),
       validation_(std::move(validation)),
-      auth_key_(std::nullopt) {
+      auth_key_() {
     validate_shards();
 }
 
@@ -198,7 +183,6 @@ void ShardReader::validate_shards() {
                 "duplicate shard index: " + std::to_string(shard.shard_index()));
         }
 
-        // Global header must be byte-for-byte identical across all shards.
         const auto this_global_bytes =
             serialize_global_public_header(shard.global_header);
         if (this_global_bytes != reference_global_bytes) {
@@ -206,7 +190,6 @@ void ShardReader::validate_shards() {
                 "global header mismatch across shards: " + shard.path.string());
         }
 
-        // Explicit validation checks.
         if (validation_.suite_id) {
             if (shard.global_header.aead_alg_id != *validation_.suite_id) {
                 throw InvalidArgument("incompatible shard aead_alg_id");
@@ -232,12 +215,12 @@ void ShardReader::validate_shards() {
                 throw InvalidArgument("public_header_hash mismatch");
             }
         }
-        if (auth_key_) {
+        if (!auth_key_.empty()) {
             if (!verify_shard_header_mac(
-                    ConstByteSpan{auth_key_->data(), auth_key_->size()},
+                    auth_key_.as_span(),
                     shard.global_header,
                     shard.shard_header)) {
-                throw InvalidArgument("shard header_mac verification failed");
+                throw AuthenticationFailed();
             }
         }
     }
@@ -249,14 +232,12 @@ void ShardReader::validate_shards() {
         throw InvalidArgument("shard count does not match global_header.shard_count");
     }
 
-    // Verify all shard indices 0..shard_count-1 are present.
     for (std::uint32_t i = 0; i < shard_count; ++i) {
         if (!shard_indices.contains(i)) {
             throw InvalidArgument("missing shard index: " + std::to_string(i));
         }
     }
 
-    // Sort by shard_index for sequential reading.
     std::sort(
         shards_.begin(),
         shards_.end(),
@@ -264,7 +245,6 @@ void ShardReader::validate_shards() {
             return a.shard_index() < b.shard_index();
         });
 
-    // Verify contiguous, non-overlapping chunk ranges.
     std::uint64_t expected_first_chunk = 0;
     for (const auto& shard : shards_) {
         const auto end = checked_range_end(
@@ -401,7 +381,7 @@ std::optional<ChunkRecord> ShardReader::read_next_chunk_record() {
             throw InvalidArgument("non-final chunk has partial plaintext length");
         }
 
-        const auto body_len_u64 = checked_frame_body_size(frame_header);
+        const auto body_len_u64 = chunk_frame_v1_encoded_size(frame_header) - kChunkFrameHeaderV1Size;
 
         const auto after_header_pos = current_stream_.tellg();
         if (after_header_pos < std::streampos{0}) {

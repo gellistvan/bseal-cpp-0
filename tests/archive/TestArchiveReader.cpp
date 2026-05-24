@@ -322,37 +322,80 @@ TEST(TestArchiveReader, RejectsNonPaddingAfterArchiveEnd) {
 // Filesystem safety tests
 // ---------------------------------------------------------------------------
 
-TEST(TestArchiveReader, TempRootIsRegularFileIsRejected) {
+TEST(TestArchiveReader, RegularFileAtOldFixedTempNameDoesNotBlockExtraction) {
+    // With randomized temp dir names, a file at the old fixed name ".bseal-extract-tmp"
+    // is simply an unrelated entry — the reader picks ".bseal-extract-tmp.<random16>"
+    // and does not interact with the old path at all.
     TemporaryDirectory output;
 
-    // Create a regular file at the exact path ArchiveReader would use as temp_root.
-    const auto temp_root = output.path() / ".bseal-extract-tmp";
-    write_text_file(temp_root, "blocking");
+    const auto old_fixed_name = output.path() / ".bseal-extract-tmp";
+    write_text_file(old_fixed_name, "blocking");
 
-    ArchiveReaderOptions options;
-    options.output_root = output.path();
+    ArchiveReaderOptions opts;
+    opts.output_root = output.path();
+    opts.restore_permissions = false;
+    opts.restore_timestamps = false;
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        ArchiveReader reader(options);
-    }));
+    const auto content = bytes_from_string("hello");
+    ArchiveReader reader(opts);
+    const auto archive = [&] {
+        std::vector<Bytes> recs;
+        recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+        recs.push_back(record_bytes(RecordType::FileEntry,
+                                   serialize_entry_metadata(file_metadata("file.txt",
+                                                                          content.size()))));
+        recs.push_back(record_bytes(RecordType::FileBytes, content));
+        recs.push_back(record_bytes(RecordType::FileEnd));
+        recs.push_back(record_bytes(RecordType::ArchiveEnd));
+        Bytes all;
+        for (auto& r : recs) all.insert(all.end(), r.begin(), r.end());
+        return all;
+    }();
+    reader.consume(ConstByteSpan{archive.data(), archive.size()});
+    reader.finish();
+
+    // Extraction succeeded; the old fixed name was not touched.
+    EXPECT_EQ(read_text_file(output.path() / "file.txt"), "hello");
+    EXPECT_TRUE(std::filesystem::exists(old_fixed_name));
 }
 
-TEST(TestArchiveReader, TempRootIsSymlinkIsRejected) {
+TEST(TestArchiveReader, SymlinkAtOldFixedTempNameDoesNotBlockExtraction) {
+    // With randomized temp dir names, a symlink at ".bseal-extract-tmp" is ignored.
     TemporaryDirectory output;
     TemporaryDirectory symlink_target;
 
-    // Plant a symlink at the temp_root path before ArchiveReader is constructed.
-    const auto temp_root = output.path() / ".bseal-extract-tmp";
+    const auto old_fixed_name = output.path() / ".bseal-extract-tmp";
     std::error_code ec;
-    std::filesystem::create_symlink(symlink_target.path(), temp_root, ec);
+    std::filesystem::create_symlink(symlink_target.path(), old_fixed_name, ec);
     ASSERT_FALSE(ec) << "test setup: create_symlink failed: " << ec.message();
 
-    ArchiveReaderOptions options;
-    options.output_root = output.path();
+    ArchiveReaderOptions opts;
+    opts.output_root = output.path();
+    opts.hardened_extract_mode = HardenedExtractMode::Off;
+    opts.restore_permissions = false;
+    opts.restore_timestamps = false;
 
-    EXPECT_TRUE(throws_invalid_argument([&] {
-        ArchiveReader reader(options);
-    }));
+    const auto content = bytes_from_string("hello");
+    ArchiveReader reader(opts);
+    const auto archive = [&] {
+        std::vector<Bytes> recs;
+        recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+        recs.push_back(record_bytes(RecordType::FileEntry,
+                                   serialize_entry_metadata(file_metadata("file.txt",
+                                                                          content.size()))));
+        recs.push_back(record_bytes(RecordType::FileBytes, content));
+        recs.push_back(record_bytes(RecordType::FileEnd));
+        recs.push_back(record_bytes(RecordType::ArchiveEnd));
+        Bytes all;
+        for (auto& r : recs) all.insert(all.end(), r.begin(), r.end());
+        return all;
+    }();
+    reader.consume(ConstByteSpan{archive.data(), archive.size()});
+    reader.finish();
+
+    EXPECT_EQ(read_text_file(output.path() / "file.txt"), "hello");
+    // Symlink target was not used for extraction.
+    EXPECT_FALSE(std::filesystem::exists(symlink_target.path() / "file.txt"));
 }
 
 TEST(TestArchiveReader, SymlinkEntryRejectedByDefault) {
@@ -504,4 +547,197 @@ TEST(TestArchiveReader, OverwriteExistingOutputWhenEnabled) {
     reader.finish();
 
     EXPECT_EQ(read_text_file(output.path() / "hello.txt"), "replacement");
+}
+
+// ---------------------------------------------------------------------------
+// Randomized temp directory hardening tests
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Builds a minimal valid archive byte stream containing a single file.
+Bytes make_minimal_archive(const Bytes& content, std::string_view filename = "file.txt") {
+    std::vector<Bytes> recs;
+    recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+    recs.push_back(record_bytes(RecordType::FileEntry,
+                                serialize_entry_metadata(
+                                    file_metadata(std::filesystem::path(filename),
+                                                  content.size()))));
+    recs.push_back(record_bytes(RecordType::FileBytes, content));
+    recs.push_back(record_bytes(RecordType::FileEnd));
+    recs.push_back(record_bytes(RecordType::ArchiveEnd));
+    Bytes all;
+    for (auto& r : recs) all.insert(all.end(), r.begin(), r.end());
+    return all;
+}
+
+} // namespace
+
+#if !defined(_WIN32)
+
+TEST(TestArchiveReader, SymlinkAtFixedTempNameDoesNotRedirectExtraction) {
+    TemporaryDirectory output;
+    TemporaryDirectory attacker_dir;
+
+    // Plant a symlink at the OLD fixed temp name. The reader now uses a randomized
+    // name so this symlink is never encountered during temp directory creation.
+    std::filesystem::create_symlink(attacker_dir.path(),
+                                    output.path() / ".bseal-extract-tmp");
+
+    ArchiveReaderOptions opts;
+    opts.output_root = output.path();
+    opts.hardened_extract_mode = HardenedExtractMode::Off;
+    opts.restore_permissions = false;
+    opts.restore_timestamps = false;
+
+    const auto content = bytes_from_string("safe content");
+    ArchiveReader reader(opts);
+    const auto archive = make_minimal_archive(content);
+    reader.consume(ConstByteSpan{archive.data(), archive.size()});
+    reader.finish();
+
+    EXPECT_TRUE(std::filesystem::exists(output.path() / "file.txt"));
+    EXPECT_FALSE(std::filesystem::exists(attacker_dir.path() / "file.txt"));
+}
+
+TEST(TestArchiveReader, OverwriteDoesNotFollowSymlinkInFinalDestination) {
+    TemporaryDirectory output;
+    TemporaryDirectory external;
+
+    // External sentinel that must not be modified.
+    write_text_file(external.path() / "sentinel.txt", "original");
+    // Symlink in output pointing at external sentinel.
+    std::filesystem::create_symlink(external.path() / "sentinel.txt",
+                                    output.path() / "file.txt");
+
+    ArchiveReaderOptions opts;
+    opts.output_root = output.path();
+    opts.overwrite_existing = true;
+    opts.restore_permissions = false;
+    opts.restore_timestamps = false;
+
+    const auto content = bytes_from_string("extracted");
+    ArchiveReader reader(opts);
+    const auto archive = make_minimal_archive(content);
+    reader.consume(ConstByteSpan{archive.data(), archive.size()});
+    reader.finish();
+
+    // output/file.txt must now be a regular file (symlink entry was replaced).
+    EXPECT_FALSE(std::filesystem::is_symlink(output.path() / "file.txt"));
+    EXPECT_EQ(read_text_file(output.path() / "file.txt"), "extracted");
+    // Symlink target was not modified.
+    EXPECT_EQ(read_text_file(external.path() / "sentinel.txt"), "original");
+}
+
+TEST(TestArchiveReader, HardenedModeRejectsSymlinkInFinalOutputPathComponent) {
+    if (!SafeOutputTree::is_platform_supported()) {
+        GTEST_SKIP() << "hardened extraction not supported on this platform";
+    }
+
+    TemporaryDirectory output;
+    TemporaryDirectory external;
+    std::filesystem::create_directory(external.path() / "subdir");
+    // Plant a symlink in output_root so "subdir" points outside output_root.
+    std::filesystem::create_symlink(external.path() / "subdir",
+                                    output.path() / "subdir");
+
+    ArchiveReaderOptions opts;
+    opts.output_root = output.path();
+    opts.hardened_extract_mode = HardenedExtractMode::On;
+    opts.restore_permissions = false;
+    opts.restore_timestamps = false;
+
+    // Archive that places a file inside subdir/.
+    auto content = bytes_from_string("data");
+    std::vector<Bytes> recs;
+    recs.push_back(record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+    recs.push_back(record_bytes(RecordType::DirectoryEntry,
+                                serialize_entry_metadata(directory_metadata("subdir"))));
+    recs.push_back(record_bytes(RecordType::FileEntry,
+                                serialize_entry_metadata(
+                                    file_metadata("subdir/file.txt", content.size()))));
+    recs.push_back(record_bytes(RecordType::FileBytes, content));
+    recs.push_back(record_bytes(RecordType::FileEnd));
+    recs.push_back(record_bytes(RecordType::ArchiveEnd));
+    Bytes all;
+    for (auto& r : recs) all.insert(all.end(), r.begin(), r.end());
+
+    ArchiveReader reader(opts);
+    reader.consume(ConstByteSpan{all.data(), all.size()});
+    EXPECT_THROW(reader.finish(), bseal::InvalidArgument);
+
+    // Nothing should have been written to the external directory.
+    EXPECT_FALSE(std::filesystem::exists(external.path() / "subdir" / "file.txt"));
+}
+
+#endif // !_WIN32
+
+TEST(TestArchiveReader, FailedDecryptCleansOnlyItsOwnRandomTempDir) {
+    TemporaryDirectory output;
+
+    // Simulate a "sibling" temp directory from a different run.
+    const auto sibling = output.path() / ".bseal-extract-tmp.sibling000000000000000";
+    std::filesystem::create_directory(sibling);
+
+    {
+        ArchiveReaderOptions opts;
+        opts.output_root = output.path();
+        opts.restore_permissions = false;
+        opts.restore_timestamps = false;
+        ArchiveReader reader(opts);
+        // Feed a partial stream (no ArchiveEnd) — destructor cleans up our temp dir.
+        const auto partial = record_bytes(RecordType::ArchiveBegin, archive_begin_payload());
+        reader.consume(ConstByteSpan{partial.data(), partial.size()});
+        // reader destroyed here without finish()
+    }
+
+    // Sibling must still exist.
+    EXPECT_TRUE(std::filesystem::exists(sibling));
+
+    // Only the sibling should remain; our random temp dir must be gone.
+    for (const auto& entry : std::filesystem::directory_iterator(output.path())) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind(".bseal-extract-tmp.", 0) == 0) {
+            EXPECT_EQ(name, ".bseal-extract-tmp.sibling000000000000000")
+                << "unexpected temp dir not cleaned: " << entry.path();
+        }
+    }
+}
+
+TEST(TestArchiveReader, RandomTempNamesDifferBetweenInstances) {
+    TemporaryDirectory output1;
+    TemporaryDirectory output2;
+
+    std::filesystem::path tmp1;
+    std::filesystem::path tmp2;
+
+    {
+        ArchiveReaderOptions opts;
+        opts.output_root = output1.path();
+        opts.restore_permissions = false;
+        opts.restore_timestamps = false;
+        ArchiveReader reader(opts);
+        for (const auto& e : std::filesystem::directory_iterator(output1.path())) {
+            if (e.path().filename().string().rfind(".bseal-extract-tmp.", 0) == 0) {
+                tmp1 = e.path().filename();
+            }
+        }
+    }
+
+    {
+        ArchiveReaderOptions opts;
+        opts.output_root = output2.path();
+        opts.restore_permissions = false;
+        opts.restore_timestamps = false;
+        ArchiveReader reader(opts);
+        for (const auto& e : std::filesystem::directory_iterator(output2.path())) {
+            if (e.path().filename().string().rfind(".bseal-extract-tmp.", 0) == 0) {
+                tmp2 = e.path().filename();
+            }
+        }
+    }
+
+    ASSERT_FALSE(tmp1.empty()) << "first temp dir not found";
+    ASSERT_FALSE(tmp2.empty()) << "second temp dir not found";
+    EXPECT_NE(tmp1, tmp2) << "two ArchiveReader instances produced identical temp dir names";
 }

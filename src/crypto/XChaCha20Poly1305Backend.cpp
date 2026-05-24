@@ -1,11 +1,10 @@
 #include "crypto/XChaCha20Poly1305Backend.hpp"
 
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 
-#include <limits>
 #include <sodium.h>
 #include <string>
-#include <vector>
 
 namespace bseal::crypto {
 namespace {
@@ -17,25 +16,6 @@ void ensure_sodium_initialized() {
     }
 }
 
-
-unsigned long long checked_ull_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<unsigned long long>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large");
-    }
-    return static_cast<unsigned long long>(value);
-}
-
-void validate_request(const AeadKeyView& key,
-                      const AeadNonceView& nonce,
-                      std::size_t expected_key_size,
-                      std::size_t expected_nonce_size) {
-    if (key.bytes.size() != expected_key_size) {
-        throw InvalidArgument("invalid AEAD key size");
-    }
-    if (nonce.bytes.size() != expected_nonce_size) {
-        throw InvalidArgument("invalid AEAD nonce size");
-    }
-}
 
 } // namespace
 
@@ -62,7 +42,7 @@ std::size_t XChaCha20Poly1305Backend::tag_size() const noexcept {
 Bytes XChaCha20Poly1305Backend::encrypt_chunk(const EncryptChunkRequest& request) {
     ensure_sodium_initialized();
 
-    validate_request(request.key, request.nonce, key_size(), nonce_size());
+    validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     const Bytes aad = serialize_chunk_aad_v1(request.aad);
 
@@ -92,7 +72,7 @@ Bytes XChaCha20Poly1305Backend::encrypt_chunk(const EncryptChunkRequest& request
 Bytes XChaCha20Poly1305Backend::decrypt_chunk(const DecryptChunkRequest& request) {
     ensure_sodium_initialized();
 
-    validate_request(request.key, request.nonce, key_size(), nonce_size());
+    validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     if (request.ciphertext_and_tag.size() < tag_size()) {
         throw AuthenticationFailed();

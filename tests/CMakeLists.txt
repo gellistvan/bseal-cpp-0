@@ -56,6 +56,7 @@ add_executable(bseal_io_gtests
         io/TestShardReader.cpp
         io/TestShardWriter.cpp
         io/TestFormatV1Kat.cpp
+        io/TestMalformedShards.cpp
 )
 
 target_include_directories(bseal_io_gtests
@@ -75,6 +76,7 @@ add_executable(bseal_archive_gtests
         archive/TestPathSanitizer.cpp
         archive/TestRecordFormat.cpp
         archive/TestSafeOutputTree.cpp
+        archive/TestMalformedRecords.cpp
 )
 
 target_link_libraries(bseal_archive_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
@@ -144,6 +146,25 @@ else()
     add_test(NAME bseal_pipeline_gtests COMMAND bseal_pipeline_gtests)
 endif()
 
+
+add_executable(bseal_perf_gtests
+    perf/TestAeadThroughput.cpp
+    perf/TestKdfLatency.cpp
+)
+
+target_link_libraries(bseal_perf_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
+bseal_set_project_warnings(bseal_perf_gtests)
+bseal_enable_sanitizers_if_requested(bseal_perf_gtests)
+
+if (GTest_FOUND)
+    include(GoogleTest)
+    gtest_discover_tests(bseal_perf_gtests
+            TEST_PREFIX perf.
+            DISCOVERY_TIMEOUT 30
+    )
+else()
+    add_test(NAME bseal_perf_gtests COMMAND bseal_perf_gtests)
+endif()
 
 # ---------------------------------------------------------------------------
 # Black-box integration tests

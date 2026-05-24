@@ -155,6 +155,12 @@ When the hardened backend is active, `SafeOutputTree` traverses path components 
   existing symlink is removed via `unlinkat(parent_fd, name, 0)` (which unlinks the symlink entry
   itself and never follows or touches its target) before the rename.
 
+**Temp directory creation (hardened POSIX path)**: the per-run temp directory is created via
+`mkdirat(root_fd, name, 0700)`, where `root_fd` was opened with `O_NOFOLLOW` against the output
+root. `mkdirat` fails with `EEXIST` if any entry (file, directory, or symlink) already exists at
+`name`, eliminating the lstat→mkdir TOCTOU window and ensuring a pre-placed symlink at the chosen
+temp name cannot redirect directory creation.
+
 **Protection scope**: hardened mode eliminates the TOCTOU window for intermediate directory
 components between path verification and file promotion. It does not protect against an attacker
 who can replace the **output root** itself, or manipulate the source (temp) tree.
@@ -171,9 +177,11 @@ immediately with exit code 1 on Windows.
 
 ### Portable backend (always used on non-POSIX; also `--hardened-extract=off`)
 
-- **Temp root creation** rejects any pre-existing entry at `.bseal-extract-tmp` using `lstat`
-  (symlink-aware stat), so a broken symlink or a live symlink-to-directory at that path is caught
-  before anything is written.
+- **Temp root creation** uses a per-run randomized name (`.bseal-extract-tmp.<16 base62 chars>`)
+  generated from the OS CSPRNG. The lstat-then-mkdir sequence rejects any pre-existing entry at
+  the chosen name using `lstat` (symlink-aware stat), so a broken symlink or a
+  symlink-to-directory at that exact path is caught before anything is written. The randomized
+  name makes a targeted pre-placement collision negligible in practice.
 - **Overwrite destination check** uses `lstat` so a dangling symlink in `output_root` is treated
   as present, not absent.
 - **Symlink removal** at overwrite time uses `remove()` (POSIX `unlink`), which removes the
@@ -192,9 +200,9 @@ immediately with exit code 1 on Windows.
 - **Filesystem-level denial of service**: an attacker with write access to `output_root` can cause
   extraction to fail (e.g. by creating conflicting entries). Extraction failures leave `output_root`
   unchanged except for the cleaned-up temp directory.
-- **Cross-device rename**: temp files are placed inside `output_root/.bseal-extract-tmp` so that
-  the final `rename()` stays on the same filesystem. Cross-device moves (different mount points)
-  are not handled and will fail, not silently write partial output.
+- **Cross-device rename**: temp files are placed inside `output_root/.bseal-extract-tmp.<random>`
+  so that the final `rename()` stays on the same filesystem. Cross-device moves (different mount
+  points) are not handled and will fail, not silently write partial output.
 - **Symlink extraction disabled by default** (`allow_symlinks = false`). When enabled, symlink
   targets are validated as safe relative paths (no `..` components, no absolute paths).
 
@@ -253,14 +261,93 @@ at `UINT64_MAX` and `2^63` (the largest representable power of two). The sanitiz
 (`-DBSEAL_ENABLE_SANITIZERS=ON`) additionally catches any remaining unsigned arithmetic that was
 intentionally left unchecked (e.g. bitfield masks and loop counters) via UBSan.
 
-## Error messages
+## Secret handling
 
-Authentication failures should not distinguish between:
+### What is protected
 
-- wrong passphrase;
-- wrong keyfile;
-- corrupt shard;
-- modified metadata;
-- invalid chunk tag.
+Passphrase and key material flows through the following wipe-on-destruct types:
 
-Use a generic message such as `authentication failed or archive is corrupt`.
+- **`SecureBuffer`** (`src/crypto/SecureBuffer.hpp`): move-only; calls `sodium_memzero()` on
+  its backing allocation in the destructor, move-assignment operator, and explicit `wipe()`.
+  All four `ExpandedKeys` members (`chunk_encryption_key`, `manifest_key`,
+  `header_authentication_key`, `nonce_derivation_key`) are `SecureBuffer` values.
+
+- **`ShardWriterOptions::header_authentication_key`** and **`ShardReader::auth_key_`** are both
+  `SecureBuffer`, so they are wiped when the ShardWriter or ShardReader is destroyed.
+
+Passphrase input flow:
+1. `obtain_passphrase()` reads the passphrase into a temporary `std::string` staging buffer,
+   transfers the bytes into a `SecureBuffer`, and calls `secure_wipe_string()` on the
+   staging string before returning.  In the double-prompt path the confirm string is wiped
+   whether or not the passphrases match.
+2. `derive_expanded_keys()` accepts a `SecureBuffer` passphrase, assigns its bytes to a
+   short-lived `KdfInput::passphrase_utf8 std::string` (needed by the Argon2id API), then
+   calls `wipe()` on the `SecureBuffer` immediately.  The string is wiped with
+   `secure_wipe_string()` immediately after `derive_master_seed()` returns.
+
+### Known limitations (outside the threat model)
+
+- **Swap / paging**: `SecureBuffer` uses `std::vector` heap memory.  On systems with swap
+  enabled the allocator may page out the backing memory before it is wiped.  Use
+  `sodium_mlock()` (not yet wired) or OS-level encrypted swap to mitigate.
+- **Compiler copies**: the C++ abstract machine may produce temporary copies of `SecureBuffer`
+  bytes (e.g. during function argument passing before NRVO).  The STL move semantics of
+  `std::vector` minimise but cannot eliminate this risk.
+- **SSO strings**: `std::string` with small-string optimisation stores characters in the
+  object itself (stack frame or inline allocation).  `secure_wipe_string()` zeroes `s.data()`
+  up to `s.size()`, covering SSO storage.  Heap-allocated strings with `capacity > size`
+  may leave up to `capacity - size` bytes unwiped in the heap buffer.
+- **OpenSSL / libsodium internals**: HKDF-SHA-256 and Argon2id operate on copies of key
+  material inside OpenSSL and libsodium.  BSEAL cannot wipe those internal copies.
+- **Crash dumps**: core files and process dumps will contain live memory including key
+  material.  Disable core dumps on production deployments.
+- **Debugger access**: a process-local debugger or `/proc/<pid>/mem` reader can read key
+  material at any point during execution.
+- **`KdfInput::passphrase_utf8`**: the `std::string` field exists because Argon2id takes a
+  raw `void*` pointer.  It is wiped via `secure_wipe_string()` immediately after
+  `derive_master_seed()` returns, but the `std::string` destructor will subsequently call
+  `free()` on already-zeroed memory, leaving the allocator free-list in a state that could
+  reveal the string's former length to a heap-inspection attacker.
+
+### Recommended operational mitigations
+
+- Run BSEAL on a machine with encrypted swap or swap disabled.
+- Disable core dumps: `ulimit -c 0` (Linux) or equivalent.
+- Do not attach debuggers to BSEAL processes in production.
+- Prefer high-entropy keyfiles in addition to passphrases to reduce the value of any
+  passphrase leak.
+
+## Error messages and exit codes
+
+### Authentication failures — exit code 3
+
+All of the following conditions map to `bseal::AuthenticationFailed` and CLI exit code 3:
+
+- Wrong passphrase or wrong keyfile (KDF produces a different master seed)
+- Reordered keyfiles (KDF mixes them in order; swapping two keyfiles produces a different seed)
+- Invalid shard header MAC (tampered public metadata)
+- AEAD tag verification failure (corrupted or tampered ciphertext)
+
+The user-visible message is always the same generic string:
+
+```
+authentication failed or archive is corrupt
+```
+
+This prevents callers from distinguishing which component of the key material is wrong, which would otherwise leak oracle information.
+
+### Format and policy errors — exit code 1
+
+These conditions produce exit code 1, not 3, because they describe local policy or structural problems rather than authentication failures:
+
+- Unrecognised magic bytes, unsupported format version, or unsupported algorithm ID
+- Malformed length fields detected before any authentication step
+- KDF memory parameter above `--max-kdf-memory` policy limit
+- Missing shards, duplicate shards, or chunk index gaps
+- Trailing garbage after the declared payload
+
+Policy-rejection messages (e.g., the KDF memory limit) name the relevant flag so users can distinguish them from authentication failures.
+
+### Implementation note
+
+`bseal::AuthenticationFailed` is a fixed-message exception with no parameters. Every code path that detects an authentication failure — `verify_all_shard_header_macs()`, `ShardReader::validate_shards()`, the AEAD backend `decrypt()` methods, and `DecryptPipeline` — throws this type. `src/main.cpp` maps it to exit code 3.

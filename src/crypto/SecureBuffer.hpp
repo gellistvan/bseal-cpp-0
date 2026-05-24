@@ -3,17 +3,20 @@
 #include "common/Types.hpp"
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 namespace bseal::crypto {
 
 // SecureBuffer owns sensitive bytes and wipes them on destruction.
 //
-// Implementation notes for production:
-// - Prefer libsodium sodium_malloc/sodium_mlock/sodium_memzero where available.
-// - Fall back to platform::LockedMemory + explicit_bzero/SecureZeroMemory.
-// - Keep this type non-copyable so secrets are not accidentally duplicated.
-// - Add guard pages/canaries if using sodium_malloc.
+// Implementation notes:
+// - sodium_memzero() is used for wiping; it is designed not to be elided by
+//   optimisers, unlike memset().
+// - The backing storage is a std::vector<Byte>.  This is NOT sodium_malloc
+//   memory: it has no guard pages and is not mlock'd.  See SECURITY_NOTES.md
+//   "Secret handling" for the current threat model and known limitations.
+// - Non-copyable so secrets are not accidentally duplicated.
 class SecureBuffer final {
 public:
     SecureBuffer() = default;
@@ -43,5 +46,14 @@ private:
 };
 
 void secure_memzero(void* ptr, std::size_t size) noexcept;
+
+// Wipe the character data of a std::string using sodium_memzero.
+//
+// This zeros the bytes returned by s.data() up to s.size().  Known
+// limitations: SSO bytes on the stack frame are zeroed, but heap-allocated
+// strings with capacity > size may leave up to (capacity - size) bytes in
+// the heap buffer un-zeroed.  Call this immediately before the string goes
+// out of scope so the compiler has less opportunity to reintroduce copies.
+void secure_wipe_string(std::string& s) noexcept;
 
 } // namespace bseal::crypto
