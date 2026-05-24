@@ -3,6 +3,7 @@
 #include "crypto/Kdf.hpp"
 
 #include "common/CheckedArithmetic.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -20,18 +21,6 @@ namespace bseal::crypto {
 namespace {
 
 constexpr std::size_t kIoBufferSize = 1024 * 1024;
-
-void append_le32(Bytes& out, std::uint32_t value) {
-    for (int i = 0; i < 4; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-void append_le64(Bytes& out, std::uint64_t value) {
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
 
 // ---------------------------------------------------------------------------
 // BLAKE3-256 helpers
@@ -186,7 +175,7 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
         blake3_update_cstr_with_nul(hasher, kDigestDomain, sizeof(kDigestDomain));
 
         Bytes size_frame;
-        append_le64(size_frame, static_cast<std::uint64_t>(file_size));
+        append_u64_le(size_frame, static_cast<std::uint64_t>(file_size));
         blake3_update_bytes(hasher, size_frame);
         secure_memzero(size_frame.data(), size_frame.size());
 
@@ -227,7 +216,7 @@ mix_keyfile_digests(const std::vector<KeyfileDigest>& digests) {
     blake3_update_cstr_with_nul(hasher, kMixDomain, sizeof(kMixDomain));
 
     Bytes count_frame;
-    append_le32(count_frame, static_cast<std::uint32_t>(digests.size()));
+    append_u32_le(count_frame, static_cast<std::uint32_t>(digests.size()));
     blake3_update_bytes(hasher, count_frame);
     secure_memzero(count_frame.data(), count_frame.size());
 

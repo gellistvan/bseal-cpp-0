@@ -1,6 +1,7 @@
 #include "crypto/KeySchedule.hpp"
 
 #include "common/CheckedArithmetic.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 
 #include <limits>
@@ -13,23 +14,11 @@
 namespace bseal::crypto {
 namespace {
 
-void append_le16(Bytes& out, std::uint16_t value) {
-    for (int i = 0; i < 2; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-void append_le64(Bytes& out, std::uint64_t value) {
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
 Bytes make_info(std::string_view label, CipherSuite suite) {
     Bytes out;
     out.reserve(label.size() + 2);
     out.insert(out.end(), label.begin(), label.end());
-    append_le16(out, static_cast<std::uint16_t>(suite));
+    append_u16_le(out, static_cast<std::uint16_t>(suite));
     return out;
 }
 
@@ -207,7 +196,7 @@ Bytes derive_chunk_nonce(ConstByteSpan nonce_derivation_key,
     Bytes nonce;
     nonce.reserve(nonce_len);
     nonce.insert(nonce.end(), prefix.data(), prefix.data() + prefix.size());
-    append_le64(nonce, global_chunk_index);
+    append_u64_le(nonce, global_chunk_index);
 
     return nonce;
 }
