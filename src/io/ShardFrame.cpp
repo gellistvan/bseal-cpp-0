@@ -1,5 +1,7 @@
 #include "io/ShardFrame.hpp"
 
+#include "common/CheckedArithmetic.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -21,37 +23,8 @@ namespace {
 // Serialisation helpers
 // ---------------------------------------------------------------------------
 
-void append_u16_le(Bytes& out, std::uint16_t value) {
-    out.push_back(static_cast<Byte>(value & 0xffu));
-    out.push_back(static_cast<Byte>((value >> 8u) & 0xffu));
-}
-
-void append_u32_le(Bytes& out, std::uint32_t value) {
-    for (unsigned shift = 0; shift < 32; shift += 8) {
-        out.push_back(static_cast<Byte>((value >> shift) & 0xffu));
-    }
-}
-
-void append_u64_le(Bytes& out, std::uint64_t value) {
-    for (unsigned shift = 0; shift < 64; shift += 8) {
-        out.push_back(static_cast<Byte>((value >> shift) & 0xffu));
-    }
-}
-
-void append_bytes(Bytes& out, ConstByteSpan bytes) {
-    out.insert(out.end(), bytes.begin(), bytes.end());
-}
-
-
 bool all_zero(ConstByteSpan bytes) {
     return std::all_of(bytes.begin(), bytes.end(), [](Byte b) { return b == Byte{0}; });
-}
-
-int checked_int_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large for OpenSSL");
-    }
-    return static_cast<int>(value);
 }
 
 bool is_power_of_two(std::uint32_t v) {

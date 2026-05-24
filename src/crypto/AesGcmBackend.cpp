@@ -1,12 +1,11 @@
 #include "crypto/AesGcmBackend.hpp"
 
+#include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
 
-#include <limits>
 #include <memory>
 #include <openssl/evp.h>
 #include <string>
-#include <vector>
 
 namespace bseal::crypto {
 namespace {
@@ -19,26 +18,6 @@ EvpCipherCtxPtr make_cipher_ctx() {
         throw Error("failed to allocate OpenSSL EVP_CIPHER_CTX");
     }
     return EvpCipherCtxPtr(raw, &EVP_CIPHER_CTX_free);
-}
-
-int checked_int_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large for OpenSSL EVP call");
-    }
-    return static_cast<int>(value);
-}
-
-
-void validate_request(const AeadKeyView& key,
-                      const AeadNonceView& nonce,
-                      std::size_t expected_key_size,
-                      std::size_t expected_nonce_size) {
-    if (key.bytes.size() != expected_key_size) {
-        throw InvalidArgument("invalid AEAD key size");
-    }
-    if (nonce.bytes.size() != expected_nonce_size) {
-        throw InvalidArgument("invalid AEAD nonce size");
-    }
 }
 
 } // namespace
@@ -64,7 +43,7 @@ std::size_t AesGcmBackend::tag_size() const noexcept {
 }
 
 Bytes AesGcmBackend::encrypt_chunk(const EncryptChunkRequest& request) {
-    validate_request(request.key, request.nonce, key_size(), nonce_size());
+    validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     const Bytes aad = serialize_chunk_aad_v1(request.aad);
 
@@ -143,7 +122,7 @@ Bytes AesGcmBackend::encrypt_chunk(const EncryptChunkRequest& request) {
 }
 
 Bytes AesGcmBackend::decrypt_chunk(const DecryptChunkRequest& request) {
-    validate_request(request.key, request.nonce, key_size(), nonce_size());
+    validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     if (request.ciphertext_and_tag.size() < tag_size()) {
         throw AuthenticationFailed();

@@ -1,6 +1,7 @@
 #include "archive/RecordFormat.hpp"
 
 #include "archive/PathSanitizer.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 
 #include <algorithm>
@@ -10,30 +11,6 @@
 
 namespace bseal::archive {
 namespace {
-
-void append_u8(Bytes& out, std::uint8_t value) {
-    out.push_back(value);
-}
-
-void append_bytes(Bytes& out, ConstByteSpan bytes) {
-    out.insert(out.end(), bytes.begin(), bytes.end());
-}
-
-void append_u32_le(Bytes& out, std::uint32_t value) {
-    for (int i = 0; i < 4; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-void append_u64_le(Bytes& out, std::uint64_t value) {
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-void append_i64_le(Bytes& out, std::int64_t value) {
-    append_u64_le(out, static_cast<std::uint64_t>(value));
-}
 
 class Reader {
 public:

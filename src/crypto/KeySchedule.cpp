@@ -1,105 +1,19 @@
 #include "crypto/KeySchedule.hpp"
 
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
+#include "crypto/Kdf.hpp"
 
-#include <limits>
-#include <memory>
-#include <openssl/evp.h>
-#include <openssl/kdf.h>
-#include <string>
 #include <string_view>
 
 namespace bseal::crypto {
 namespace {
 
-int checked_int_size(std::size_t value, const char* what) {
-    if (value > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw InvalidArgument(std::string(what) + " is too large for OpenSSL EVP call");
-    }
-    return static_cast<int>(value);
-}
-
-void append_le16(Bytes& out, std::uint16_t value) {
-    for (int i = 0; i < 2; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
-void append_le64(Bytes& out, std::uint64_t value) {
-    for (int i = 0; i < 8; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
-}
-
 Bytes make_info(std::string_view label, CipherSuite suite) {
     Bytes out;
     out.reserve(label.size() + 2);
     out.insert(out.end(), label.begin(), label.end());
-    append_le16(out, static_cast<std::uint16_t>(suite));
-    return out;
-}
-
-SecureBuffer hkdf_sha256(ConstByteSpan ikm,
-                         ConstByteSpan salt,
-                         ConstByteSpan info,
-                         std::size_t output_len) {
-    if (ikm.empty()) {
-        throw InvalidArgument("HKDF input keying material must not be empty");
-    }
-    if (output_len == 0) {
-        throw InvalidArgument("HKDF output length must not be zero");
-    }
-
-    using EvpPkeyCtxPtr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;
-
-    EvpPkeyCtxPtr ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr), &EVP_PKEY_CTX_free);
-    if (!ctx) {
-        throw Error("failed to allocate HKDF context");
-    }
-
-    if (EVP_PKEY_derive_init(ctx.get()) != 1) {
-        throw Error("HKDF initialization failed");
-    }
-
-    if (EVP_PKEY_CTX_set_hkdf_md(ctx.get(), EVP_sha256()) != 1) {
-        throw Error("HKDF digest setup failed");
-    }
-
-    if (!salt.empty()) {
-        if (EVP_PKEY_CTX_set1_hkdf_salt(
-                ctx.get(),
-                salt.data(),
-                checked_int_size(salt.size(), "HKDF salt")
-            ) != 1) {
-            throw Error("HKDF salt setup failed");
-        }
-    }
-
-    if (EVP_PKEY_CTX_set1_hkdf_key(
-            ctx.get(),
-            ikm.data(),
-            checked_int_size(ikm.size(), "HKDF IKM")
-        ) != 1) {
-        throw Error("HKDF key setup failed");
-    }
-
-    if (!info.empty()) {
-        if (EVP_PKEY_CTX_add1_hkdf_info(
-                ctx.get(),
-                info.data(),
-                checked_int_size(info.size(), "HKDF info")
-            ) != 1) {
-            throw Error("HKDF info setup failed");
-        }
-    }
-
-    SecureBuffer out(output_len);
-    std::size_t out_len = output_len;
-
-    if (EVP_PKEY_derive(ctx.get(), out.data(), &out_len) != 1 || out_len != output_len) {
-        throw Error("HKDF derivation failed");
-    }
-
+    append_u16_le(out, static_cast<std::uint16_t>(suite));
     return out;
 }
 
@@ -213,7 +127,7 @@ Bytes derive_chunk_nonce(ConstByteSpan nonce_derivation_key,
     Bytes nonce;
     nonce.reserve(nonce_len);
     nonce.insert(nonce.end(), prefix.data(), prefix.data() + prefix.size());
-    append_le64(nonce, global_chunk_index);
+    append_u64_le(nonce, global_chunk_index);
 
     return nonce;
 }

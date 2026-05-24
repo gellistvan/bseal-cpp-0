@@ -69,6 +69,20 @@ inline Bytes serialize_chunk_aad_v1(const ChunkAad& aad) {
     return out;
 }
 
+/// Shared pre-condition check for both AEAD backends.
+/// Throws InvalidArgument if key or nonce size does not match the backend's requirements.
+inline void validate_aead_request(const AeadKeyView& key,
+                                  const AeadNonceView& nonce,
+                                  std::size_t expected_key_size,
+                                  std::size_t expected_nonce_size) {
+    if (key.bytes.size() != expected_key_size) {
+        throw InvalidArgument("invalid AEAD key size");
+    }
+    if (nonce.bytes.size() != expected_nonce_size) {
+        throw InvalidArgument("invalid AEAD nonce size");
+    }
+}
+
 class CryptoBackend {
 public:
     virtual ~CryptoBackend() = default;
