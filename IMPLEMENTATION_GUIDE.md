@@ -200,4 +200,26 @@ the resulting shard file before decrypting, verifying exit code 1:
 ### Policy
 
 Every corruption class in the above table must have a named test before any production release.
+
+## Code formatting and hygiene
+
+**Formatter:** `clang-format` (any version ≥ 14; the CI currently uses the version
+available in `ubuntu-24.04`). Configuration is in `.clang-format` at the repository
+root (LLVM style, 4-space indent, 100-column line limit, namespace indentation).
+
+**Apply formatting locally:**
+```bash
+scripts/check-hygiene.sh --fix
+```
+
+**Check without modifying:**
+```bash
+scripts/check-hygiene.sh
+```
+
+**CI behaviour:** The `Hygiene` workflow runs `scripts/check-hygiene.sh` in dry-run
+mode on every push and pull request. PRs that introduce unformatted C++ will fail.
+
+**Rule:** Mechanical formatting commits must never be mixed with semantic or security
+changes. Format first, then change behaviour in a separate commit.
 Coverage-guided fuzzing (libFuzzer or AFL) is the next step for deeper parser hardening.
