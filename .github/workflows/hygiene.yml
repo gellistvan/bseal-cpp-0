@@ -1,0 +1,16 @@
+name: Hygiene
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  clang-format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get install -y clang-format
+      - name: Check C++ formatting
+        run: scripts/check-hygiene.sh
