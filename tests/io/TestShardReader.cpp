@@ -888,7 +888,7 @@ TEST(TestShardReader, RejectsCorruptedShardHeaderMac) {
 
     EXPECT_THROW(
         { bseal::io::ShardReader reader(std::move(shards), test_header_authentication_key()); },
-        bseal::InvalidArgument);
+        bseal::AuthenticationFailed);
 
     std::filesystem::remove_all(dir);
 }
