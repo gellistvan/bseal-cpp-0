@@ -306,6 +306,7 @@ When changing crypto/container code:
 * [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) — what BSEAL protects, what it leaks, attacker capabilities in scope, and non-goals.
 * [`docs/FORMAT.md`](docs/FORMAT.md) describes the archive/container format.
 * [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) — itemised pre-release blockers with status and proof requirements.
+* [`docs/FUZZING.md`](docs/FUZZING.md) — how to build and run fuzz targets, add corpus files, and minimize crashes.
 
 ## License
 

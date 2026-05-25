@@ -183,7 +183,7 @@ ParsedArgs parse_args(int argc, char** argv) {
 }
 
 std::string usage_text() {
-    return R"USAGE(BSEAL skeleton
+    return R"USAGE(BSEAL-Cpp
 
 Usage:
   bseal encrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
@@ -206,8 +206,6 @@ Decrypt options:
   --max-kdf-memory SIZE   reject archives whose Argon2id memory exceeds SIZE (default: 2G)
   --max-kdf-iterations N  reject archives whose Argon2id iteration count exceeds N (default: 4)
   --max-kdf-parallelism N reject archives whose Argon2id parallelism exceeds N (default: 8)
-
-This skeleton defines interfaces only. It does not perform production encryption yet.
 )USAGE";
 }
 

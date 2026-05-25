@@ -7,6 +7,7 @@ project(bseal
 )
 
 option(BSEAL_BUILD_TESTS "Build smoke tests" ON)
+option(BSEAL_BUILD_FUZZERS "Build coverage-guided fuzz targets (requires Clang with libFuzzer)" OFF)
 option(BSEAL_ENABLE_SANITIZERS "Enable ASan/UBSan for local development" OFF)
 option(BSEAL_ENABLE_TSAN "Enable ThreadSanitizer (incompatible with BSEAL_ENABLE_SANITIZERS)" OFF)
 option(BSEAL_ENABLE_INSTALL "Enable install rules" OFF)
@@ -83,6 +84,11 @@ bseal_enable_tsan_if_requested(bseal)
 if (BSEAL_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if (BSEAL_BUILD_FUZZERS)
+    enable_testing()
+    add_subdirectory(tests/fuzz)
 endif()
 
 if (BSEAL_ENABLE_INSTALL)
