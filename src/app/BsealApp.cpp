@@ -18,21 +18,18 @@
 #include "io/ShardWriter.hpp"
 #include "pipeline/DecryptPipeline.hpp"
 #include "pipeline/EncryptPipeline.hpp"
+#include "platform/PassphrasePrompt.hpp"
 #include "platform/Random.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <iostream>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <termios.h>
-#include <unistd.h>
 
 namespace bseal::app {
 namespace {
@@ -52,77 +49,12 @@ struct ArchiveOpenContext {
     bseal::io::GlobalPublicHeaderV1 global_header{};
 };
 
-// Read one line from stdin (no echo suppression).  Returns a plain std::string
-// that the caller is responsible for wiping with secure_wipe_string().
-std::string read_line_from_stdin(std::string_view prompt) {
-    std::cerr << prompt;
-    std::string line;
-    std::getline(std::cin, line);
-    if (!std::cin) {
-        throw bseal::InvalidArgument("failed to read passphrase from stdin");
-    }
-    return line;
-}
-
-// Read one line from stdin with echo disabled.  Returns a plain std::string
-// that the caller is responsible for wiping with secure_wipe_string().
-std::string prompt_hidden(std::string_view prompt) {
-    std::cerr << prompt;
-
-    termios old_termios{};
-    if (tcgetattr(STDIN_FILENO, &old_termios) != 0) {
-        return read_line_from_stdin(prompt);
-    }
-
-    termios new_termios = old_termios;
-    new_termios.c_lflag &= static_cast<unsigned int>(~ECHO);
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &new_termios) != 0) {
-        throw bseal::InvalidArgument("failed to disable terminal echo");
-    }
-
-    std::string line;
-    std::getline(std::cin, line);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_termios);
-    std::cerr << '\n';
-
-    if (!std::cin) {
-        throw bseal::InvalidArgument("failed to read passphrase from stdin");
-    }
-    return line;
-}
-
-// Transfer a std::string into a SecureBuffer, then wipe the source string.
-bseal::crypto::SecureBuffer string_to_secure_buffer(std::string& s) {
-    bseal::crypto::SecureBuffer buf(s.size());
-    std::copy(s.begin(), s.end(), buf.as_span().begin());
-    bseal::crypto::secure_wipe_string(s);
-    return buf;
-}
-
-// Acquire the passphrase from stdin and return it in a SecureBuffer.
-// The intermediate std::string staging buffers are wiped before they go
-// out of scope.
+// Acquire the passphrase and return it in a SecureBuffer.
 bseal::crypto::SecureBuffer obtain_passphrase(bool passphrase_prompt) {
     if (passphrase_prompt) {
-        auto first  = prompt_hidden("Passphrase: ");
-        auto second = prompt_hidden("Confirm passphrase: ");
-        const bool match = (first == second);
-        bseal::crypto::secure_wipe_string(second);
-        if (!match) {
-            bseal::crypto::secure_wipe_string(first);
-            throw bseal::InvalidArgument("passphrases do not match");
-        }
-        if (first.empty()) {
-            throw bseal::InvalidArgument("passphrase must not be empty");
-        }
-        return string_to_secure_buffer(first);
+        return bseal::platform::read_passphrase_prompt();
     }
-
-    auto passphrase = read_line_from_stdin("Passphrase: ");
-    if (passphrase.empty()) {
-        throw bseal::InvalidArgument("passphrase must not be empty");
-    }
-    return string_to_secure_buffer(passphrase);
+    return bseal::platform::read_passphrase_from_stdin();
 }
 
 std::unique_ptr<bseal::crypto::CryptoBackend>

@@ -30,6 +30,7 @@ add_executable(bseal_platform_gtests
     platform/TestRandom.cpp
     platform/TestMemoryLock.cpp
     platform/TestCpuFeatures.cpp
+    platform/TestPassphrasePrompt.cpp
 )
 
 target_link_libraries(bseal_platform_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})

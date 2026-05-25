@@ -355,15 +355,39 @@ Passphrase and key material flows through the following wipe-on-destruct types:
   `SecureBuffer`, so they are wiped when the ShardWriter or ShardReader is destroyed.
 
 Passphrase input flow:
-1. `obtain_passphrase()` reads the passphrase into a temporary `std::string` staging buffer
-   (necessary because `std::getline` requires `std::string`), transfers the bytes into a
-   `SecureBuffer`, and calls `secure_wipe_string()` on the staging string before returning.
-   In the double-prompt path the confirm string is wiped whether or not the passphrases match.
-2. `derive_expanded_keys()` moves the `SecureBuffer` directly into `KdfInput::passphrase`.
+
+1. **Terminal echo suppression** (`--passphrase-prompt`): `platform::read_passphrase_prompt()`
+   calls the platform terminal reader (`src/platform/PassphrasePrompt.cpp`).
+   - On POSIX: `tcgetattr` saves the current terminal attributes; `tcsetattr` clears the
+     `ECHO` flag.  If either syscall fails, the function throws `InvalidArgument` and does
+     not read any passphrase.  There is no silent fallback to visible input.
+   - On Windows: `GetConsoleMode` / `SetConsoleMode` clear `ENABLE_ECHO_INPUT`.  Same
+     fail-closed contract.
+   - On other platforms: `NotImplemented` is thrown.
+   - The passphrase is read twice; the confirm buffer is wiped (via `secure_wipe_string`)
+     before the mismatch check throws, so it is always zeroed.
+
+2. **Stdin mode** (no `--passphrase-prompt`): `platform::read_passphrase_from_stdin()` reads
+   one line without echo suppression.  This path is documented as non-interactive; callers
+   are responsible for securing the input channel.
+
+3. **SecureBuffer staging**: both paths call `to_secure_buffer()` inside
+   `PassphrasePrompt.cpp`, which copies bytes into `sodium_malloc` storage and calls
+   `secure_wipe_string()` on the `std::string` immediately.  The `std::string` is on the
+   stack or a small-string-optimized inline buffer; the wipe covers `s.data()` up to
+   `s.size()`.
+
+4. `derive_expanded_keys()` moves the `SecureBuffer` directly into `KdfInput::passphrase`.
    Argon2id receives `passphrase.data()` and `passphrase.size()` from the locked allocation
    with no intermediate `std::string` copy.  `input.passphrase.wipe()` is called immediately
    after `derive_master_seed()` returns; the `KdfInput` destructor zeroes any residual bytes
    on scope exit.
+
+**Architectural isolation**: `<termios.h>` and `<unistd.h>` (POSIX) and `<windows.h>`
+(Windows) are included only in `src/platform/PassphrasePrompt.cpp`, behind the appropriate
+platform guards.  No app-layer or pipeline-layer source includes these headers directly.  The
+injectable `TerminalLineReader` function type enables unit tests to exercise mismatch, empty,
+and echo-failure paths without a real terminal.
 
 ### sodium_malloc properties
 
