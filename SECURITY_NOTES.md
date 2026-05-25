@@ -95,11 +95,22 @@ must hold — in this order:
    is never called (due to an exception or pipeline failure), `~ArchiveReader()` removes the temp
    directory, leaving the output root empty.
 
+5. **Output directory cleanup**: after the pipeline fails, `BsealApp::decrypt()` removes the output
+   directory if and only if this invocation created it (it did not exist before `decrypt` was called)
+   and it is now empty. `std::filesystem::remove` is used — it refuses non-empty directories — so
+   pre-existing user data is never touched. If the output directory existed before decrypt started,
+   it is left as-is regardless of outcome.
+
 This ordering means a malformed or tampered archive whose `padded_plaintext_size` does not match the
-actual decrypted stream length will never promote any output files. The check is enforced in
+actual decrypted stream length will never promote any output files, and a failed decrypt will leave
+no misleading empty directory behind. The pipeline check is enforced in
 `ordered_plaintext_consumer_main` in `src/pipeline/DecryptPipeline.cpp` and tested by
 `DecryptPipeline.RejectsMismatchedPaddedPlaintextSize` and `DecryptPipeline.FinishNotCalledOnSizeMismatch`
-in `tests/pipeline/TestDecryptPipeline.cpp`.
+in `tests/pipeline/TestDecryptPipeline.cpp`. The output-directory cleanup is in `BsealApp::decrypt()`
+and tested by the `BlackBoxCli.WrongPassphrase*`, `BlackBoxCli.WrongKeyfile*`,
+`BlackBoxCli.ModifiedCiphertext*`, `BlackBoxCli.TamperedShardPublicHeader*`,
+`BlackBoxCli.FailedDecryptPreservesPreExistingEmptyOutputDir`, and
+`BlackBoxCli.FailedDecryptWithOverwritePreservesPreExistingFiles` integration tests.
 
 ## Shard finalization invariant
 
