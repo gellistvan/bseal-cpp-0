@@ -226,6 +226,44 @@ Used by: `archive/RecordFormat.cpp`, `archive/ArchiveWriter.cpp`, `io/ShardFrame
 defined in `Kdf.cpp` and shared by `KeySchedule.cpp`. Both callers derive domain-separated
 sub-keys from the same master seed using different `info` strings.
 
+## Test-only crypto bypasses are protected by a repository scanner
+
+Two tag types exist solely to enable tests that need to bypass production
+authentication checks:
+
+| Tag | Declared in | Purpose |
+|---|---|---|
+| `UnsafeSkipHeaderAuthenticationForTests` | `src/io/ShardReader.hpp` | Construct a `ShardReader` without verifying shard header MACs |
+| `UnsafeAllowMissingShardAadForTests` | `src/io/ShardWriter.hpp` | Construct a `ShardWriter` without requiring per-shard AAD entries |
+
+These tags are named-type parameters — passing one requires writing its full
+name explicitly, making accidental use hard. A repository scanner enforces
+this at the CI level:
+
+**Scanner**: `tests/scripts/scan_unsafe_bypasses.py`
+
+Runs at every `ctest` invocation as `scan.UnsafeBypassGuard`. It walks all
+C++ source files under `src/` and fails if any unsafe token appears outside
+the explicitly allowed declaration/implementation files in `src/io/`.
+
+**Allowed locations** (where the scanner will not flag the token):
+- `src/io/ShardReader.hpp` and `src/io/ShardReader.cpp` — declaration and constructor
+- `src/io/ShardWriter.hpp` and `src/io/ShardWriter.cpp` — declaration and constructor
+- `tests/` — all test code
+- `*.md` — documentation files
+
+**Disallowed locations** (flagged as a hard error):
+- `src/app/`, `src/pipeline/`, `src/crypto/`, `src/archive/`, or any other `src/` path not in the allow-list
+
+**Self-test**: `tests/scripts/test_scan_unsafe_bypasses.py` runs as
+`scan.UnsafeBypassGuardSelfTest` and includes a negative fixture — a fake
+production file containing an unsafe token — to prove the scanner actually
+detects violations.
+
+**Adding a new bypass tag**: declare the struct in `src/io/`, add both its
+header and implementation file to `ALLOWED_SRC_FILES` in the scanner script,
+and add the token name to `UNSAFE_TOKENS`.
+
 ## Malformed input coverage
 
 Every byte of an archive is treated as attacker-controlled until authenticated. The test suite
