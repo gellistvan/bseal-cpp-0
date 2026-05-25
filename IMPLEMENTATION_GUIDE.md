@@ -164,10 +164,45 @@ Used by: `archive/RecordFormat.cpp`, `archive/ArchiveWriter.cpp`, `io/ShardFrame
 defined in `Kdf.cpp` and shared by `KeySchedule.cpp`. Both callers derive domain-separated
 sub-keys from the same master seed using different `info` strings.
 
-### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition
+### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition and concurrency contract
 
 `validate_aead_request(key, nonce, expected_key_size, expected_nonce_size)` is the shared
 inline guard used by both AEAD backends before any OpenSSL or libsodium call.
+
+#### CryptoBackend concurrency contract
+
+`encrypt_chunk` and `decrypt_chunk` are declared `const` at the interface level. This is a
+hard-enforced concurrency contract: the compiler rejects any implementation that writes to a
+non-mutable member variable, making it impossible to accidentally introduce shared mutable state.
+
+Both production backends satisfy this by design:
+- **`XChaCha20Poly1305Backend`** — calls `crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt`
+  from libsodium directly; no state between calls.
+- **`AesGcmBackend`** — creates a fresh `EVP_CIPHER_CTX` (via `make_cipher_ctx()`) on each
+  call and destroys it before returning; no member `EVP_CIPHER_CTX`.
+
+Both encrypt and decrypt pipelines pass a single `const CryptoBackend&` to all worker threads,
+relying on this contract for safe concurrent use without any per-worker locking or copying.
+
+A `CryptoBackend` implementation that requires per-call mutable state (e.g. a custom
+streaming cipher that must maintain a counter across calls) MUST NOT store that state as a
+member variable. Either allocate it locally per call, or redesign to be per-worker (see
+Option B in SECURITY_NOTES.md if per-worker ownership becomes necessary in the future).
+
+#### ThreadSanitizer build
+
+To verify the concurrency contract with TSan:
+
+```bash
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DBSEAL_ENABLE_TSAN=ON
+cmake --build build-tsan -j
+ctest --test-dir build-tsan --output-on-failure
+```
+
+`BSEAL_ENABLE_TSAN` and `BSEAL_ENABLE_SANITIZERS` (ASan/UBSan) are mutually exclusive.
+The concurrent stress tests in `tests/crypto/TestCryptoBackendConcurrency.cpp` and the
+multi-worker pipeline tests in `tests/pipeline/TestMultiWorkerPipeline.cpp` are the primary
+targets for TSan coverage.
 
 ### `src/common/Endian.hpp`
 
@@ -190,11 +225,6 @@ Used by: `archive/RecordFormat.cpp`, `archive/ArchiveWriter.cpp`, `io/ShardFrame
 `hkdf_sha256(ikm, salt, info, output_len)` is the single HKDF-SHA-256 implementation,
 defined in `Kdf.cpp` and shared by `KeySchedule.cpp`. Both callers derive domain-separated
 sub-keys from the same master seed using different `info` strings.
-
-### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition
-
-`validate_aead_request(key, nonce, expected_key_size, expected_nonce_size)` is the shared
-inline guard used by both AEAD backends before any OpenSSL or libsodium call.
 
 ## Malformed input coverage
 

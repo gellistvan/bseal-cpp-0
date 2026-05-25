@@ -32,7 +32,7 @@ using bseal::crypto::kAesGcmRecommendedNonceBytes;
 template <typename ExceptionT, typename Fn>
 bool throws_exception(Fn&& fn) {
     try {
-        fn();
+        (void)fn();
     } catch (const ExceptionT&) {
         return true;
     } catch (...) {

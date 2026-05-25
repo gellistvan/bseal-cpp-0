@@ -83,6 +83,19 @@ inline void validate_aead_request(const AeadKeyView& key,
     }
 }
 
+// Concurrency contract
+// --------------------
+// encrypt_chunk and decrypt_chunk MUST be safe to call concurrently from multiple
+// threads on the same CryptoBackend instance without external synchronization.
+//
+// Implementations satisfy this by being fully stateless: all working state is
+// allocated on the call stack or as local variables within the function body.
+// No mutable member variables are permitted.
+//
+// This contract is enforced at the language level: both methods are declared
+// `const`, so the compiler rejects any implementation that writes to a
+// non-mutable member. Implementations that require per-call mutable state
+// (e.g. an EVP_CIPHER_CTX) MUST allocate it locally, not as a class member.
 class CryptoBackend {
 public:
     virtual ~CryptoBackend() = default;
@@ -94,12 +107,13 @@ public:
     [[nodiscard]] virtual std::size_t tag_size() const noexcept = 0;
 
     // Encrypts one independent fixed-size archive chunk.
-    // Return value must be ciphertext || tag.
-    virtual Bytes encrypt_chunk(const EncryptChunkRequest& request) = 0;
+    // Returns ciphertext || tag. Thread-safe: see concurrency contract above.
+    virtual Bytes encrypt_chunk(const EncryptChunkRequest& request) const = 0;
 
     // Decrypts one independent fixed-size archive chunk.
-    // Must throw AuthenticationFailed on tag failure and must not return unauthenticated plaintext.
-    virtual Bytes decrypt_chunk(const DecryptChunkRequest& request) = 0;
+    // Throws AuthenticationFailed on tag failure; never returns unauthenticated plaintext.
+    // Thread-safe: see concurrency contract above.
+    virtual Bytes decrypt_chunk(const DecryptChunkRequest& request) const = 0;
 };
 
 } // namespace bseal::crypto

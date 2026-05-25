@@ -42,7 +42,7 @@ std::size_t AesGcmBackend::tag_size() const noexcept {
     return kAeadTagBytes;
 }
 
-Bytes AesGcmBackend::encrypt_chunk(const EncryptChunkRequest& request) {
+Bytes AesGcmBackend::encrypt_chunk(const EncryptChunkRequest& request) const {
     validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     const Bytes aad = serialize_chunk_aad_v1(request.aad);
@@ -121,7 +121,7 @@ Bytes AesGcmBackend::encrypt_chunk(const EncryptChunkRequest& request) {
     return out;
 }
 
-Bytes AesGcmBackend::decrypt_chunk(const DecryptChunkRequest& request) {
+Bytes AesGcmBackend::decrypt_chunk(const DecryptChunkRequest& request) const {
     validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
 
     if (request.ciphertext_and_tag.size() < tag_size()) {

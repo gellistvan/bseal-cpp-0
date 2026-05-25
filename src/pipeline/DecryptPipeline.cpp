@@ -101,7 +101,7 @@ void reader_main(
 
 void decryption_worker_main(
     const DecryptPipelineOptions& options,
-    crypto::CryptoBackend& backend,
+    const crypto::CryptoBackend& backend,
     crypto::ExpandedKeys& keys,
     WorkQueue<CipherChunk>& decrypt_queue,
     WorkQueue<PlainChunk>& plaintext_queue,
