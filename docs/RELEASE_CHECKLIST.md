@@ -124,18 +124,24 @@ such proof must remain TODO or PARTIAL.
 
 ## Test coverage
 
-- [ ] **TODO** — Fuzz targets for shard/archive format parsers
-  - **Owner**: testing
-  - **Files**: `src/io/ShardFrame.cpp` (`parse_global_public_header`,
-    `parse_shard_public_header`, `parse_chunk_frame_header_v1`),
-    `src/archive/RecordFormat.cpp` (`parse_entry_metadata`)
-  - **Proof needed**: libFuzzer or AFL corpus integrated into CI; no crashes after
-    a minimum-hours run.
+- [x] **DONE** — Six fuzz targets implemented under `tests/fuzz/`; CTest smoke tests
+  registered as `fuzz.smoke.*`; build option `BSEAL_BUILD_FUZZERS=ON`
+  - **Targets**: `FuzzGlobalPublicHeader`, `FuzzShardPublicHeader`,
+    `FuzzChunkFrameHeader`, `FuzzRecordFormat`, `FuzzArchiveReader`,
+    `FuzzPathSanitizer`
+  - **Surfaces covered**: `parse_global_public_header`, `parse_shard_public_header`,
+    `parse_chunk_frame_header_v1`, `parse_record`, `encoded_record_size_if_complete`,
+    `parse_entry_metadata`, `ArchiveReader::consume`/`finish`,
+    `is_safe_relative_path`, `make_safe_output_path`
+  - **See**: `docs/FUZZING.md`
+  - **Proof**: `fuzz.smoke.*` CTest labels pass; `BSEAL_BUILD_FUZZERS=ON` build succeeds
 
-- [ ] **TODO** — Fuzz targets for `ArchiveReader::consume` / `finish` flow
-  - **Owner**: testing
-  - **Files**: `src/archive/ArchiveReader.cpp`
-  - **Proof needed**: libFuzzer or AFL corpus; no crashes after a minimum-hours run.
+- [ ] **TODO** — Extended fuzzer runs (minimum wall-clock hours with libFuzzer or AFL++)
+  integrated into CI; no new crashes
+  - **Owner**: infrastructure
+  - **Files**: `tests/fuzz/`, `.github/workflows/` (does not yet exist),
+    `tests/fuzz/corpus/`
+  - **Proof needed**: CI job running each target for ≥1 h with no crashes reported.
 
 - [ ] **TODO** — Sanitizer build (`-DBSEAL_ENABLE_SANITIZERS=ON`) runs in CI on every
   pull request
