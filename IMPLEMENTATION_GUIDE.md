@@ -28,7 +28,7 @@ The skeleton avoids hard dependencies so it can compile anywhere. Recommended pr
 The following order was used to build BSEAL. It remains the recommended order for fresh ports or significant refactors.
 
 1. `platform/Random` using the OS CSPRNG.
-2. `crypto/SecureBuffer` memory locking and explicit wipe verification.
+2. `crypto/SecureBuffer` — sodium_malloc-backed locked memory with fail-closed allocation, guard pages, and full-capacity zeroing before free.  Test hooks (`secure_buffer_set_alloc_for_tests`) allow deterministic failure injection and wipe-before-free observation without sodium overhead.
 3. `archive/RecordFormat` serializer/deserializer with fuzz tests.
 4. `archive/PathSanitizer` robust cross-platform extraction safety tests.
 5. `crypto/Kdf` with Argon2id, BLAKE3 keyfile hashing, HKDF expansion.
