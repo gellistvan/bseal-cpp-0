@@ -267,10 +267,15 @@ intentionally left unchecked (e.g. bitfield masks and loop counters) via UBSan.
 
 Passphrase and key material flows through the following wipe-on-destruct types:
 
-- **`SecureBuffer`** (`src/crypto/SecureBuffer.hpp`): move-only; calls `sodium_memzero()` on
-  its backing allocation in the destructor, move-assignment operator, and explicit `wipe()`.
-  All four `ExpandedKeys` members (`chunk_encryption_key`, `manifest_key`,
-  `header_authentication_key`, `nonce_derivation_key`) are `SecureBuffer` values.
+- **`SecureBuffer`** (`src/crypto/SecureBuffer.hpp`): move-only; backed by `sodium_malloc()`
+  which provides guard pages, `mlock()` (swap-prevention), and mprotect'd guard regions.
+  The entire allocated capacity is zeroed with `sodium_memzero()` before `sodium_free()` in
+  the destructor and move-assignment operator.  An explicit `wipe()` zeros the live bytes
+  in-place without freeing the allocation.  All four `ExpandedKeys` members
+  (`chunk_encryption_key`, `manifest_key`, `header_authentication_key`, `nonce_derivation_key`)
+  are `SecureBuffer` values.
+  Allocation failure (lock limit exceeded or OOM) throws `bseal::Error`; there is no silent
+  fallback to ordinary heap memory.
 
 - **`ShardWriterOptions::header_authentication_key`** and **`ShardReader::auth_key_`** are both
   `SecureBuffer`, so they are wiped when the ShardWriter or ShardReader is destroyed.
@@ -285,14 +290,27 @@ Passphrase input flow:
    calls `wipe()` on the `SecureBuffer` immediately.  The string is wiped with
    `secure_wipe_string()` immediately after `derive_master_seed()` returns.
 
+### sodium_malloc properties
+
+`sodium_malloc(n)` allocates memory with the following guarantees beyond a plain `malloc`:
+
+- **Guard pages**: one no-access page is placed immediately before and after the allocation.
+  Any out-of-bounds read or write triggers a fault (SIGSEGV/SIGBUS) rather than silent
+  corruption.
+- **mlock**: the backing pages are locked into RAM via `mlock(2)`, preventing the OS from
+  swapping them to disk.  On Linux this consumes the `RLIMIT_MEMLOCK` resource limit.
+- **Poison on allocation**: the returned region is filled with `0xdb` so uninitialised reads
+  are detectable.
+- **`sodium_free` guarantees**: zeros the allocation before calling the underlying `free()`.
+  `SecureBuffer::release()` additionally calls `sodium_memzero` on the full capacity before
+  `sodium_free` to ensure zeroing even when using the test-hook allocator.
+
 ### Known limitations (outside the threat model)
 
-- **Swap / paging**: `SecureBuffer` uses `std::vector` heap memory.  On systems with swap
-  enabled the allocator may page out the backing memory before it is wiped.  Use
-  `sodium_mlock()` (not yet wired) or OS-level encrypted swap to mitigate.
-- **Compiler copies**: the C++ abstract machine may produce temporary copies of `SecureBuffer`
-  bytes (e.g. during function argument passing before NRVO).  The STL move semantics of
-  `std::vector` minimise but cannot eliminate this risk.
+- **mlock limit**: `mlock(2)` is bounded by `RLIMIT_MEMLOCK` (default 64 KiB on many Linux
+  distributions).  If the total locked memory across all `SecureBuffer` instances exceeds
+  this limit, `sodium_malloc` returns null and BSEAL throws `bseal::Error`.  Raise the limit
+  with `ulimit -l unlimited` or set `LimitMEMLOCK=infinity` in the systemd unit.
 - **SSO strings**: `std::string` with small-string optimisation stores characters in the
   object itself (stack frame or inline allocation).  `secure_wipe_string()` zeroes `s.data()`
   up to `s.size()`, covering SSO storage.  Heap-allocated strings with `capacity > size`
