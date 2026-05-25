@@ -192,6 +192,19 @@ ParsedArgs parse_args(int argc, char** argv) {
         return parsed;
     }
 
+    if (command == "benchmark-kdf") {
+        parsed.command = Command::BenchmarkKdf;
+        for (int i = 2; i < argc; ++i) {
+            const std::string_view key = argv[i];
+            if (key == "--dry-run") {
+                parsed.benchmark_kdf.dry_run = true;
+            } else {
+                throw InvalidArgument("unknown option: " + std::string(key));
+            }
+        }
+        return parsed;
+    }
+
     throw InvalidArgument("unknown command: " + std::string(command));
 }
 
@@ -201,6 +214,7 @@ std::string usage_text() {
 Usage:
   bseal encrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
   bseal decrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
+  bseal benchmark-kdf [options]
 
 Encrypt options:
   --suite xchacha20-poly1305|aes-256-gcm
@@ -229,6 +243,9 @@ Decrypt options:
   --max-kdf-memory SIZE   reject archives whose Argon2id memory exceeds SIZE (default: 2G)
   --max-kdf-iterations N  reject archives whose Argon2id iteration count exceeds N (default: 4)
   --max-kdf-parallelism N reject archives whose Argon2id parallelism exceeds N (default: 8)
+
+Benchmark options:
+  --dry-run               print preset parameters without running Argon2id
 )USAGE";
 }
 

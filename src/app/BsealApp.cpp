@@ -24,8 +24,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <iomanip>
+#include <iostream>
 #include <memory>
 #include <span>
 #include <string>
@@ -651,6 +654,82 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
         }
         throw;
     }
+}
+
+int benchmark_kdf(const bseal::cli::BenchmarkKdfOptions& options) {
+    using bseal::crypto::KdfPreset;
+    using bseal::crypto::KdfResourcePolicy;
+    using bseal::crypto::preset_params;
+
+    struct PresetEntry {
+        KdfPreset preset;
+        const char* name;
+    };
+    static constexpr PresetEntry kPresets[] = {
+        {KdfPreset::Fast,     "fast"},
+        {KdfPreset::Strong,   "strong"},
+        {KdfPreset::Paranoid, "paranoid"},
+    };
+
+    const KdfResourcePolicy default_policy{};
+
+    // Header
+    std::cout << std::left
+              << std::setw(10) << "Preset"
+              << std::setw(14) << "Memory (KiB)"
+              << std::setw(12) << "Iterations"
+              << std::setw(13) << "Parallelism"
+              << std::setw(11) << "Time (ms)"
+              << "Policy\n";
+    std::cout << std::string(72, '-') << '\n';
+
+    for (const auto& entry : kPresets) {
+        const auto params = preset_params(entry.preset);
+
+        std::string time_str;
+        if (options.dry_run) {
+            time_str = "-";
+        } else {
+            // Build a minimal KdfInput with a dummy passphrase and random salt.
+            bseal::crypto::KdfInput input;
+            {
+                const std::string_view dummy = "bseal-benchmark-kdf-dummy-passphrase";
+                const auto* b = reinterpret_cast<const bseal::Byte*>(dummy.data());
+                input.passphrase = bseal::crypto::SecureBuffer(
+                    bseal::Bytes(b, b + dummy.size()));
+            }
+            input.params = params;
+            bseal::platform::fill_secure_random(
+                std::span<bseal::Byte>{input.salt.data(), input.salt.size()});
+            bseal::platform::fill_secure_random(
+                std::span<bseal::Byte>{input.archive_id.data(), input.archive_id.size()});
+
+            const auto t0 = std::chrono::steady_clock::now();
+            bseal::crypto::derive_master_seed(input);
+            const auto t1 = std::chrono::steady_clock::now();
+
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+            time_str = std::to_string(ms);
+        }
+
+        bool policy_pass = true;
+        try {
+            bseal::crypto::check_kdf_params_against_policy(params, default_policy);
+        } catch (...) {
+            policy_pass = false;
+        }
+
+        std::cout << std::left
+                  << std::setw(10) << entry.name
+                  << std::setw(14) << params.memory_kib
+                  << std::setw(12) << params.iterations
+                  << std::setw(13) << params.parallelism
+                  << std::setw(11) << time_str
+                  << (policy_pass ? "pass" : "fail")
+                  << '\n';
+    }
+
+    return 0;
 }
 
 } // namespace bseal::app

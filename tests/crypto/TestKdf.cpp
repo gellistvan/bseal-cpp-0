@@ -839,6 +839,21 @@ TEST(Kdf, EmptyPassphraseRejectedWithSecureBuffer) {
     EXPECT_THROW(derive_master_seed(input), InvalidArgument);
 }
 
+TEST(KdfResourcePolicy, PolicyCheckFiresBeforeArgon2id) {
+    // Verify that check_kdf_params_against_policy() rejects over-budget params
+    // immediately, without any Argon2id computation.  If Argon2id ran, this test
+    // would try to allocate 2 GiB and take many seconds; the fact that it
+    // completes in microseconds proves the policy check fires first.
+    KdfResourcePolicy tight_policy{};
+    tight_policy.max_memory_kib = bseal::crypto::kArgon2MemoryKiBMin; // 64 MiB limit
+
+    const KdfParams expensive = preset_params(KdfPreset::Paranoid); // 2 GiB
+
+    EXPECT_THROW(
+        check_kdf_params_against_policy(expensive, tight_policy),
+        InvalidArgument);
+}
+
 TEST(Kdf, PassphraseMismatchWipesSecureBuffer) {
     // Verify that a moved-from SecureBuffer left in KdfInput after a failed derivation
     // can be explicitly wiped without crashing and leaves the buffer empty.

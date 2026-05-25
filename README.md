@@ -229,6 +229,12 @@ Decrypt-only options:
 * `--max-kdf-iterations N` — reject archives whose Argon2id iteration count exceeds N (default: `4`)
 * `--max-kdf-parallelism N` — reject archives whose Argon2id parallelism exceeds N (default: `8`)
 
+Benchmark KDF presets on your hardware (no archive is created):
+
+```bash
+bseal benchmark-kdf
+```
+
 Current exit codes:
 
 * `0`: success, including `--help`
@@ -334,6 +340,8 @@ When changing crypto/container code:
 * [`docs/FUZZING.md`](docs/FUZZING.md) — how to build and run fuzz targets, add corpus files, and minimize crashes.
 * [`docs/DURABILITY.md`](docs/DURABILITY.md) — what `--durability` guarantees, platform limits, and power-loss caveats.
 * [`docs/COVERAGE.md`](docs/COVERAGE.md) — how to build with coverage instrumentation and generate line/function reports.
+* [`docs/KDF_POLICY.md`](docs/KDF_POLICY.md) — Argon2id presets, runtime resource policy, recommended settings, and benchmarking.
+* [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) — deployment guide: passphrase quality, keyfile management, hardened extraction, swap/core-dump hardening.
 
 ## License
 

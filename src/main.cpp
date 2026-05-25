@@ -17,6 +17,8 @@ int main(int argc, char** argv) {
             return bseal::app::encrypt(args.encrypt);
         case bseal::cli::Command::Decrypt:
             return bseal::app::decrypt(args.decrypt);
+        case bseal::cli::Command::BenchmarkKdf:
+            return bseal::app::benchmark_kdf(args.benchmark_kdf);
         }
     } catch (const bseal::AuthenticationFailed& e) {
         std::cerr << "bseal: " << e.what() << '\n';
