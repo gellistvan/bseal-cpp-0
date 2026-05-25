@@ -630,76 +630,90 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
         }
     }
 
+    const bool output_existed_before = std::filesystem::exists(options.output);
     std::filesystem::create_directories(options.output);
 
-    auto shards  = bseal::io::ShardReader::discover(options.input);
-    auto context = make_decrypt_context_from_shards(shards);
+    try {
+        auto shards  = bseal::io::ShardReader::discover(options.input);
+        auto context = make_decrypt_context_from_shards(shards);
 
-    bseal::crypto::check_kdf_params_against_policy(context.kdf_params, options.kdf_policy);
+        bseal::crypto::check_kdf_params_against_policy(context.kdf_params, options.kdf_policy);
 
-    auto passphrase = obtain_passphrase(options.passphrase_prompt);
-    auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
+        auto passphrase = obtain_passphrase(options.passphrase_prompt);
+        auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
 
-    verify_all_shard_header_macs(shards, keys.header_authentication_key.as_span());
+        verify_all_shard_header_macs(shards, keys.header_authentication_key.as_span());
 
-    // Build per-shard public_header_hash vector (indexed by shard_index) before
-    // shards are moved into ShardReader.  These are the hashes that were used as
-    // AAD during encryption (computed from actual shard headers on disk, which
-    // match what ShardWriter wrote after finalizing each shard).
-    const auto max_shard_index = shards.empty() ? 0u :
-        static_cast<std::uint32_t>(
-            std::max_element(shards.begin(), shards.end(),
-                [](const bseal::io::ShardInfo& a, const bseal::io::ShardInfo& b) {
-                    return a.shard_index() < b.shard_index();
-                })->shard_index() + 1u);
+        // Build per-shard public_header_hash vector (indexed by shard_index) before
+        // shards are moved into ShardReader.  These are the hashes that were used as
+        // AAD during encryption (computed from actual shard headers on disk, which
+        // match what ShardWriter wrote after finalizing each shard).
+        const auto max_shard_index = shards.empty() ? 0u :
+            static_cast<std::uint32_t>(
+                std::max_element(shards.begin(), shards.end(),
+                    [](const bseal::io::ShardInfo& a, const bseal::io::ShardInfo& b) {
+                        return a.shard_index() < b.shard_index();
+                    })->shard_index() + 1u);
 
-    std::vector<std::array<Byte, 32>> per_shard_hashes(max_shard_index);
-    for (const auto& shard : shards) {
-        per_shard_hashes[shard.shard_index()] = shard.public_header_hash;
+        std::vector<std::array<Byte, 32>> per_shard_hashes(max_shard_index);
+        for (const auto& shard : shards) {
+            per_shard_hashes[shard.shard_index()] = shard.public_header_hash;
+        }
+
+        bseal::io::ShardReaderValidation validation{};
+        validation.suite_id         = suite_to_aead_alg_id(context.suite);
+        validation.archive_id       = context.archive_id;
+        validation.chunk_plain_size = context.chunk_plain_size;
+
+        // Move the header_authentication_key directly into ShardReader (no copy).
+        // verify_all_shard_header_macs() above already consumed it via .as_span();
+        // DecryptPipeline does not use this key.
+        bseal::io::ShardReader shard_reader(
+            std::move(shards),
+            std::move(keys.header_authentication_key),
+            validation);
+
+        bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{
+            options.output,
+            options.overwrite,
+            true,
+            true,
+            false,
+            to_archive_hardened_mode(options.hardened_extract),
+        });
+
+        bseal::pipeline::DecryptPipelineOptions pipeline_options;
+        pipeline_options.chunk_plain_size       = context.chunk_plain_size;
+        pipeline_options.worker_count           = 0;
+        pipeline_options.queue_depth            = 0;
+        pipeline_options.archive_id             = context.archive_id;
+        pipeline_options.public_header_hash     = per_shard_hashes.empty()
+            ? std::array<Byte, 32>{}
+            : per_shard_hashes.front();
+        pipeline_options.per_shard_public_header_hashes = std::move(per_shard_hashes);
+        pipeline_options.padded_plaintext_size  = context.global_header.padded_plaintext_size;
+
+        bseal::pipeline::DecryptPipeline pipeline(
+            pipeline_options,
+            make_backend(context.suite),
+            std::move(keys),
+            std::move(shard_reader),
+            std::move(archive_reader));
+
+        pipeline.run();
+        return 0;
+    } catch (...) {
+        // Remove the output directory only if this invocation created it and it is
+        // now empty.  std::filesystem::remove() refuses to remove non-empty directories,
+        // so this can never delete pre-existing user data.
+        if (!output_existed_before) {
+            std::error_code ec;
+            if (std::filesystem::is_empty(options.output, ec) && !ec) {
+                std::filesystem::remove(options.output, ec);
+            }
+        }
+        throw;
     }
-
-    bseal::io::ShardReaderValidation validation{};
-    validation.suite_id         = suite_to_aead_alg_id(context.suite);
-    validation.archive_id       = context.archive_id;
-    validation.chunk_plain_size = context.chunk_plain_size;
-
-    // Move the header_authentication_key directly into ShardReader (no copy).
-    // verify_all_shard_header_macs() above already consumed it via .as_span();
-    // DecryptPipeline does not use this key.
-    bseal::io::ShardReader shard_reader(
-        std::move(shards),
-        std::move(keys.header_authentication_key),
-        validation);
-
-    bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{
-        options.output,
-        options.overwrite,
-        true,
-        true,
-        false,
-        to_archive_hardened_mode(options.hardened_extract),
-    });
-
-    bseal::pipeline::DecryptPipelineOptions pipeline_options;
-    pipeline_options.chunk_plain_size       = context.chunk_plain_size;
-    pipeline_options.worker_count           = 0;
-    pipeline_options.queue_depth            = 0;
-    pipeline_options.archive_id             = context.archive_id;
-    pipeline_options.public_header_hash     = per_shard_hashes.empty()
-        ? std::array<Byte, 32>{}
-        : per_shard_hashes.front();
-    pipeline_options.per_shard_public_header_hashes = std::move(per_shard_hashes);
-    pipeline_options.padded_plaintext_size  = context.global_header.padded_plaintext_size;
-
-    bseal::pipeline::DecryptPipeline pipeline(
-        pipeline_options,
-        make_backend(context.suite),
-        std::move(keys),
-        std::move(shard_reader),
-        std::move(archive_reader));
-
-    pipeline.run();
-    return 0;
 }
 
 } // namespace bseal::app

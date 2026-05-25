@@ -179,6 +179,10 @@ Encrypt-only options:
 Decrypt-only options:
 
 * `--overwrite`, allows restoring into an existing non-empty output directory
+* **Failure cleanup**: if decrypt fails (wrong passphrase, tampered archive, I/O error, etc.) and the
+  output directory did not exist before this invocation, BSEAL removes that empty directory so no
+  misleading artifact is left behind. If the output directory already existed before decrypt started,
+  it is always preserved regardless of outcome — BSEAL never recursively deletes user-created directories.
 * `--hardened-extract auto|on|off` — extraction filesystem safety mode (default: `auto`)
   * `auto`: use the hardened POSIX backend when available (Linux/macOS); fall back to the portable backend on other platforms
   * `on`: require the hardened POSIX backend; fail immediately (exit 1) if the platform does not support it

@@ -610,7 +610,7 @@ TEST(BlackBoxCli, WrongPassphraseDoesNotDecryptArchive) {
         "wrong integration passphrase\n");
 
     EXPECT_NE(decrypt_result.exit_code, 0);
-    EXPECT_NE(collect_regular_files(output), collect_regular_files(input));
+    EXPECT_FALSE(fs::exists(output)) << "failed decrypt must remove the output dir it created";
 }
 
 TEST(BlackBoxCli, WrongKeyfileDoesNotDecryptArchive) {
@@ -645,7 +645,7 @@ TEST(BlackBoxCli, WrongKeyfileDoesNotDecryptArchive) {
         "integration-passphrase\n");
 
     EXPECT_NE(decrypt_result.exit_code, 0);
-    EXPECT_NE(collect_regular_files(output), collect_regular_files(input));
+    EXPECT_FALSE(fs::exists(output)) << "failed decrypt must remove the output dir it created";
 }
 
 TEST(BlackBoxCli, ModifiedCiphertextFailsAuthentication) {
@@ -675,7 +675,7 @@ TEST(BlackBoxCli, ModifiedCiphertextFailsAuthentication) {
         "integration-passphrase\n");
 
     EXPECT_NE(decrypt_result.exit_code, 0);
-    EXPECT_NE(collect_regular_files(output), collect_regular_files(input));
+    EXPECT_FALSE(fs::exists(output)) << "failed decrypt must remove the output dir it created";
 }
 
 TEST(BlackBoxCli, RefusesNonEmptyOutputDirectoryWithoutOverwrite) {
@@ -1360,6 +1360,7 @@ TEST(BlackBoxCli, TamperedShardPublicHeaderFailsAuthentication) {
         "tamper-passphrase\n");
 
     EXPECT_EQ(decrypt_result.exit_code, 3) << decrypt_result.stderr_text;
+    EXPECT_FALSE(fs::exists(output)) << "failed decrypt must remove the output dir it created";
 }
 
 // Swap the filenames of two shard files after encryption and verify that
@@ -1775,4 +1776,73 @@ TEST(BlackBoxCli, ZeroMaxKdfMemoryIsRejectedBeforeArchiveRead) {
         "passphrase\n");
 
     EXPECT_NE(result.exit_code, 0);
+}
+
+// Wrong passphrase into a pre-existing empty output directory: the directory must
+// survive unchanged (we did not create it).
+TEST(BlackBoxCli, FailedDecryptPreservesPreExistingEmptyOutputDir) {
+    TempDir temp("bseal_integration_preexisting_empty_output");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    create_sample_input_tree(input);
+    create_keyfiles(key_a, key_b);
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        encrypt_args(input, sealed, key_a, key_b),
+        "correct-passphrase\n");
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    // Create the output directory before decrypt so it pre-exists.
+    fs::create_directories(output);
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        decrypt_args(sealed, output, key_a, key_b),
+        "wrong-passphrase\n");
+
+    EXPECT_NE(dec.exit_code, 0);
+    // The directory existed before — it must not be removed.
+    EXPECT_TRUE(fs::exists(output))
+        << "pre-existing empty output dir must not be removed on failure";
+}
+
+// Wrong passphrase into a pre-existing non-empty output directory with --overwrite:
+// the existing files must be intact after failure.
+TEST(BlackBoxCli, FailedDecryptWithOverwritePreservesPreExistingFiles) {
+    TempDir temp("bseal_integration_preexisting_nonempty_output");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    create_sample_input_tree(input);
+    create_keyfiles(key_a, key_b);
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        encrypt_args(input, sealed, key_a, key_b),
+        "correct-passphrase\n");
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    // Put a sentinel file in the output directory.
+    fs::create_directories(output);
+    write_file(output / "sentinel.txt", "must survive\n");
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        decrypt_args(sealed, output, key_a, key_b, /*overwrite=*/true),
+        "wrong-passphrase\n");
+
+    EXPECT_NE(dec.exit_code, 0);
+    // Pre-existing non-empty output dir must not be removed or emptied.
+    EXPECT_TRUE(fs::exists(output / "sentinel.txt"))
+        << "pre-existing file in output dir must survive a failed --overwrite decrypt";
 }
