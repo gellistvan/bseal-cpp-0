@@ -288,10 +288,14 @@ enforces this through three layers:
 | tag_len ≠ 16 | `parse_chunk_frame_header_v1` | `io/TestMalformedShards.cpp` |
 | ciphertext_len ≠ plaintext_len | `parse_chunk_frame_header_v1` | `io/TestMalformedShards.cpp` |
 | Nonzero frame reserved0 / reserved1 | `parse_chunk_frame_header_v1` | `io/TestMalformedShards.cpp` |
+| plaintext_len > chunk_plain_size in frame | `ShardReader::read_next_chunk_record` | `io/TestMalformedShards.cpp` — `FrameHeader_PlaintextLenExceedsChunkPlainSize_Throws` |
+| frame shard_index ≠ enclosing shard index | `ShardReader::read_next_chunk_record` | `io/TestMalformedShards.cpp` — `FrameHeader_WrongShardIndex_Throws` |
 | Duplicate shard_index across shards | `ShardReader` constructor | `io/TestMalformedShards.cpp` |
 | Missing shard_index | `ShardReader` constructor | `io/TestMalformedShards.cpp` |
 | archive_id mismatch across shards | `ShardReader` constructor | `io/TestMalformedShards.cpp` |
 | Reordered / duplicate global_chunk_index | `ShardReader::read_next_chunk_record` | `io/TestMalformedShards.cpp` |
+| Missing global_chunk_index (gap) | `ShardReader::read_next_chunk_record` | `io/TestMalformedShards.cpp` — `ShardReader_MissingChunkIndexGap_Throws` |
+| All-zero per_shard_public_header_hash entry | `ShardWriter` production constructor | `io/TestShardWriter.cpp` — `AllZeroHashEntryThrows` |
 | RandomPadding before ArchiveEnd | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
 | Non-padding record after ArchiveEnd | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
 | Duplicate ArchiveBegin | `ArchiveReader::process_record` | `archive/TestMalformedRecords.cpp` |
@@ -302,6 +306,11 @@ enforces this through three layers:
 | finish() with open file | `ArchiveReader::finish` | `archive/TestMalformedRecords.cpp` |
 | FileBytes exceeding declared size | `ArchiveReader::write_file_bytes` | `archive/TestMalformedRecords.cpp` |
 | FileEnd before declared size reached | `ArchiveReader::end_file` | `archive/TestMalformedRecords.cpp` |
+| POSIX absolute path in archive entry | `PathSanitizer::is_safe_relative_path` | `archive/TestPathSanitizer.cpp` — `UnsafePathsAreRejected` |
+| Path traversal (`..`) in archive entry | `PathSanitizer::is_safe_relative_path` | `archive/TestPathSanitizer.cpp` — `UnsafePathsAreRejected` |
+| Windows drive letter path (e.g. `C:/`) | `PathSanitizer::is_safe_relative_path` | `archive/TestPathSanitizer.cpp` — `WindowsDrivePathsAreRejected` |
+| UNC path (`\\server\share`) | `PathSanitizer::is_safe_relative_path` | `archive/TestPathSanitizer.cpp` — `UncPathsAreRejected` |
+| Symlink extraction (disabled by default) | `ArchiveReader::process_record` | `archive/TestArchiveReader.cpp` — `SymlinkEntryRejectedByDefault` |
 
 ### Authentication failures → exit 3
 

@@ -745,6 +745,89 @@ TEST(MalformedShards, ShardReader_ArchiveIdMismatch_Throws) {
     fs::remove_all(mixed);
 }
 
+TEST(MalformedShards, FrameHeader_PlaintextLenExceedsChunkPlainSize_Throws) {
+    auto [dir, shard] = make_minimal_shard();
+
+    // plaintext_len at frame offset 20:
+    //   magic(4)+frame_header_len(2)+frame_flags(2)+shard_index(4)+global_chunk_index(8)
+    constexpr std::uint64_t kFrameOffset =
+        bseal::io::kGlobalPublicHeaderV1Size + bseal::io::kShardPublicHeaderV1Size;
+    constexpr std::uint64_t kPlaintextLenOffset = kFrameOffset + 20;
+    patch_u32_le(shard, kPlaintextLenOffset, kTestChunkPlain + 1u);
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+
+    EXPECT_THROW(
+        (void)reader.read_next_chunk_record(),
+        bseal::InvalidArgument);
+
+    fs::remove_all(dir);
+}
+
+TEST(MalformedShards, FrameHeader_WrongShardIndex_Throws) {
+    auto [dir, shard] = make_minimal_shard();
+
+    // shard_index at frame offset 8: magic(4)+frame_header_len(2)+frame_flags(2)
+    constexpr std::uint64_t kFrameOffset =
+        bseal::io::kGlobalPublicHeaderV1Size + bseal::io::kShardPublicHeaderV1Size;
+    constexpr std::uint64_t kShardIndexOffset = kFrameOffset + 8;
+    // Shard file is shard 0; claim shard 1 in the frame.
+    patch_u32_le(shard, kShardIndexOffset, 1u);
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+
+    EXPECT_THROW(
+        (void)reader.read_next_chunk_record(),
+        bseal::InvalidArgument);
+
+    fs::remove_all(dir);
+}
+
+TEST(MalformedShards, ShardReader_MissingChunkIndexGap_Throws) {
+    const auto dir = make_temp_dir("bseal_malformed_chunk_gap");
+
+    auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
+    auto c1 = fake_ciphertext_and_tag(0x40, kTestChunkPlain);
+
+    bseal::io::ShardWriter writer(
+        make_writer_options(dir, 4 * 1024 * 1024, kTestChunkPlain, 1, 2));
+    write_fake_frame(writer, 0, kTestChunkPlain, false,
+                     bseal::ConstByteSpan{c0.data(), c0.size()});
+    write_fake_frame(writer, 1, kTestChunkPlain, true,
+                     bseal::ConstByteSpan{c1.data(), c1.size()});
+    writer.finish();
+
+    const auto shard = only_bin_file(dir);
+
+    // Patch second frame's global_chunk_index from 1 to 2, creating a gap at index 1.
+    constexpr std::uint64_t kPayloadOffset =
+        bseal::io::kGlobalPublicHeaderV1Size + bseal::io::kShardPublicHeaderV1Size;
+    constexpr std::uint64_t kFirstFrameSize =
+        bseal::io::kChunkFrameHeaderV1Size + kTestChunkPlain + kTestTagLen;
+    constexpr std::uint64_t kSecondFrameOffset = kPayloadOffset + kFirstFrameSize;
+    // global_chunk_index at frame offset 12
+    constexpr std::uint64_t kChunkIdxOffset = kSecondFrameOffset + 12;
+
+    patch_u64_le(shard, kChunkIdxOffset, 2u);
+
+    auto shards = bseal::io::ShardReader::discover(dir);
+    bseal::io::ShardReader reader(
+        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+
+    auto first = reader.read_next_chunk_record();
+    ASSERT_TRUE(first.has_value());
+
+    EXPECT_THROW(
+        (void)reader.read_next_chunk_record(),
+        bseal::InvalidArgument);
+
+    fs::remove_all(dir);
+}
+
 TEST(MalformedShards, ShardReader_ReorderedChunkIndex_Throws) {
     const auto dir = make_temp_dir("bseal_malformed_reordered_chunk");
 
