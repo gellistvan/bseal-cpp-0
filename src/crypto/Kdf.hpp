@@ -6,7 +6,6 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <string>
 #include <vector>
 
 namespace bseal::crypto {
@@ -58,8 +57,10 @@ struct KdfResourcePolicy {
     std::uint32_t max_parallelism{8u};
 };
 
+// KdfInput is non-copyable because passphrase owns sodium_malloc-backed memory.
+// Construct and move; never copy.
 struct KdfInput {
-    std::string passphrase_utf8;
+    SecureBuffer passphrase;   // passphrase bytes in locked memory; must not be empty
     std::vector<std::filesystem::path> keyfiles;
     std::array<Byte, 32> salt{};
     std::array<Byte, 32> archive_id{};  // Extended to 32 bytes per FORMAT.md §3.

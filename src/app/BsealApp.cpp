@@ -202,29 +202,21 @@ template <std::size_t N> std::array<Byte, N> random_array() {
 
 // Derive ExpandedKeys from a passphrase held in a SecureBuffer.
 //
-// The passphrase is briefly staged in a KdfInput::passphrase_utf8 std::string
-// for the Argon2id call; that string is wiped with secure_wipe_string()
-// immediately after derive_master_seed() returns.  The SecureBuffer passphrase
-// argument is wiped at function entry once the bytes have been copied.
+// The passphrase moves directly into KdfInput without any std::string staging.
+// Argon2id reads the bytes straight from the sodium_malloc-backed allocation.
 bseal::crypto::ExpandedKeys
 derive_expanded_keys(const ArchiveOpenContext& context,
                      bseal::crypto::SecureBuffer passphrase,
                      const std::vector<std::filesystem::path>& keyfiles) {
     bseal::crypto::KdfInput input;
-
-    // Staging copy: std::string is needed by KdfInput / Argon2id API.
-    const auto pp_span = passphrase.as_span();
-    input.passphrase_utf8.assign(
-        reinterpret_cast<const char*>(pp_span.data()), pp_span.size());
-    passphrase.wipe();
-
+    input.passphrase = std::move(passphrase);  // no copy; locked memory moves into KdfInput
     input.keyfiles   = keyfiles;
     input.salt       = context.kdf_salt;
     input.archive_id = context.archive_id;
     input.params     = context.kdf_params;
 
     auto master_seed = bseal::crypto::derive_master_seed(input);
-    bseal::crypto::secure_wipe_string(input.passphrase_utf8);
+    input.passphrase.wipe();  // zero immediately; destructor also zeroes on scope exit
     return bseal::crypto::expand_keys(master_seed.as_span(), context.suite);
 }
 
