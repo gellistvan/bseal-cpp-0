@@ -2,6 +2,8 @@ build/
 .claude
 .cache
 build-tsan/
+build-fuzz/
+build-coverage/
 CLAUDE.md
 build-sani/
 cmake-build-*/

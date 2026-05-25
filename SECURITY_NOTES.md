@@ -1,6 +1,8 @@
 # Security Notes
 
 This file records design assumptions and implementation hazards.
+See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the security boundary, attacker
+capabilities in scope, protected assets, and non-goals.
 
 ## Practical, not absolute, security
 
@@ -124,6 +126,13 @@ global header bytes — not over any placeholder values used during streaming.
 rewrites both the global header bytes and the shard header MAC (using the final global header) in
 every finalized shard before returning. Do not skip `finish()`, and do not reopen shard files
 between `finish()` returning and the reader verifying `header_mac`.
+
+**Durability of finalized shards.** After all header rewrites, `finish()` calls
+`DurabilityHooks::flush_file` on each shard and `DurabilityHooks::flush_dir` on the output
+directory, according to the `DurabilityMode` set in `ShardWriterOptions`. The default mode in
+`BsealApp` is `best-effort` (call fsync and swallow ENOTSUP); use `--durability=on` to require
+fsync to succeed or `--durability=off` to skip it. See `docs/DURABILITY.md` for the full
+guarantee model and platform limitations.
 
 **Invariant: shard header MAC authenticates the final global header.**
 Every `ShardPublicHeaderV1.header_mac` is computed after the final `GlobalPublicHeaderV1` (with
@@ -271,7 +280,8 @@ Two layers of protection defend against this:
    Operators deploying BSEAL on constrained hosts should lower these limits using the CLI flags
    `--max-kdf-memory`, `--max-kdf-iterations`, and `--max-kdf-parallelism`. Policy violations
    produce exit code 1 (not 3) and the error message names the flag that can override the limit,
-   so users can distinguish a policy rejection from an authentication failure.
+   so users can distinguish a policy rejection from an authentication failure.  See
+   `docs/KDF_POLICY.md` for preset details, recommended settings, and benchmarking guidance.
 
 The default limits are **not** derived from available RAM at runtime to remain reproducible and
 predictable across environments. Operators must set them explicitly if lower limits are required.

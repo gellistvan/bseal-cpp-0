@@ -7,8 +7,10 @@ project(bseal
 )
 
 option(BSEAL_BUILD_TESTS "Build smoke tests" ON)
+option(BSEAL_BUILD_FUZZERS "Build coverage-guided fuzz targets (requires Clang with libFuzzer)" OFF)
 option(BSEAL_ENABLE_SANITIZERS "Enable ASan/UBSan for local development" OFF)
 option(BSEAL_ENABLE_TSAN "Enable ThreadSanitizer (incompatible with BSEAL_ENABLE_SANITIZERS)" OFF)
+option(BSEAL_ENABLE_COVERAGE "Enable line/function coverage instrumentation (gcov/gcovr)" OFF)
 option(BSEAL_ENABLE_INSTALL "Enable install rules" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -19,6 +21,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ProjectWarnings)
 include(Sanitizers)
+include(Coverage)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/external_libraries/blake3.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/external_libraries/argon2.cmake)
 
@@ -44,6 +47,7 @@ add_library(bseal_core
     src/pipeline/DecryptPipeline.cpp
     src/pipeline/EncryptPipeline.cpp
     src/platform/CpuFeatures.cpp
+    src/platform/DurableFile.cpp
     src/platform/MemoryLock.cpp
     src/platform/PassphrasePrompt.cpp
     src/platform/Random.cpp
@@ -73,16 +77,23 @@ target_compile_features(bseal_core PUBLIC cxx_std_20)
 bseal_set_project_warnings(bseal_core)
 bseal_enable_sanitizers_if_requested(bseal_core)
 bseal_enable_tsan_if_requested(bseal_core)
+bseal_enable_coverage_if_requested(bseal_core)
 
 add_executable(bseal src/main.cpp)
 target_link_libraries(bseal PRIVATE bseal::core)
 bseal_set_project_warnings(bseal)
 bseal_enable_sanitizers_if_requested(bseal)
 bseal_enable_tsan_if_requested(bseal)
+bseal_enable_coverage_if_requested(bseal)
 
 if (BSEAL_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if (BSEAL_BUILD_FUZZERS)
+    enable_testing()
+    add_subdirectory(tests/fuzz)
 endif()
 
 if (BSEAL_ENABLE_INSTALL)

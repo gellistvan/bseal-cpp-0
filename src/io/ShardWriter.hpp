@@ -3,6 +3,7 @@
 #include "common/Types.hpp"
 #include "crypto/SecureBuffer.hpp"
 #include "io/ShardFrame.hpp"
+#include "platform/DurableFile.hpp"
 
 #include <array>
 #include <cstdint>
@@ -30,6 +31,14 @@ struct ShardWriterOptions {
     /// No chunk may be encrypted without a known, non-zero per-shard public_header_hash
     /// bound into its AEAD associated data.
     std::vector<std::array<Byte, 32>> per_shard_public_header_hashes;
+
+    /// Durability mode applied in finish(): controls whether fsync is called on each
+    /// finalized shard and the output directory.
+    platform::DurabilityMode  durability_mode{platform::DurabilityMode::BestEffort};
+
+    /// Injectable hooks; defaults to noop() so existing tests are unaffected.
+    /// BsealApp sets this to DurabilityHooks::production() before construction.
+    platform::DurabilityHooks durability_hooks{platform::DurabilityHooks::noop()};
 };
 
 struct ShardWritePosition {

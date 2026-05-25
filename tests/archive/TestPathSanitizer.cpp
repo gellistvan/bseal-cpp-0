@@ -51,3 +51,14 @@ TEST(TestPathSanitizer, MakeSafeOutputPathRejectsAbsolutePath) {
         [[maybe_unused]] const auto ignored = make_safe_output_path(temp.path(), "/tmp/evil.txt");
     }));
 }
+
+TEST(TestPathSanitizer, WindowsDrivePathsAreRejected) {
+    EXPECT_FALSE(is_safe_relative_path(std::filesystem::path{"C:/file.txt"}));
+    EXPECT_FALSE(is_safe_relative_path(std::filesystem::path{"C:\\file.txt"}));
+    EXPECT_FALSE(is_safe_relative_path(std::filesystem::path{"z:/deep/path.txt"}));
+}
+
+TEST(TestPathSanitizer, UncPathsAreRejected) {
+    EXPECT_FALSE(is_safe_relative_path(std::filesystem::path{"//server/share"}));
+    EXPECT_FALSE(is_safe_relative_path(std::filesystem::path{"\\\\server\\share"}));
+}

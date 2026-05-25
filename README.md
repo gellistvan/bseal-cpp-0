@@ -84,6 +84,26 @@ cmake --build build-sani -j
 ctest --test-dir build-sani --output-on-failure
 ```
 
+For line and function coverage (requires GCC or Clang, and `pip3 install gcovr`):
+
+```bash
+cmake -S . -B build-coverage \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBSEAL_ENABLE_COVERAGE=ON
+
+cmake --build build-coverage -j
+ctest --test-dir build-coverage --output-on-failure
+
+# Text summary (line % / function % printed to terminal)
+cmake --build build-coverage --target coverage-summary
+
+# Full HTML report
+cmake --build build-coverage --target coverage-html
+# Open: build-coverage/coverage-html/index.html
+```
+
+See [`docs/COVERAGE.md`](docs/COVERAGE.md) for details, toolchain notes, and CI guidance.
+
 Optional install rules can be enabled with:
 
 ```bash
@@ -187,6 +207,10 @@ Encrypt-only options:
   * `power2` — pad to the next power-of-two total plaintext size, with a minimum of one full chunk
   * `fixed-size=N` — pad to exactly N bytes; N must be a positive multiple of `--chunk-size` (fails if the archive is already larger, if N is not a chunk-size multiple, or if the gap is too small to hold a padding record header)
   * Padding is represented as an encrypted `RandomPadding` archive record so it is authenticated by AEAD and indistinguishable from file data
+* `--durability off|best-effort|on` — output file flush mode after shard finalization (default: `best-effort`; see `docs/DURABILITY.md`)
+  * `off`: no fsync; OS page-cache only — fastest, no durability guarantee
+  * `best-effort`: call fsync where supported; silently ignore ENOTSUP and similar errors — safe on all platforms including Windows
+  * `on`: require fsync to succeed; abort with an error if any flush fails — use on trusted local filesystems when power-loss safety is required
 
 Decrypt-only options:
 
@@ -199,10 +223,17 @@ Decrypt-only options:
   * `auto`: use the hardened POSIX backend when available (Linux/macOS); fall back to the portable backend on other platforms
   * `on`: require the hardened POSIX backend; fail immediately (exit 1) if the platform does not support it
   * `off`: always use the portable backend (TOCTOU window is not closed)
-  * The hardened POSIX backend traverses intermediate directories using `openat(2)` with `O_NOFOLLOW`, so a local attacker who races a directory replacement with a symlink cannot redirect extraction outside the output root. See `SECURITY_NOTES.md` for the full threat model.
+  * The hardened POSIX backend traverses intermediate directories using `openat(2)` with `O_NOFOLLOW`, so a local attacker who races a directory replacement with a symlink cannot redirect extraction outside the output root. See `docs/THREAT_MODEL.md` for the full threat model.
+* `--durability off|best-effort|on` — output file flush mode after extraction (default: `best-effort`; see `docs/DURABILITY.md`)
 * `--max-kdf-memory SIZE` — reject archives whose Argon2id memory cost exceeds SIZE (default: `2G`; covers all built-in KDF presets including `paranoid`)
 * `--max-kdf-iterations N` — reject archives whose Argon2id iteration count exceeds N (default: `4`)
 * `--max-kdf-parallelism N` — reject archives whose Argon2id parallelism exceeds N (default: `8`)
+
+Benchmark KDF presets on your hardware (no archive is created):
+
+```bash
+bseal benchmark-kdf
+```
 
 Current exit codes:
 
@@ -303,7 +334,14 @@ When changing crypto/container code:
 
 * [`IMPLEMENTATION_GUIDE.md`](IMPLEMENTATION_GUIDE.md) records design rules, implementation order, and testing requirements.
 * [`SECURITY_NOTES.md`](SECURITY_NOTES.md) records security assumptions and known hazards.
+* [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) — what BSEAL protects, what it leaks, attacker capabilities in scope, and non-goals.
 * [`docs/FORMAT.md`](docs/FORMAT.md) describes the archive/container format.
+* [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) — itemised pre-release blockers with status and proof requirements.
+* [`docs/FUZZING.md`](docs/FUZZING.md) — how to build and run fuzz targets, add corpus files, and minimize crashes.
+* [`docs/DURABILITY.md`](docs/DURABILITY.md) — what `--durability` guarantees, platform limits, and power-loss caveats.
+* [`docs/COVERAGE.md`](docs/COVERAGE.md) — how to build with coverage instrumentation and generate line/function reports.
+* [`docs/KDF_POLICY.md`](docs/KDF_POLICY.md) — Argon2id presets, runtime resource policy, recommended settings, and benchmarking.
+* [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) — deployment guide: passphrase quality, keyfile management, hardened extraction, swap/core-dump hardening.
 
 ## License
 

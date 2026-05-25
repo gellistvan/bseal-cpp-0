@@ -4,66 +4,180 @@ Items that must be resolved before BSEAL is used in a production deployment.
 These are derived from known limitations, pre-production TODOs, and audit gaps
 identified during development.
 
+**Rule**: a checklist item may be marked **DONE** only when a named test target or CI job
+proves it, or (for audit items) when an external review report is on file. Items without
+such proof must remain TODO or PARTIAL.
+
+---
+
 ## Cryptographic audit (blocker)
 
-- [ ] External cryptographic audit of the key schedule (`KeySchedule.cpp`):
-  HKDF-SHA-256 domain separation labels, key sizes, and output lengths.
-- [ ] External audit of the nonce derivation scheme (`derive_chunk_nonce`):
-  verify the prefix+counter design provides unique nonces across all
-  realistic workloads and archive sizes.
-- [ ] External audit of the AEAD AAD construction: confirm that binding
-  `public_header_hash || frame_header_bytes` as AAD is sufficient to prevent
-  chunk-reordering, cross-shard, and cross-archive ciphertext substitution.
-- [ ] External audit of the Argon2id parameter presets relative to current
-  hardware costs.  Re-evaluate `kArgon2MemoryKiBMin` and the `fast`,
-  `balanced`, `strong`, and `paranoid` presets.
-- [ ] Review side-channel exposure in `verify_shard_header_mac`,
-  `SecureBuffer`, and the AEAD tag comparison paths.
+- [ ] **TODO** — External cryptographic audit: key schedule domain separation
+  - **Owner**: crypto
+  - **Files**: `src/crypto/KeySchedule.cpp`, `src/crypto/Kdf.cpp`
+  - **Proof needed**: external audit report; no automated test can substitute for
+    expert review of HKDF-SHA-256 label uniqueness, key sizes, and output lengths.
 
-## Durability (io/AsyncWriter.cpp)
+- [ ] **TODO** — External cryptographic audit: nonce derivation
+  - **Owner**: crypto
+  - **Files**: `src/crypto/KeySchedule.cpp` (`derive_chunk_nonce`)
+  - **Proof needed**: external audit report confirming the prefix+counter design
+    provides unique nonces across all realistic workloads and archive sizes.
 
-- [ ] Replace the `out.flush()` call in `AsyncWriter` with a proper fsync
-  sequence to guarantee durable persistence after a write:
-  - POSIX: `out.flush()` then `fsync(fileno(out))`.
-  - Windows: `FlushFileBuffers(handle)`.
-  Standard C++ `flush()` reaches the OS page cache but does not guarantee
-  data survives a power failure.
+- [ ] **TODO** — External cryptographic audit: AEAD AAD construction
+  - **Owner**: crypto
+  - **Files**: `src/pipeline/EncryptPipeline.cpp`, `src/pipeline/DecryptPipeline.cpp`,
+    `src/io/ShardFrame.cpp`
+  - **Proof needed**: external audit report confirming that binding
+    `public_header_hash || frame_header_bytes` as AAD is sufficient to prevent
+    chunk-reordering, cross-shard, and cross-archive ciphertext substitution.
 
-## Memory locking
+- [ ] **TODO** — External cryptographic audit: Argon2id parameter presets
+  - **Owner**: crypto
+  - **Files**: `src/crypto/Kdf.hpp` (`kArgon2MemoryKiBMin`, `fast`, `balanced`,
+    `strong`, `paranoid` presets), `src/crypto/Kdf.cpp`
+  - **Proof needed**: external audit report with re-evaluation against current hardware
+    costs.
 
-- [ ] Wire `sodium_mlock()` / `mlock()` into `SecureBuffer` for key material
-  so that pages containing keys cannot be swapped out to disk.  Guard with a
-  build option since `mlock` requires elevated limits on some systems.
+- [ ] **TODO** — Side-channel review: timing-safe comparisons and key material exposure
+  - **Owner**: crypto
+  - **Files**: `src/io/ShardReader.cpp` (`verify_shard_header_mac`),
+    `src/crypto/SecureBuffer.cpp`, `src/crypto/AesGcmBackend.cpp`,
+    `src/crypto/XChaCha20Poly1305Backend.cpp`
+  - **Proof needed**: external or expert review; automated tests cannot detect timing
+    leaks.
+
+---
+
+## Durability
+
+- [x] **DONE** — `DurableFile` platform module (`src/platform/DurableFile.hpp/.cpp`)
+  implemented with three modes: `Off`, `BestEffort`, `On`. Integrated into
+  `ShardWriter::finish()` (flush each shard + output dir) and
+  `ArchiveReader::commit_temp_tree()` (flush each promoted file + output root).
+  `--durability=off|best-effort|on` CLI option wired to both encrypt and decrypt.
+  - **Proof**: `platform.DurableFile.*`, `io.ShardWriterDurability.*`,
+    `archive.ArchiveReaderDurability.*` tests all pass
+
+- [ ] **TODO** — Replace `out.flush()` in `AsyncWriter` with a proper fsync sequence
+  - **Owner**: io
+  - **Files**: `src/io/AsyncWriter.cpp` (line ~79; the NOTE comment names the fix)
+  - **Details**: The current `flush()` reaches the OS page cache but does not
+    guarantee durability within the streaming decrypt path. `DurableFile` covers
+    the finalization/promotion boundaries; this item covers intermediate AsyncWriter
+    flush calls during streaming decryption.
+  - **Proof needed**: `io.AsyncWriter.*` tests updated to verify fsync is called at
+    the correct boundary, or confirmed out-of-scope with a documented rationale.
+
+- [ ] **TODO** — Verify `--durability=on` on target production storage platforms
+  - **Owner**: infrastructure
+  - **Details**: Confirm that POSIX directory fsync succeeds on ext4, xfs, and btrfs
+    (the most common Linux production filesystems). Document any exceptions.
+    Windows directory flush is documented as unsupported by design (`flush_dir`
+    returns `false`).
+  - **Proof needed**: manual test or CI job on each target filesystem with
+    `--durability=on` returning exit 0.
+
+---
 
 ## Platform hardening
 
-- [ ] Verify that `ShardWriter` and `ShardReader` never hold a shard file open
-  across the `finish()` / verification boundary on Windows (file rename and
-  reopen semantics differ from POSIX).
-- [ ] Add Windows CI to catch MSVC-specific issues (SSO string behaviour,
-  `std::filesystem` path encoding, `FlushFileBuffers` durability).
+- [ ] **TODO** — Verify ShardWriter / ShardReader file-handle semantics on Windows
+  - **Owner**: io, platform
+  - **Files**: `src/io/ShardWriter.cpp`, `src/io/ShardReader.cpp`
+  - **Details**: confirm that no shard file is held open across the `finish()` /
+    verification boundary on Windows, where file rename and reopen semantics differ
+    from POSIX.
+  - **Proof needed**: Windows CI run with `bseal_io_gtests` passing.
+
+- [ ] **TODO** — Add CI (no CI is currently configured)
+  - **Owner**: infrastructure
+  - **Files**: `.github/workflows/` (does not yet exist)
+  - **Details**: at minimum, Linux Release + Debug+Sanitizers builds running all
+    CTest targets. Windows CI to catch MSVC-specific issues (SSO string behaviour,
+    `std::filesystem` path encoding, `FlushFileBuffers` durability).
+  - **Proof needed**: CI green badge on main/master branch.
+
+---
 
 ## Secret handling
 
-- [ ] Audit all `std::string` lifetimes that temporarily hold passphrase bytes
-  (specifically `KdfInput::passphrase_utf8`) for heap-residency after wipe.
-  Consider a custom allocator or platform-specific zeroing hooks.
-- [ ] Document the expected swap and core-dump configuration for production
-  deployments in the operator guide.
+- [x] **DONE** — `SecureBuffer` uses `sodium_malloc` for locked, guarded, swap-inhibited
+  storage; wipes full capacity before free
+  - **Owner**: crypto
+  - **Files**: `src/crypto/SecureBuffer.hpp`, `src/crypto/SecureBuffer.cpp`
+  - **Proof**: `crypto.SecureBuffer.*` in `bseal_crypto_gtests` — covers
+    `WipesBeforeFree`, `FailedAllocationThrows`, `AllocationFailureOnFromBytesThrows`,
+    `WipeZerosExistingContent`, and memory-hygiene tests using the test-hook allocator.
+
+- [x] **DONE** — `KdfInput::passphrase` is a `SecureBuffer` (not `std::string`);
+  Argon2id reads directly from locked memory with no `std::string` staging copy
+  - **Owner**: crypto
+  - **Files**: `src/crypto/Kdf.hpp` (field `SecureBuffer passphrase`),
+    `src/crypto/Kdf.cpp` (`derive_master_seed`)
+  - **Proof**: `crypto.Kdf.*` in `bseal_crypto_gtests`; `crypto.KeySchedule.*` in
+    `bseal_crypto_gtests`.
+
+- [x] **DONE** — Passphrase prompt is fail-closed: `platform::read_passphrase_prompt()`
+  uses POSIX termios / Windows `SetConsoleMode`; throws `InvalidArgument` if echo
+  cannot be suppressed; no silent echo fallback exists; POSIX headers are isolated
+  inside `PassphrasePrompt.cpp` behind platform guards
+  - **Owner**: platform
+  - **Files**: `src/platform/PassphrasePrompt.hpp`, `src/platform/PassphrasePrompt.cpp`,
+    `src/app/BsealApp.cpp`
+  - **Proof**: `platform.PassphrasePrompt.*` in `bseal_platform_gtests` — covers
+    success, mismatch, empty passphrase, echo-disable failure on first and second
+    prompt.
+
+- [x] **DONE** — `docs/OPERATOR_GUIDE.md` written; covers passphrase entropy, keyfile
+  generation and storage, `--passphrase-prompt` vs stdin, swap and core-dump hardening,
+  `ulimit -l` for mlock, cipher choice, padding, shard size, hardened extraction, and
+  backup/verification procedure
+  - **Owner**: documentation
+  - **Files**: `docs/OPERATOR_GUIDE.md`, `docs/KDF_POLICY.md`
+  - **Proof**: files exist, linked from `README.md` and `SECURITY_NOTES.md`. Requires
+    human review before production release.
+
+---
 
 ## Test coverage
 
-- [ ] Add fuzz targets for `parse_global_public_header`, `parse_shard_public_header`,
-  `parse_chunk_frame_header_v1`, and `parse_entry_metadata`.
-- [ ] Add fuzz targets for the `ArchiveReader::consume` / `finish` flow with
-  crafted plaintext streams.
-- [ ] Ensure the sanitizer build (`-DBSEAL_ENABLE_SANITIZERS=ON`) is run as
-  part of every CI pipeline, not just manually.
+- [x] **DONE** — Six fuzz targets implemented under `tests/fuzz/`; CTest smoke tests
+  registered as `fuzz.smoke.*`; build option `BSEAL_BUILD_FUZZERS=ON`
+  - **Targets**: `FuzzGlobalPublicHeader`, `FuzzShardPublicHeader`,
+    `FuzzChunkFrameHeader`, `FuzzRecordFormat`, `FuzzArchiveReader`,
+    `FuzzPathSanitizer`
+  - **Surfaces covered**: `parse_global_public_header`, `parse_shard_public_header`,
+    `parse_chunk_frame_header_v1`, `parse_record`, `encoded_record_size_if_complete`,
+    `parse_entry_metadata`, `ArchiveReader::consume`/`finish`,
+    `is_safe_relative_path`, `make_safe_output_path`
+  - **See**: `docs/FUZZING.md`
+  - **Proof**: `fuzz.smoke.*` CTest labels pass; `BSEAL_BUILD_FUZZERS=ON` build succeeds
+
+- [ ] **TODO** — Extended fuzzer runs (minimum wall-clock hours with libFuzzer or AFL++)
+  integrated into CI; no new crashes
+  - **Owner**: infrastructure
+  - **Files**: `tests/fuzz/`, `.github/workflows/` (does not yet exist),
+    `tests/fuzz/corpus/`
+  - **Proof needed**: CI job running each target for ≥1 h with no crashes reported.
+
+- [ ] **TODO** — Sanitizer build (`-DBSEAL_ENABLE_SANITIZERS=ON`) runs in CI on every
+  pull request
+  - **Owner**: infrastructure
+  - **Files**: `cmake/Sanitizers.cmake`, `.github/workflows/` (does not yet exist)
+  - **Proof needed**: CI job running `ctest --test-dir build-sani` with zero failures.
+
+---
 
 ## Documentation
 
-- [ ] Write an operator deployment guide covering: passphrase entropy guidance,
-  keyfile generation, KDF preset selection, swap/core-dump hardening, and the
-  `--hardened-extract` flag.
-- [ ] Add `docs/THREAT_MODEL.md` explicitly stating attacker capabilities and
-  non-goals (e.g. metadata leakage through file count and total size).
+- [x] **DONE** — `docs/OPERATOR_GUIDE.md` and `docs/KDF_POLICY.md` written; see Secret
+  handling → DONE item above for details.
+
+- [x] **DONE** — `docs/THREAT_MODEL.md` exists; states attacker capabilities, trust
+  boundaries, protected assets, metadata leakage, and non-goals
+  - **Owner**: documentation
+  - **Files**: `docs/THREAT_MODEL.md`
+  - **Proof**: file exists, linked from `README.md` and `SECURITY_NOTES.md`;
+    `scan.ReleaseChecklistConsistency` and `scan.DocsLanguage` in CTest catch future
+    regressions. Requires human review before production release.
