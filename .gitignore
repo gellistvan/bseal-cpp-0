@@ -1,5 +1,7 @@
 build/
 .claude
+.cache
+build-tsan/
 CLAUDE.md
 build-sani/
 cmake-build-*/
