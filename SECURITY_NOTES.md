@@ -72,6 +72,35 @@ extraction is discarded when the destructor runs without a successful `finish()`
 
 The allowed grammar is: `ArchiveBegin content* ArchiveEnd RandomPadding*`.
 
+## Decrypt commit invariant
+
+Before any decrypted output is promoted to the final destination, all four of the following conditions
+must hold — in this order:
+
+1. **Authenticated chunk stream**: every AEAD tag must have been verified by the crypto backend
+   (`decrypt_chunk`). A failing tag throws `AuthenticationFailed` and halts the pipeline before any
+   plaintext is consumed by `ArchiveReader`.
+
+2. **Ordered archive grammar**: `ArchiveReader::consume()` validates the record sequence
+   (`ArchiveBegin content* ArchiveEnd RandomPadding*`) as each plaintext byte arrives. A grammar
+   violation throws before any file is written to disk.
+
+3. **Total padded plaintext size check**: after the full plaintext stream is consumed,
+   `ordered_plaintext_consumer_main` compares `total_plaintext_bytes` against the authenticated
+   `padded_plaintext_size` from the public header — **before** calling `archive_reader.finish()`.
+   A mismatch throws `InvalidArgument` without promoting any output.
+
+4. **Output finalization**: `archive_reader.finish()` runs only when all three prior checks have
+   passed. It atomically promotes files from the temp tree to the final output directory. If `finish()`
+   is never called (due to an exception or pipeline failure), `~ArchiveReader()` removes the temp
+   directory, leaving the output root empty.
+
+This ordering means a malformed or tampered archive whose `padded_plaintext_size` does not match the
+actual decrypted stream length will never promote any output files. The check is enforced in
+`ordered_plaintext_consumer_main` in `src/pipeline/DecryptPipeline.cpp` and tested by
+`DecryptPipeline.RejectsMismatchedPaddedPlaintextSize` and `DecryptPipeline.FinishNotCalledOnSizeMismatch`
+in `tests/pipeline/TestDecryptPipeline.cpp`.
+
 ## Shard finalization invariant
 
 Every shard file must be self-consistent when fully written: the `GlobalPublicHeaderV1` bytes
