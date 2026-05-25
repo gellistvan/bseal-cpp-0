@@ -849,9 +849,11 @@ TEST(TestShardReader, RejectsConstructionWithAllZeroHeaderAuthKey) {
     auto shards = bseal::io::ShardReader::discover(dir);
     ASSERT_EQ(shards.size(), 1u);
 
+    // SecureBuffer(size_t) uses sodium_malloc which initialises to 0xdb, not 0x00.
+    // Construct an explicitly zeroed key so the all-zero guard is actually triggered.
     EXPECT_THROW(
         { bseal::io::ShardReader reader(std::move(shards),
-              bseal::crypto::SecureBuffer(32)); },  // 32 zero bytes
+              bseal::crypto::SecureBuffer(bseal::Bytes(32, bseal::Byte{0}))); },
         bseal::InvalidArgument);
 
     std::filesystem::remove_all(dir);

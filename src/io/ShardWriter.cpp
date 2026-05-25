@@ -377,6 +377,20 @@ void ShardWriter::finish() {
             fs.first_chunk_index,
             fs.chunk_count,
             fs.payload_len);
+
+        // Close before fsync so the kernel flushes the write-back for this fd.
+        rw.close();
+
+        if (options_.durability_hooks.flush_file &&
+            options_.durability_mode != platform::DurabilityMode::Off) {
+            options_.durability_hooks.flush_file(fs.path, options_.durability_mode);
+        }
+    }
+
+    // Flush the output directory so the shard directory entries are durable.
+    if (options_.durability_hooks.flush_dir &&
+        options_.durability_mode != platform::DurabilityMode::Off) {
+        options_.durability_hooks.flush_dir(options_.output_dir, options_.durability_mode);
     }
 
     finished_ = true;

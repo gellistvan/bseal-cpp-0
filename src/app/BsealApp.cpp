@@ -18,6 +18,7 @@
 #include "io/ShardWriter.hpp"
 #include "pipeline/DecryptPipeline.hpp"
 #include "pipeline/EncryptPipeline.hpp"
+#include "platform/DurableFile.hpp"
 #include "platform/PassphrasePrompt.hpp"
 #include "platform/Random.hpp"
 
@@ -519,6 +520,8 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
     // needs chunk_encryption_key and nonce_derivation_key.
     shard_options.header_authentication_key  = std::move(keys.header_authentication_key);
     shard_options.per_shard_public_header_hashes = per_shard_hashes;
+    shard_options.durability_mode  = options.durability_mode;
+    shard_options.durability_hooks = bseal::platform::DurabilityHooks::production();
 
     bseal::io::ShardWriter shard_writer(std::move(shard_options));
 
@@ -606,12 +609,14 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
             validation);
 
         bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{
-            options.output,
-            options.overwrite,
-            true,
-            true,
-            false,
-            to_archive_hardened_mode(options.hardened_extract),
+            .output_root          = options.output,
+            .overwrite_existing   = options.overwrite,
+            .restore_timestamps   = true,
+            .restore_permissions  = true,
+            .allow_symlinks       = false,
+            .hardened_extract_mode= to_archive_hardened_mode(options.hardened_extract),
+            .durability_mode      = options.durability_mode,
+            .durability_hooks     = bseal::platform::DurabilityHooks::production(),
         });
 
         bseal::pipeline::DecryptPipelineOptions pipeline_options;
