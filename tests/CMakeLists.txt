@@ -2,6 +2,7 @@ add_executable(bseal_smoke_tests smoke_tests.cpp)
 target_link_libraries(bseal_smoke_tests PRIVATE bseal::core)
 bseal_set_project_warnings(bseal_smoke_tests)
 bseal_enable_sanitizers_if_requested(bseal_smoke_tests)
+bseal_enable_coverage_if_requested(bseal_smoke_tests)
 add_test(NAME bseal_smoke_tests COMMAND bseal_smoke_tests)
 
 find_package(GTest QUIET)
@@ -16,6 +17,7 @@ else()
     target_compile_features(bseal_minigtest_main PUBLIC cxx_std_20)
     bseal_set_project_warnings(bseal_minigtest_main)
     bseal_enable_sanitizers_if_requested(bseal_minigtest_main)
+bseal_enable_coverage_if_requested(bseal_minigtest_main)
     set(BSEAL_GTEST_LIBS bseal_minigtest_main)
 endif()
 
@@ -25,6 +27,7 @@ add_executable(bseal_common_gtests
 target_link_libraries(bseal_common_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_common_gtests)
 bseal_enable_sanitizers_if_requested(bseal_common_gtests)
+bseal_enable_coverage_if_requested(bseal_common_gtests)
 
 add_executable(bseal_platform_gtests
     platform/TestRandom.cpp
@@ -37,6 +40,7 @@ add_executable(bseal_platform_gtests
 target_link_libraries(bseal_platform_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_platform_gtests)
 bseal_enable_sanitizers_if_requested(bseal_platform_gtests)
+bseal_enable_coverage_if_requested(bseal_platform_gtests)
 
 # ---------------------------------------------------------------------------
 # Config header: fixture directory path for format-v1 KAT tests
@@ -70,6 +74,7 @@ target_include_directories(bseal_io_gtests
 target_link_libraries(bseal_io_gtests PRIVATE bseal::core blake3::blake3 ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_io_gtests)
 bseal_enable_sanitizers_if_requested(bseal_io_gtests)
+bseal_enable_coverage_if_requested(bseal_io_gtests)
 
 add_executable(bseal_archive_gtests
         archive/TestPublicHeaderAuth.cpp
@@ -86,6 +91,7 @@ add_executable(bseal_archive_gtests
 target_link_libraries(bseal_archive_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_archive_gtests)
 bseal_enable_sanitizers_if_requested(bseal_archive_gtests)
+bseal_enable_coverage_if_requested(bseal_archive_gtests)
 
 add_executable(bseal_crypto_gtests
         crypto/TestSecureBuffer.cpp
@@ -99,6 +105,7 @@ add_executable(bseal_crypto_gtests
 target_link_libraries(bseal_crypto_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_crypto_gtests)
 bseal_enable_sanitizers_if_requested(bseal_crypto_gtests)
+bseal_enable_coverage_if_requested(bseal_crypto_gtests)
 bseal_enable_tsan_if_requested(bseal_crypto_gtests)
 
 add_executable(bseal_pipeline_gtests
@@ -111,6 +118,7 @@ add_executable(bseal_pipeline_gtests
 target_link_libraries(bseal_pipeline_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_pipeline_gtests)
 bseal_enable_sanitizers_if_requested(bseal_pipeline_gtests)
+bseal_enable_coverage_if_requested(bseal_pipeline_gtests)
 bseal_enable_tsan_if_requested(bseal_pipeline_gtests)
 
 if (GTest_FOUND)
@@ -163,6 +171,7 @@ add_executable(bseal_perf_gtests
 target_link_libraries(bseal_perf_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_perf_gtests)
 bseal_enable_sanitizers_if_requested(bseal_perf_gtests)
+bseal_enable_coverage_if_requested(bseal_perf_gtests)
 
 if (GTest_FOUND)
     include(GoogleTest)
@@ -210,6 +219,7 @@ target_link_libraries(bseal_integration_gtests PRIVATE ${BSEAL_GTEST_LIBS})
 target_compile_features(bseal_integration_gtests PRIVATE cxx_std_20)
 bseal_set_project_warnings(bseal_integration_gtests)
 bseal_enable_sanitizers_if_requested(bseal_integration_gtests)
+bseal_enable_coverage_if_requested(bseal_integration_gtests)
 
 if (GTest_FOUND)
     include(GoogleTest)

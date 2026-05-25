@@ -84,6 +84,26 @@ cmake --build build-sani -j
 ctest --test-dir build-sani --output-on-failure
 ```
 
+For line and function coverage (requires GCC or Clang, and `pip3 install gcovr`):
+
+```bash
+cmake -S . -B build-coverage \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBSEAL_ENABLE_COVERAGE=ON
+
+cmake --build build-coverage -j
+ctest --test-dir build-coverage --output-on-failure
+
+# Text summary (line % / function % printed to terminal)
+cmake --build build-coverage --target coverage-summary
+
+# Full HTML report
+cmake --build build-coverage --target coverage-html
+# Open: build-coverage/coverage-html/index.html
+```
+
+See [`docs/COVERAGE.md`](docs/COVERAGE.md) for details, toolchain notes, and CI guidance.
+
 Optional install rules can be enabled with:
 
 ```bash
@@ -313,6 +333,7 @@ When changing crypto/container code:
 * [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) — itemised pre-release blockers with status and proof requirements.
 * [`docs/FUZZING.md`](docs/FUZZING.md) — how to build and run fuzz targets, add corpus files, and minimize crashes.
 * [`docs/DURABILITY.md`](docs/DURABILITY.md) — what `--durability` guarantees, platform limits, and power-loss caveats.
+* [`docs/COVERAGE.md`](docs/COVERAGE.md) — how to build with coverage instrumentation and generate line/function reports.
 
 ## License
 
