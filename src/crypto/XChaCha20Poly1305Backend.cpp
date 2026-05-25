@@ -39,7 +39,7 @@ std::size_t XChaCha20Poly1305Backend::tag_size() const noexcept {
     return kAeadTagBytes;
 }
 
-Bytes XChaCha20Poly1305Backend::encrypt_chunk(const EncryptChunkRequest& request) {
+Bytes XChaCha20Poly1305Backend::encrypt_chunk(const EncryptChunkRequest& request) const {
     ensure_sodium_initialized();
 
     validate_aead_request(request.key, request.nonce, key_size(), nonce_size());
@@ -69,7 +69,7 @@ Bytes XChaCha20Poly1305Backend::encrypt_chunk(const EncryptChunkRequest& request
     return ciphertext;
 }
 
-Bytes XChaCha20Poly1305Backend::decrypt_chunk(const DecryptChunkRequest& request) {
+Bytes XChaCha20Poly1305Backend::decrypt_chunk(const DecryptChunkRequest& request) const {
     ensure_sodium_initialized();
 
     validate_aead_request(request.key, request.nonce, key_size(), nonce_size());

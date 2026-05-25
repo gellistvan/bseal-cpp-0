@@ -101,7 +101,7 @@ void reader_main(
 
 void decryption_worker_main(
     const DecryptPipelineOptions& options,
-    crypto::CryptoBackend& backend,
+    const crypto::CryptoBackend& backend,
     crypto::ExpandedKeys& keys,
     WorkQueue<CipherChunk>& decrypt_queue,
     WorkQueue<PlainChunk>& plaintext_queue,
@@ -195,19 +195,19 @@ void ordered_plaintext_consumer_main(
             throw Error("decrypt pipeline ended with missing plaintext chunks");
         }
 
-        if (!failure_state.failed()) {
-            archive_reader.finish();
-        }
-
-        // Verify total decrypted bytes match the public header's padded_plaintext_size.
-        // This catches encryptor bugs; the header MAC guarantees the expected value is authentic.
+        // Verify total decrypted bytes against the authenticated padded_plaintext_size BEFORE
+        // calling archive_reader.finish().  finish() promotes output from the temp tree to
+        // the final destination; no promotion must occur if the length invariant is violated.
+        // The header MAC guarantees padded_plaintext_size is authentic.
         if (!failure_state.failed() &&
             expected_plaintext_bytes != 0 &&
             total_plaintext_bytes != expected_plaintext_bytes) {
             throw InvalidArgument(
-                "decrypted plaintext length (" + std::to_string(total_plaintext_bytes) +
-                " bytes) does not match public header padded_plaintext_size (" +
-                std::to_string(expected_plaintext_bytes) + " bytes)");
+                "decrypted plaintext length does not match public header padded_plaintext_size");
+        }
+
+        if (!failure_state.failed()) {
+            archive_reader.finish();
         }
     } catch (...) {
         failure_state.record(std::current_exception());

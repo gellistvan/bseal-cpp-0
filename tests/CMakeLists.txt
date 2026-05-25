@@ -30,6 +30,7 @@ add_executable(bseal_platform_gtests
     platform/TestRandom.cpp
     platform/TestMemoryLock.cpp
     platform/TestCpuFeatures.cpp
+    platform/TestPassphrasePrompt.cpp
 )
 
 target_link_libraries(bseal_platform_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
@@ -89,21 +90,25 @@ add_executable(bseal_crypto_gtests
         crypto/TestXChaCha20Poly1305Backend.cpp
         crypto/TestKdf.cpp
         crypto/TestKeySchedule.cpp
+        crypto/TestCryptoBackendConcurrency.cpp
 )
 
 target_link_libraries(bseal_crypto_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_crypto_gtests)
 bseal_enable_sanitizers_if_requested(bseal_crypto_gtests)
+bseal_enable_tsan_if_requested(bseal_crypto_gtests)
 
 add_executable(bseal_pipeline_gtests
         pipeline/TestWorkQueue.cpp
         pipeline/TestEncryptPipeline.cpp
         pipeline/TestDecryptPipeline.cpp
+        pipeline/TestMultiWorkerPipeline.cpp
 )
 
 target_link_libraries(bseal_pipeline_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_pipeline_gtests)
 bseal_enable_sanitizers_if_requested(bseal_pipeline_gtests)
+bseal_enable_tsan_if_requested(bseal_pipeline_gtests)
 
 if (GTest_FOUND)
     include(GoogleTest)
@@ -212,5 +217,52 @@ if (GTest_FOUND)
     )
 else()
     add_test(NAME bseal_integration_gtests COMMAND bseal_integration_gtests)
+endif()
+
+# ---------------------------------------------------------------------------
+# Repository scanner: test-only crypto bypass guardrail
+# ---------------------------------------------------------------------------
+#
+# scan.UnsafeBypassGuard  — verifies that unsafe test-only bypass tokens
+#   (UnsafeSkipHeaderAuthenticationForTests, UnsafeAllowMissingShardAadForTests)
+#   do not appear in production source files outside their declaration sites
+#   in src/io/.
+#
+# scan.UnsafeBypassGuardSelfTest — runs the scanner's own unit tests,
+#   including a negative fixture that proves the scanner detects violations.
+#
+# Both tests run with every `ctest` invocation.  They require Python 3 and
+# have no build-system dependencies (they inspect the source tree directly).
+# ---------------------------------------------------------------------------
+
+find_package(Python3 QUIET COMPONENTS Interpreter)
+
+if (Python3_FOUND)
+    set(BSEAL_SCANNER_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/scan_unsafe_bypasses.py")
+    set(BSEAL_SCANNER_SELFTEST "${CMAKE_SOURCE_DIR}/tests/scripts/test_scan_unsafe_bypasses.py")
+
+    add_test(
+        NAME scan.UnsafeBypassGuard
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_SCANNER_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.UnsafeBypassGuard PROPERTIES
+        LABELS "scan"
+    )
+
+    add_test(
+        NAME scan.UnsafeBypassGuardSelfTest
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_SCANNER_SELFTEST}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.UnsafeBypassGuardSelfTest PROPERTIES
+        LABELS "scan"
+    )
+else()
+    message(WARNING
+        "Python 3 not found; scan.UnsafeBypassGuard tests will not be registered. "
+        "Install Python 3 to enable the unsafe bypass guardrail."
+    )
 endif()
 

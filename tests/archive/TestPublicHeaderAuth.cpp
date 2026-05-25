@@ -4,6 +4,8 @@
 #include "io/ShardFrame.hpp"
 #include "crypto/Kdf.hpp"
 #include "crypto/KeySchedule.hpp"
+#include "crypto/SecureBuffer.hpp"
+#include "common/Types.hpp"
 
 #include <gtest/gtest.h>
 
@@ -11,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <thread>
 
 namespace {
@@ -122,7 +125,7 @@ bseal::io::ShardPublicHeaderV1 make_shard_header(
 
 bseal::crypto::ExpandedKeys derive_keys(
     const bseal::io::GlobalPublicHeaderV1& gh,
-    std::string passphrase,
+    std::string_view passphrase,
     const std::vector<fs::path>& keyfiles)
 {
     bseal::crypto::KdfParams params{};
@@ -132,8 +135,10 @@ bseal::crypto::ExpandedKeys derive_keys(
     params.parallelism   = gh.argon2_parallelism;
     params.output_bytes  = bseal::crypto::kArgon2OutputBytesDefault;
 
+    const auto* pb = reinterpret_cast<const bseal::Byte*>(passphrase.data());
     bseal::crypto::KdfInput input{};
-    input.passphrase_utf8 = std::move(passphrase);
+    input.passphrase      = bseal::crypto::SecureBuffer(
+                                bseal::Bytes(pb, pb + passphrase.size()));
     input.keyfiles        = keyfiles;
     input.salt            = gh.kdf_salt;
     input.archive_id      = gh.archive_id;

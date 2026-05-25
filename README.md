@@ -149,9 +149,21 @@ Keyfile order matters: the archive will only decrypt when exactly the same keyfi
 are supplied in exactly the same order. Adding, removing, or reordering a keyfile
 produces a different derived key and will fail authentication (exit code 3).
 
-If `--passphrase-prompt` is omitted, BSEAL reads one passphrase line from standard input.
+**`--passphrase-prompt` mode** (recommended for interactive use):
 
-With `--passphrase-prompt`, it asks twice and rejects mismatches.
+* Requires a real terminal (TTY). BSEAL uses POSIX `termios` on Linux/macOS or
+  `SetConsoleMode` on Windows to disable echo before reading.
+* If echo cannot be disabled (e.g. stdin is a pipe, not a terminal), BSEAL exits
+  with an error. There is no silent fallback to visible passphrase input.
+* Asks for the passphrase twice and rejects mismatches.
+
+**Stdin mode** (non-interactive / scripted use):
+
+* When `--passphrase-prompt` is omitted, BSEAL reads one passphrase line from
+  standard input. Echo is not suppressed — the caller is responsible for ensuring
+  the terminal or pipe is secure (e.g. `echo pass | bseal encrypt ...` where the
+  shell history has been cleared, or via a secrets manager).
+* An empty passphrase is rejected.
 
 ## Supported options
 
@@ -179,6 +191,10 @@ Encrypt-only options:
 Decrypt-only options:
 
 * `--overwrite`, allows restoring into an existing non-empty output directory
+* **Failure cleanup**: if decrypt fails (wrong passphrase, tampered archive, I/O error, etc.) and the
+  output directory did not exist before this invocation, BSEAL removes that empty directory so no
+  misleading artifact is left behind. If the output directory already existed before decrypt started,
+  it is always preserved regardless of outcome — BSEAL never recursively deletes user-created directories.
 * `--hardened-extract auto|on|off` — extraction filesystem safety mode (default: `auto`)
   * `auto`: use the hardened POSIX backend when available (Linux/macOS); fall back to the portable backend on other platforms
   * `on`: require the hardened POSIX backend; fail immediately (exit 1) if the platform does not support it

@@ -28,7 +28,7 @@ The skeleton avoids hard dependencies so it can compile anywhere. Recommended pr
 The following order was used to build BSEAL. It remains the recommended order for fresh ports or significant refactors.
 
 1. `platform/Random` using the OS CSPRNG.
-2. `crypto/SecureBuffer` memory locking and explicit wipe verification.
+2. `crypto/SecureBuffer` — sodium_malloc-backed locked memory with fail-closed allocation, guard pages, and full-capacity zeroing before free.  Test hooks (`secure_buffer_set_alloc_for_tests`) allow deterministic failure injection and wipe-before-free observation without sodium overhead.
 3. `archive/RecordFormat` serializer/deserializer with fuzz tests.
 4. `archive/PathSanitizer` robust cross-platform extraction safety tests.
 5. `crypto/Kdf` with Argon2id, BLAKE3 keyfile hashing, HKDF expansion.
@@ -164,10 +164,45 @@ Used by: `archive/RecordFormat.cpp`, `archive/ArchiveWriter.cpp`, `io/ShardFrame
 defined in `Kdf.cpp` and shared by `KeySchedule.cpp`. Both callers derive domain-separated
 sub-keys from the same master seed using different `info` strings.
 
-### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition
+### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition and concurrency contract
 
 `validate_aead_request(key, nonce, expected_key_size, expected_nonce_size)` is the shared
 inline guard used by both AEAD backends before any OpenSSL or libsodium call.
+
+#### CryptoBackend concurrency contract
+
+`encrypt_chunk` and `decrypt_chunk` are declared `const` at the interface level. This is a
+hard-enforced concurrency contract: the compiler rejects any implementation that writes to a
+non-mutable member variable, making it impossible to accidentally introduce shared mutable state.
+
+Both production backends satisfy this by design:
+- **`XChaCha20Poly1305Backend`** — calls `crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt`
+  from libsodium directly; no state between calls.
+- **`AesGcmBackend`** — creates a fresh `EVP_CIPHER_CTX` (via `make_cipher_ctx()`) on each
+  call and destroys it before returning; no member `EVP_CIPHER_CTX`.
+
+Both encrypt and decrypt pipelines pass a single `const CryptoBackend&` to all worker threads,
+relying on this contract for safe concurrent use without any per-worker locking or copying.
+
+A `CryptoBackend` implementation that requires per-call mutable state (e.g. a custom
+streaming cipher that must maintain a counter across calls) MUST NOT store that state as a
+member variable. Either allocate it locally per call, or redesign to be per-worker (see
+Option B in SECURITY_NOTES.md if per-worker ownership becomes necessary in the future).
+
+#### ThreadSanitizer build
+
+To verify the concurrency contract with TSan:
+
+```bash
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DBSEAL_ENABLE_TSAN=ON
+cmake --build build-tsan -j
+ctest --test-dir build-tsan --output-on-failure
+```
+
+`BSEAL_ENABLE_TSAN` and `BSEAL_ENABLE_SANITIZERS` (ASan/UBSan) are mutually exclusive.
+The concurrent stress tests in `tests/crypto/TestCryptoBackendConcurrency.cpp` and the
+multi-worker pipeline tests in `tests/pipeline/TestMultiWorkerPipeline.cpp` are the primary
+targets for TSan coverage.
 
 ### `src/common/Endian.hpp`
 
@@ -191,10 +226,43 @@ Used by: `archive/RecordFormat.cpp`, `archive/ArchiveWriter.cpp`, `io/ShardFrame
 defined in `Kdf.cpp` and shared by `KeySchedule.cpp`. Both callers derive domain-separated
 sub-keys from the same master seed using different `info` strings.
 
-### `src/crypto/CryptoBackend.hpp` — shared AEAD pre-condition
+## Test-only crypto bypasses are protected by a repository scanner
 
-`validate_aead_request(key, nonce, expected_key_size, expected_nonce_size)` is the shared
-inline guard used by both AEAD backends before any OpenSSL or libsodium call.
+Two tag types exist solely to enable tests that need to bypass production
+authentication checks:
+
+| Tag | Declared in | Purpose |
+|---|---|---|
+| `UnsafeSkipHeaderAuthenticationForTests` | `src/io/ShardReader.hpp` | Construct a `ShardReader` without verifying shard header MACs |
+| `UnsafeAllowMissingShardAadForTests` | `src/io/ShardWriter.hpp` | Construct a `ShardWriter` without requiring per-shard AAD entries |
+
+These tags are named-type parameters — passing one requires writing its full
+name explicitly, making accidental use hard. A repository scanner enforces
+this at the CI level:
+
+**Scanner**: `tests/scripts/scan_unsafe_bypasses.py`
+
+Runs at every `ctest` invocation as `scan.UnsafeBypassGuard`. It walks all
+C++ source files under `src/` and fails if any unsafe token appears outside
+the explicitly allowed declaration/implementation files in `src/io/`.
+
+**Allowed locations** (where the scanner will not flag the token):
+- `src/io/ShardReader.hpp` and `src/io/ShardReader.cpp` — declaration and constructor
+- `src/io/ShardWriter.hpp` and `src/io/ShardWriter.cpp` — declaration and constructor
+- `tests/` — all test code
+- `*.md` — documentation files
+
+**Disallowed locations** (flagged as a hard error):
+- `src/app/`, `src/pipeline/`, `src/crypto/`, `src/archive/`, or any other `src/` path not in the allow-list
+
+**Self-test**: `tests/scripts/test_scan_unsafe_bypasses.py` runs as
+`scan.UnsafeBypassGuardSelfTest` and includes a negative fixture — a fake
+production file containing an unsafe token — to prove the scanner actually
+detects violations.
+
+**Adding a new bypass tag**: declare the struct in `src/io/`, add both its
+header and implementation file to `ALLOWED_SRC_FILES` in the scanner script,
+and add the token name to `UNSAFE_TOKENS`.
 
 ## Malformed input coverage
 

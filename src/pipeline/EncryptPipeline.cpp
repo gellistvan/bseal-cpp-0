@@ -264,7 +264,7 @@ void producer_main(
 
 void encryption_worker_main(
     const EncryptPipelineOptions& options,
-    crypto::CryptoBackend& backend,
+    const crypto::CryptoBackend& backend,
     crypto::ExpandedKeys& keys,
     WorkQueue<PlainChunk>& encrypt_queue,
     WorkQueue<CipherChunk>& write_queue,

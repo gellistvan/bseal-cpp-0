@@ -72,6 +72,46 @@ extraction is discarded when the destructor runs without a successful `finish()`
 
 The allowed grammar is: `ArchiveBegin content* ArchiveEnd RandomPadding*`.
 
+## Decrypt commit invariant
+
+Before any decrypted output is promoted to the final destination, all four of the following conditions
+must hold — in this order:
+
+1. **Authenticated chunk stream**: every AEAD tag must have been verified by the crypto backend
+   (`decrypt_chunk`). A failing tag throws `AuthenticationFailed` and halts the pipeline before any
+   plaintext is consumed by `ArchiveReader`.
+
+2. **Ordered archive grammar**: `ArchiveReader::consume()` validates the record sequence
+   (`ArchiveBegin content* ArchiveEnd RandomPadding*`) as each plaintext byte arrives. A grammar
+   violation throws before any file is written to disk.
+
+3. **Total padded plaintext size check**: after the full plaintext stream is consumed,
+   `ordered_plaintext_consumer_main` compares `total_plaintext_bytes` against the authenticated
+   `padded_plaintext_size` from the public header — **before** calling `archive_reader.finish()`.
+   A mismatch throws `InvalidArgument` without promoting any output.
+
+4. **Output finalization**: `archive_reader.finish()` runs only when all three prior checks have
+   passed. It atomically promotes files from the temp tree to the final output directory. If `finish()`
+   is never called (due to an exception or pipeline failure), `~ArchiveReader()` removes the temp
+   directory, leaving the output root empty.
+
+5. **Output directory cleanup**: after the pipeline fails, `BsealApp::decrypt()` removes the output
+   directory if and only if this invocation created it (it did not exist before `decrypt` was called)
+   and it is now empty. `std::filesystem::remove` is used — it refuses non-empty directories — so
+   pre-existing user data is never touched. If the output directory existed before decrypt started,
+   it is left as-is regardless of outcome.
+
+This ordering means a malformed or tampered archive whose `padded_plaintext_size` does not match the
+actual decrypted stream length will never promote any output files, and a failed decrypt will leave
+no misleading empty directory behind. The pipeline check is enforced in
+`ordered_plaintext_consumer_main` in `src/pipeline/DecryptPipeline.cpp` and tested by
+`DecryptPipeline.RejectsMismatchedPaddedPlaintextSize` and `DecryptPipeline.FinishNotCalledOnSizeMismatch`
+in `tests/pipeline/TestDecryptPipeline.cpp`. The output-directory cleanup is in `BsealApp::decrypt()`
+and tested by the `BlackBoxCli.WrongPassphrase*`, `BlackBoxCli.WrongKeyfile*`,
+`BlackBoxCli.ModifiedCiphertext*`, `BlackBoxCli.TamperedShardPublicHeader*`,
+`BlackBoxCli.FailedDecryptPreservesPreExistingEmptyOutputDir`, and
+`BlackBoxCli.FailedDecryptWithOverwritePreservesPreExistingFiles` integration tests.
+
 ## Shard finalization invariant
 
 Every shard file must be self-consistent when fully written: the `GlobalPublicHeaderV1` bytes
@@ -249,6 +289,40 @@ Format stability is **not** the same as cryptographic soundness. The following r
 
 Until an audit is completed, this implementation should be treated as a research and educational tool, not a production secret-protection system.
 
+## CryptoBackend concurrency contract
+
+Both `EncryptPipeline` and `DecryptPipeline` share a single `CryptoBackend` instance across all
+worker threads without any mutex around `encrypt_chunk` / `decrypt_chunk` calls.  This is safe
+because:
+
+1. **Interface-level enforcement**: `encrypt_chunk` and `decrypt_chunk` are declared `const` on
+   `CryptoBackend`. The compiler statically rejects any implementation that writes to a non-mutable
+   member, making it impossible to accidentally introduce shared mutable state.
+
+2. **Both production backends are fully stateless**:
+   - `XChaCha20Poly1305Backend` calls libsodium directly; all working state is on the call stack.
+   - `AesGcmBackend` allocates a fresh `EVP_CIPHER_CTX` per call and destroys it before returning;
+     no `EVP_CIPHER_CTX` member variable exists.
+
+3. **libsodium thread safety**: `crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt` are
+   documented as thread-safe after `sodium_init()` has been called (which is enforced by
+   `ensure_sodium_initialized()` before each call).
+
+4. **OpenSSL thread safety**: OpenSSL 1.1+ is thread-safe for `EVP_*` operations that use
+   independent `EVP_CIPHER_CTX` objects. `AesGcmBackend` creates one `EVP_CIPHER_CTX` per call
+   so no shared mutable state exists.
+
+**Adding a new backend**: A backend MUST NOT store per-call mutable state as a member variable
+(e.g. a cached `EVP_CIPHER_CTX`, a running counter, or an output buffer). If per-call state is
+needed, allocate it as a local variable inside `encrypt_chunk` / `decrypt_chunk`. The `const`
+declaration on those methods enforces this at compile time.
+
+**ThreadSanitizer coverage**: `tests/crypto/TestCryptoBackendConcurrency.cpp` stress-tests
+both backends under 8–32 concurrent threads. `tests/pipeline/TestMultiWorkerPipeline.cpp`
+verifies deterministic output for both backends with 1, 2, and 4 pipeline workers. Build with
+`-DBSEAL_ENABLE_TSAN=ON` (separate from `-DBSEAL_ENABLE_SANITIZERS`) to run these tests under
+ThreadSanitizer.
+
 ## Integer overflow hardening
 
 Size arithmetic in the encrypt path (padding computation, chunk-count calculation, shard payload
@@ -267,32 +341,75 @@ intentionally left unchecked (e.g. bitfield masks and loop counters) via UBSan.
 
 Passphrase and key material flows through the following wipe-on-destruct types:
 
-- **`SecureBuffer`** (`src/crypto/SecureBuffer.hpp`): move-only; calls `sodium_memzero()` on
-  its backing allocation in the destructor, move-assignment operator, and explicit `wipe()`.
-  All four `ExpandedKeys` members (`chunk_encryption_key`, `manifest_key`,
-  `header_authentication_key`, `nonce_derivation_key`) are `SecureBuffer` values.
+- **`SecureBuffer`** (`src/crypto/SecureBuffer.hpp`): move-only; backed by `sodium_malloc()`
+  which provides guard pages, `mlock()` (swap-prevention), and mprotect'd guard regions.
+  The entire allocated capacity is zeroed with `sodium_memzero()` before `sodium_free()` in
+  the destructor and move-assignment operator.  An explicit `wipe()` zeros the live bytes
+  in-place without freeing the allocation.  All four `ExpandedKeys` members
+  (`chunk_encryption_key`, `manifest_key`, `header_authentication_key`, `nonce_derivation_key`)
+  are `SecureBuffer` values.
+  Allocation failure (lock limit exceeded or OOM) throws `bseal::Error`; there is no silent
+  fallback to ordinary heap memory.
 
 - **`ShardWriterOptions::header_authentication_key`** and **`ShardReader::auth_key_`** are both
   `SecureBuffer`, so they are wiped when the ShardWriter or ShardReader is destroyed.
 
 Passphrase input flow:
-1. `obtain_passphrase()` reads the passphrase into a temporary `std::string` staging buffer,
-   transfers the bytes into a `SecureBuffer`, and calls `secure_wipe_string()` on the
-   staging string before returning.  In the double-prompt path the confirm string is wiped
-   whether or not the passphrases match.
-2. `derive_expanded_keys()` accepts a `SecureBuffer` passphrase, assigns its bytes to a
-   short-lived `KdfInput::passphrase_utf8 std::string` (needed by the Argon2id API), then
-   calls `wipe()` on the `SecureBuffer` immediately.  The string is wiped with
-   `secure_wipe_string()` immediately after `derive_master_seed()` returns.
+
+1. **Terminal echo suppression** (`--passphrase-prompt`): `platform::read_passphrase_prompt()`
+   calls the platform terminal reader (`src/platform/PassphrasePrompt.cpp`).
+   - On POSIX: `tcgetattr` saves the current terminal attributes; `tcsetattr` clears the
+     `ECHO` flag.  If either syscall fails, the function throws `InvalidArgument` and does
+     not read any passphrase.  There is no silent fallback to visible input.
+   - On Windows: `GetConsoleMode` / `SetConsoleMode` clear `ENABLE_ECHO_INPUT`.  Same
+     fail-closed contract.
+   - On other platforms: `NotImplemented` is thrown.
+   - The passphrase is read twice; the confirm buffer is wiped (via `secure_wipe_string`)
+     before the mismatch check throws, so it is always zeroed.
+
+2. **Stdin mode** (no `--passphrase-prompt`): `platform::read_passphrase_from_stdin()` reads
+   one line without echo suppression.  This path is documented as non-interactive; callers
+   are responsible for securing the input channel.
+
+3. **SecureBuffer staging**: both paths call `to_secure_buffer()` inside
+   `PassphrasePrompt.cpp`, which copies bytes into `sodium_malloc` storage and calls
+   `secure_wipe_string()` on the `std::string` immediately.  The `std::string` is on the
+   stack or a small-string-optimized inline buffer; the wipe covers `s.data()` up to
+   `s.size()`.
+
+4. `derive_expanded_keys()` moves the `SecureBuffer` directly into `KdfInput::passphrase`.
+   Argon2id receives `passphrase.data()` and `passphrase.size()` from the locked allocation
+   with no intermediate `std::string` copy.  `input.passphrase.wipe()` is called immediately
+   after `derive_master_seed()` returns; the `KdfInput` destructor zeroes any residual bytes
+   on scope exit.
+
+**Architectural isolation**: `<termios.h>` and `<unistd.h>` (POSIX) and `<windows.h>`
+(Windows) are included only in `src/platform/PassphrasePrompt.cpp`, behind the appropriate
+platform guards.  No app-layer or pipeline-layer source includes these headers directly.  The
+injectable `TerminalLineReader` function type enables unit tests to exercise mismatch, empty,
+and echo-failure paths without a real terminal.
+
+### sodium_malloc properties
+
+`sodium_malloc(n)` allocates memory with the following guarantees beyond a plain `malloc`:
+
+- **Guard pages**: one no-access page is placed immediately before and after the allocation.
+  Any out-of-bounds read or write triggers a fault (SIGSEGV/SIGBUS) rather than silent
+  corruption.
+- **mlock**: the backing pages are locked into RAM via `mlock(2)`, preventing the OS from
+  swapping them to disk.  On Linux this consumes the `RLIMIT_MEMLOCK` resource limit.
+- **Poison on allocation**: the returned region is filled with `0xdb` so uninitialised reads
+  are detectable.
+- **`sodium_free` guarantees**: zeros the allocation before calling the underlying `free()`.
+  `SecureBuffer::release()` additionally calls `sodium_memzero` on the full capacity before
+  `sodium_free` to ensure zeroing even when using the test-hook allocator.
 
 ### Known limitations (outside the threat model)
 
-- **Swap / paging**: `SecureBuffer` uses `std::vector` heap memory.  On systems with swap
-  enabled the allocator may page out the backing memory before it is wiped.  Use
-  `sodium_mlock()` (not yet wired) or OS-level encrypted swap to mitigate.
-- **Compiler copies**: the C++ abstract machine may produce temporary copies of `SecureBuffer`
-  bytes (e.g. during function argument passing before NRVO).  The STL move semantics of
-  `std::vector` minimise but cannot eliminate this risk.
+- **mlock limit**: `mlock(2)` is bounded by `RLIMIT_MEMLOCK` (default 64 KiB on many Linux
+  distributions).  If the total locked memory across all `SecureBuffer` instances exceeds
+  this limit, `sodium_malloc` returns null and BSEAL throws `bseal::Error`.  Raise the limit
+  with `ulimit -l unlimited` or set `LimitMEMLOCK=infinity` in the systemd unit.
 - **SSO strings**: `std::string` with small-string optimisation stores characters in the
   object itself (stack frame or inline allocation).  `secure_wipe_string()` zeroes `s.data()`
   up to `s.size()`, covering SSO storage.  Heap-allocated strings with `capacity > size`
@@ -303,11 +420,12 @@ Passphrase input flow:
   material.  Disable core dumps on production deployments.
 - **Debugger access**: a process-local debugger or `/proc/<pid>/mem` reader can read key
   material at any point during execution.
-- **`KdfInput::passphrase_utf8`**: the `std::string` field exists because Argon2id takes a
-  raw `void*` pointer.  It is wiped via `secure_wipe_string()` immediately after
-  `derive_master_seed()` returns, but the `std::string` destructor will subsequently call
-  `free()` on already-zeroed memory, leaving the allocator free-list in a state that could
-  reveal the string's former length to a heap-inspection attacker.
+- **`KdfInput::passphrase` lifetime**: the `KdfInput` struct now holds a `SecureBuffer` for
+  the passphrase.  Argon2id reads `passphrase.data()` / `passphrase.size()` directly from
+  locked memory; no intermediate `std::string` copy is made.  The passphrase is explicitly
+  wiped via `input.passphrase.wipe()` after `derive_master_seed()` returns, and again by the
+  `SecureBuffer` destructor when `KdfInput` goes out of scope.  The sodium_malloc backing means
+  the pages are locked into RAM (no swap) and guarded.
 
 ### Recommended operational mitigations
 

@@ -18,21 +18,18 @@
 #include "io/ShardWriter.hpp"
 #include "pipeline/DecryptPipeline.hpp"
 #include "pipeline/EncryptPipeline.hpp"
+#include "platform/PassphrasePrompt.hpp"
 #include "platform/Random.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <iostream>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <termios.h>
-#include <unistd.h>
 
 namespace bseal::app {
 namespace {
@@ -52,77 +49,12 @@ struct ArchiveOpenContext {
     bseal::io::GlobalPublicHeaderV1 global_header{};
 };
 
-// Read one line from stdin (no echo suppression).  Returns a plain std::string
-// that the caller is responsible for wiping with secure_wipe_string().
-std::string read_line_from_stdin(std::string_view prompt) {
-    std::cerr << prompt;
-    std::string line;
-    std::getline(std::cin, line);
-    if (!std::cin) {
-        throw bseal::InvalidArgument("failed to read passphrase from stdin");
-    }
-    return line;
-}
-
-// Read one line from stdin with echo disabled.  Returns a plain std::string
-// that the caller is responsible for wiping with secure_wipe_string().
-std::string prompt_hidden(std::string_view prompt) {
-    std::cerr << prompt;
-
-    termios old_termios{};
-    if (tcgetattr(STDIN_FILENO, &old_termios) != 0) {
-        return read_line_from_stdin(prompt);
-    }
-
-    termios new_termios = old_termios;
-    new_termios.c_lflag &= static_cast<unsigned int>(~ECHO);
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &new_termios) != 0) {
-        throw bseal::InvalidArgument("failed to disable terminal echo");
-    }
-
-    std::string line;
-    std::getline(std::cin, line);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_termios);
-    std::cerr << '\n';
-
-    if (!std::cin) {
-        throw bseal::InvalidArgument("failed to read passphrase from stdin");
-    }
-    return line;
-}
-
-// Transfer a std::string into a SecureBuffer, then wipe the source string.
-bseal::crypto::SecureBuffer string_to_secure_buffer(std::string& s) {
-    bseal::crypto::SecureBuffer buf(s.size());
-    std::copy(s.begin(), s.end(), buf.as_span().begin());
-    bseal::crypto::secure_wipe_string(s);
-    return buf;
-}
-
-// Acquire the passphrase from stdin and return it in a SecureBuffer.
-// The intermediate std::string staging buffers are wiped before they go
-// out of scope.
+// Acquire the passphrase and return it in a SecureBuffer.
 bseal::crypto::SecureBuffer obtain_passphrase(bool passphrase_prompt) {
     if (passphrase_prompt) {
-        auto first  = prompt_hidden("Passphrase: ");
-        auto second = prompt_hidden("Confirm passphrase: ");
-        const bool match = (first == second);
-        bseal::crypto::secure_wipe_string(second);
-        if (!match) {
-            bseal::crypto::secure_wipe_string(first);
-            throw bseal::InvalidArgument("passphrases do not match");
-        }
-        if (first.empty()) {
-            throw bseal::InvalidArgument("passphrase must not be empty");
-        }
-        return string_to_secure_buffer(first);
+        return bseal::platform::read_passphrase_prompt();
     }
-
-    auto passphrase = read_line_from_stdin("Passphrase: ");
-    if (passphrase.empty()) {
-        throw bseal::InvalidArgument("passphrase must not be empty");
-    }
-    return string_to_secure_buffer(passphrase);
+    return bseal::platform::read_passphrase_from_stdin();
 }
 
 std::unique_ptr<bseal::crypto::CryptoBackend>
@@ -202,29 +134,21 @@ template <std::size_t N> std::array<Byte, N> random_array() {
 
 // Derive ExpandedKeys from a passphrase held in a SecureBuffer.
 //
-// The passphrase is briefly staged in a KdfInput::passphrase_utf8 std::string
-// for the Argon2id call; that string is wiped with secure_wipe_string()
-// immediately after derive_master_seed() returns.  The SecureBuffer passphrase
-// argument is wiped at function entry once the bytes have been copied.
+// The passphrase moves directly into KdfInput without any std::string staging.
+// Argon2id reads the bytes straight from the sodium_malloc-backed allocation.
 bseal::crypto::ExpandedKeys
 derive_expanded_keys(const ArchiveOpenContext& context,
                      bseal::crypto::SecureBuffer passphrase,
                      const std::vector<std::filesystem::path>& keyfiles) {
     bseal::crypto::KdfInput input;
-
-    // Staging copy: std::string is needed by KdfInput / Argon2id API.
-    const auto pp_span = passphrase.as_span();
-    input.passphrase_utf8.assign(
-        reinterpret_cast<const char*>(pp_span.data()), pp_span.size());
-    passphrase.wipe();
-
+    input.passphrase = std::move(passphrase);  // no copy; locked memory moves into KdfInput
     input.keyfiles   = keyfiles;
     input.salt       = context.kdf_salt;
     input.archive_id = context.archive_id;
     input.params     = context.kdf_params;
 
     auto master_seed = bseal::crypto::derive_master_seed(input);
-    bseal::crypto::secure_wipe_string(input.passphrase_utf8);
+    input.passphrase.wipe();  // zero immediately; destructor also zeroes on scope exit
     return bseal::crypto::expand_keys(master_seed.as_span(), context.suite);
 }
 
@@ -638,76 +562,90 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
         }
     }
 
+    const bool output_existed_before = std::filesystem::exists(options.output);
     std::filesystem::create_directories(options.output);
 
-    auto shards  = bseal::io::ShardReader::discover(options.input);
-    auto context = make_decrypt_context_from_shards(shards);
+    try {
+        auto shards  = bseal::io::ShardReader::discover(options.input);
+        auto context = make_decrypt_context_from_shards(shards);
 
-    bseal::crypto::check_kdf_params_against_policy(context.kdf_params, options.kdf_policy);
+        bseal::crypto::check_kdf_params_against_policy(context.kdf_params, options.kdf_policy);
 
-    auto passphrase = obtain_passphrase(options.passphrase_prompt);
-    auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
+        auto passphrase = obtain_passphrase(options.passphrase_prompt);
+        auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
 
-    verify_all_shard_header_macs(shards, keys.header_authentication_key.as_span());
+        verify_all_shard_header_macs(shards, keys.header_authentication_key.as_span());
 
-    // Build per-shard public_header_hash vector (indexed by shard_index) before
-    // shards are moved into ShardReader.  These are the hashes that were used as
-    // AAD during encryption (computed from actual shard headers on disk, which
-    // match what ShardWriter wrote after finalizing each shard).
-    const auto max_shard_index = shards.empty() ? 0u :
-        static_cast<std::uint32_t>(
-            std::max_element(shards.begin(), shards.end(),
-                [](const bseal::io::ShardInfo& a, const bseal::io::ShardInfo& b) {
-                    return a.shard_index() < b.shard_index();
-                })->shard_index() + 1u);
+        // Build per-shard public_header_hash vector (indexed by shard_index) before
+        // shards are moved into ShardReader.  These are the hashes that were used as
+        // AAD during encryption (computed from actual shard headers on disk, which
+        // match what ShardWriter wrote after finalizing each shard).
+        const auto max_shard_index = shards.empty() ? 0u :
+            static_cast<std::uint32_t>(
+                std::max_element(shards.begin(), shards.end(),
+                    [](const bseal::io::ShardInfo& a, const bseal::io::ShardInfo& b) {
+                        return a.shard_index() < b.shard_index();
+                    })->shard_index() + 1u);
 
-    std::vector<std::array<Byte, 32>> per_shard_hashes(max_shard_index);
-    for (const auto& shard : shards) {
-        per_shard_hashes[shard.shard_index()] = shard.public_header_hash;
+        std::vector<std::array<Byte, 32>> per_shard_hashes(max_shard_index);
+        for (const auto& shard : shards) {
+            per_shard_hashes[shard.shard_index()] = shard.public_header_hash;
+        }
+
+        bseal::io::ShardReaderValidation validation{};
+        validation.suite_id         = suite_to_aead_alg_id(context.suite);
+        validation.archive_id       = context.archive_id;
+        validation.chunk_plain_size = context.chunk_plain_size;
+
+        // Move the header_authentication_key directly into ShardReader (no copy).
+        // verify_all_shard_header_macs() above already consumed it via .as_span();
+        // DecryptPipeline does not use this key.
+        bseal::io::ShardReader shard_reader(
+            std::move(shards),
+            std::move(keys.header_authentication_key),
+            validation);
+
+        bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{
+            options.output,
+            options.overwrite,
+            true,
+            true,
+            false,
+            to_archive_hardened_mode(options.hardened_extract),
+        });
+
+        bseal::pipeline::DecryptPipelineOptions pipeline_options;
+        pipeline_options.chunk_plain_size       = context.chunk_plain_size;
+        pipeline_options.worker_count           = 0;
+        pipeline_options.queue_depth            = 0;
+        pipeline_options.archive_id             = context.archive_id;
+        pipeline_options.public_header_hash     = per_shard_hashes.empty()
+            ? std::array<Byte, 32>{}
+            : per_shard_hashes.front();
+        pipeline_options.per_shard_public_header_hashes = std::move(per_shard_hashes);
+        pipeline_options.padded_plaintext_size  = context.global_header.padded_plaintext_size;
+
+        bseal::pipeline::DecryptPipeline pipeline(
+            pipeline_options,
+            make_backend(context.suite),
+            std::move(keys),
+            std::move(shard_reader),
+            std::move(archive_reader));
+
+        pipeline.run();
+        return 0;
+    } catch (...) {
+        // Remove the output directory only if this invocation created it and it is
+        // now empty.  std::filesystem::remove() refuses to remove non-empty directories,
+        // so this can never delete pre-existing user data.
+        if (!output_existed_before) {
+            std::error_code ec;
+            if (std::filesystem::is_empty(options.output, ec) && !ec) {
+                std::filesystem::remove(options.output, ec);
+            }
+        }
+        throw;
     }
-
-    bseal::io::ShardReaderValidation validation{};
-    validation.suite_id         = suite_to_aead_alg_id(context.suite);
-    validation.archive_id       = context.archive_id;
-    validation.chunk_plain_size = context.chunk_plain_size;
-
-    // Move the header_authentication_key directly into ShardReader (no copy).
-    // verify_all_shard_header_macs() above already consumed it via .as_span();
-    // DecryptPipeline does not use this key.
-    bseal::io::ShardReader shard_reader(
-        std::move(shards),
-        std::move(keys.header_authentication_key),
-        validation);
-
-    bseal::archive::ArchiveReader archive_reader(bseal::archive::ArchiveReaderOptions{
-        options.output,
-        options.overwrite,
-        true,
-        true,
-        false,
-        to_archive_hardened_mode(options.hardened_extract),
-    });
-
-    bseal::pipeline::DecryptPipelineOptions pipeline_options;
-    pipeline_options.chunk_plain_size       = context.chunk_plain_size;
-    pipeline_options.worker_count           = 0;
-    pipeline_options.queue_depth            = 0;
-    pipeline_options.archive_id             = context.archive_id;
-    pipeline_options.public_header_hash     = per_shard_hashes.empty()
-        ? std::array<Byte, 32>{}
-        : per_shard_hashes.front();
-    pipeline_options.per_shard_public_header_hashes = std::move(per_shard_hashes);
-    pipeline_options.padded_plaintext_size  = context.global_header.padded_plaintext_size;
-
-    bseal::pipeline::DecryptPipeline pipeline(
-        pipeline_options,
-        make_backend(context.suite),
-        std::move(keys),
-        std::move(shard_reader),
-        std::move(archive_reader));
-
-    pipeline.run();
-    return 0;
 }
 
 } // namespace bseal::app

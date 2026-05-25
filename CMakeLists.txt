@@ -8,6 +8,7 @@ project(bseal
 
 option(BSEAL_BUILD_TESTS "Build smoke tests" ON)
 option(BSEAL_ENABLE_SANITIZERS "Enable ASan/UBSan for local development" OFF)
+option(BSEAL_ENABLE_TSAN "Enable ThreadSanitizer (incompatible with BSEAL_ENABLE_SANITIZERS)" OFF)
 option(BSEAL_ENABLE_INSTALL "Enable install rules" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -44,6 +45,7 @@ add_library(bseal_core
     src/pipeline/EncryptPipeline.cpp
     src/platform/CpuFeatures.cpp
     src/platform/MemoryLock.cpp
+    src/platform/PassphrasePrompt.cpp
     src/platform/Random.cpp
 )
 
@@ -70,11 +72,13 @@ target_include_directories(bseal_core
 target_compile_features(bseal_core PUBLIC cxx_std_20)
 bseal_set_project_warnings(bseal_core)
 bseal_enable_sanitizers_if_requested(bseal_core)
+bseal_enable_tsan_if_requested(bseal_core)
 
 add_executable(bseal src/main.cpp)
 target_link_libraries(bseal PRIVATE bseal::core)
 bseal_set_project_warnings(bseal)
 bseal_enable_sanitizers_if_requested(bseal)
+bseal_enable_tsan_if_requested(bseal)
 
 if (BSEAL_BUILD_TESTS)
     enable_testing()

@@ -320,7 +320,7 @@ public:
         return 16;
     }
 
-    Bytes encrypt_chunk(const crypto::EncryptChunkRequest& request) override {
+    Bytes encrypt_chunk(const crypto::EncryptChunkRequest& request) const override {
         validate_common(request.key.bytes, request.nonce.bytes, request.aad);
 
         const auto frame_header = parse_frame_header(request.aad);
@@ -339,7 +339,7 @@ public:
         return ciphertext;
     }
 
-    Bytes decrypt_chunk(const crypto::DecryptChunkRequest& request) override {
+    Bytes decrypt_chunk(const crypto::DecryptChunkRequest& request) const override {
         validate_common(request.key.bytes, request.nonce.bytes, request.aad);
 
         const auto frame_header = parse_frame_header(request.aad);
