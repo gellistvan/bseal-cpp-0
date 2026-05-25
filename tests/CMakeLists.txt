@@ -205,6 +205,7 @@ add_executable(bseal_integration_gtests
         integration/TestBlackBoxCli.cpp
         integration/TestCliRegression.cpp
         integration/TestFormatV1Archive.cpp
+        integration/TestKdfPolicyCli.cpp
 )
 
 add_dependencies(bseal_integration_gtests bseal)

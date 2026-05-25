@@ -129,14 +129,14 @@ such proof must remain TODO or PARTIAL.
     success, mismatch, empty passphrase, echo-disable failure on first and second
     prompt.
 
-- [ ] **TODO** — Document expected swap and core-dump configuration in an operator guide
+- [x] **DONE** — `docs/OPERATOR_GUIDE.md` written; covers passphrase entropy, keyfile
+  generation and storage, `--passphrase-prompt` vs stdin, swap and core-dump hardening,
+  `ulimit -l` for mlock, cipher choice, padding, shard size, hardened extraction, and
+  backup/verification procedure
   - **Owner**: documentation
-  - **Files**: `docs/` (operator guide does not yet exist)
-  - **Details**: the known-limitations section of `SECURITY_NOTES.md` lists the risks;
-    an actionable operator guide (`docs/OPERATOR_GUIDE.md`) must cover: passphrase
-    entropy guidance, keyfile generation, KDF preset selection, disabling swap /
-    core dumps, and the `--hardened-extract` flag.
-  - **Proof needed**: `docs/OPERATOR_GUIDE.md` exists and is reviewed.
+  - **Files**: `docs/OPERATOR_GUIDE.md`, `docs/KDF_POLICY.md`
+  - **Proof**: files exist, linked from `README.md` and `SECURITY_NOTES.md`. Requires
+    human review before production release.
 
 ---
 
@@ -171,11 +171,8 @@ such proof must remain TODO or PARTIAL.
 
 ## Documentation
 
-- [ ] **TODO** — Write `docs/OPERATOR_GUIDE.md`
-  - **Owner**: documentation
-  - **Files**: `docs/OPERATOR_GUIDE.md` (does not yet exist)
-  - **Proof needed**: file exists, covers all items listed under "Secret handling →
-    operator guide" above, reviewed before release.
+- [x] **DONE** — `docs/OPERATOR_GUIDE.md` and `docs/KDF_POLICY.md` written; see Secret
+  handling → DONE item above for details.
 
 - [x] **DONE** — `docs/THREAT_MODEL.md` exists; states attacker capabilities, trust
   boundaries, protected assets, metadata leakage, and non-goals

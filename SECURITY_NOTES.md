@@ -280,7 +280,8 @@ Two layers of protection defend against this:
    Operators deploying BSEAL on constrained hosts should lower these limits using the CLI flags
    `--max-kdf-memory`, `--max-kdf-iterations`, and `--max-kdf-parallelism`. Policy violations
    produce exit code 1 (not 3) and the error message names the flag that can override the limit,
-   so users can distinguish a policy rejection from an authentication failure.
+   so users can distinguish a policy rejection from an authentication failure.  See
+   `docs/KDF_POLICY.md` for preset details, recommended settings, and benchmarking guidance.
 
 The default limits are **not** derived from available RAM at runtime to remain reproducible and
 predictable across environments. Operators must set them explicitly if lower limits are required.

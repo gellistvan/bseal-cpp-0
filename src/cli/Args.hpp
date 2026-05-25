@@ -17,6 +17,7 @@ enum class Command {
     Help,
     Encrypt,
     Decrypt,
+    BenchmarkKdf,
 };
 
 enum class PaddingPolicyKind {
@@ -63,10 +64,15 @@ struct DecryptOptions : CommonOptions {
     HardenedExtractMode hardened_extract{HardenedExtractMode::Auto};
 };
 
+struct BenchmarkKdfOptions {
+    bool dry_run{false};
+};
+
 struct ParsedArgs {
     Command command{Command::Help};
     EncryptOptions encrypt;
     DecryptOptions decrypt;
+    BenchmarkKdfOptions benchmark_kdf;
 };
 
 ParsedArgs parse_args(int argc, char** argv);
