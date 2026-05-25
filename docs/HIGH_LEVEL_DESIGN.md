@@ -6,6 +6,8 @@
 **Scope:** high-level implementation design; module responsibilities; important classes; data-flow overview  
 **Out of scope:** source-code reference manual, line-by-line API documentation, detailed cryptographic proof, and complete binary format specification
 
+**Supported platform:** Linux. Windows is recognized in the source tree (CSPRNG, passphrase prompting, and file flushing have `_WIN32` code paths) but is not explicitly tested or supported; use on Windows is at the user's own risk. The POSIX-hardened extraction backend is unavailable on Windows. macOS and other POSIX systems compile via the POSIX paths but are likewise not explicitly supported.
+
 For cryptographic detail see `docs/CRYPTOGRAPHY.md`. For the binary format specification see `docs/FORMAT.md`.
 
 ---
@@ -156,7 +158,7 @@ The application layer also defines several internal types inside the anonymous n
 | `ShardPlan` | Per-shard pre-computed layout: `shard_index`, `first_chunk_index`, `chunk_count`, `payload_len`, and `public_header_hash`. Computed before any file content is encrypted, so per-shard hashes are known and can be embedded in AEAD AAD upfront |
 | `PaddingResult` | Result of `compute_padding()`: target plaintext size, policy ID, and policy value to write into the global header |
 
-**Passphrase acquisition.** The `obtain_passphrase()` helper reads a passphrase from `stdin`. Without `--passphrase-prompt`, it reads one line (no echo suppression, intended for pipe usage). With `--passphrase-prompt`, it prompts twice with echo suppressed via POSIX `termios` and confirms the two entries match before continuing. The passphrase is immediately moved into a `SecureBuffer` and the intermediate `std::string` is wiped with `secure_wipe_string()`.
+**Passphrase acquisition.** The `obtain_passphrase()` helper reads a passphrase from `stdin`. Without `--passphrase-prompt`, it reads one line (no echo suppression, intended for pipe usage). With `--passphrase-prompt`, it prompts twice with echo suppressed via POSIX `termios` (Linux; the primary supported platform) or `SetConsoleMode` (Windows; not explicitly supported) and confirms the two entries match before continuing. The passphrase is immediately moved into a `SecureBuffer` and the intermediate `std::string` is wiped with `secure_wipe_string()`.
 
 ### 6.2 Cryptography Layer
 
@@ -189,7 +191,7 @@ The key schedule separates roles — chunk encryption, manifest protection, head
 | `archive::RecordType` | `archive/` | `ArchiveBegin`, `DirectoryEntry`, `FileEntry`, `FileBytes`, `FileEnd`, `SymlinkEntry`, `ArchiveEnd`, `RandomPadding` (values 1–8) |
 | `archive::EntryMetadata` | `archive/` | Filesystem metadata to preserve: path (with portable `/` separators), size, permissions, timestamps, symlink target |
 | `archive::PathSanitizer` | `archive/` | `is_safe_relative_path()` rejects `..` components and absolute paths. `make_safe_output_path()` combines the output root with a sanitized archive-relative path |
-| `archive::SafeOutputTree` | `archive/` | Platform abstraction for safe extraction. **Hardened POSIX backend** (Linux/macOS): traverses path components via `openat`/`mkdirat`/`fstatat(AT_SYMLINK_NOFOLLOW)`, promotes files via `renameat(2)` — fully TOCTOU-safe. **Portable backend**: uses `std::filesystem` plus canonical-path symlink escape check — not TOCTOU-safe. Selected by `HardenedExtractMode` |
+| `archive::SafeOutputTree` | `archive/` | Platform abstraction for safe extraction. **Hardened POSIX backend** (Linux and other POSIX systems): traverses path components via `openat`/`mkdirat`/`fstatat(AT_SYMLINK_NOFOLLOW)`, promotes files via `renameat(2)` — fully TOCTOU-safe. **Portable backend** (testing and convenience only): uses `std::filesystem` plus canonical-path symlink escape check — not TOCTOU-safe; selected automatically on Windows where the hardened backend is unavailable. Selected by `HardenedExtractMode` |
 | `archive::HardenedExtractMode` | `archive/` | Enum: `Auto` (use hardened if available, else portable), `On` (require hardened; fail if unavailable), `Off` (always portable) |
 
 **Record serialization format** (defined by `RecordFormat.hpp`):
@@ -390,8 +392,8 @@ Encryption begins with:
 - an output directory;
 - a passphrase from the terminal or stdin (with optional echo suppression and double-entry confirmation via `--passphrase-prompt`);
 - zero or more keyfiles (passphrase-only mode is valid);
-- an AEAD suite selection (`--suite`);
-- a KDF preset (`--kdf-preset`);
+- an AEAD suite selection (`--suite`, default `xchacha20-poly1305`);
+- a KDF preset (`--kdf`, default `strong`);
 - a chunk size (`--chunk-size`, default 16 MiB);
 - a shard size (`--shard-size`, default 4 GiB);
 - a padding policy (`--padding`, default `power2`).
@@ -769,7 +771,7 @@ All shard filenames come from `platform::random_filename_stem()` which calls `pl
 
 ### 13.5 Hardened Extraction Backend — Implemented, Not Audited
 
-`SafeOutputTree` provides a POSIX-hardened extraction backend that eliminates TOCTOU symlink races during restore. It is selected by default (`HardenedExtractMode::Auto`) on platforms where it is available. The implementation has not been externally audited.
+`SafeOutputTree` provides a POSIX-hardened extraction backend that eliminates TOCTOU symlink races during restore. It is selected by default (`HardenedExtractMode::Auto`) on platforms where it is available (Linux and other POSIX systems). The portable fallback — used when the hardened backend is unavailable, including on Windows — is intended for testing and convenience only; it does not close the TOCTOU race window. The hardened implementation has not been externally audited.
 
 ### 13.6 Async I/O — Implemented, Not Wired Into Production Path
 
