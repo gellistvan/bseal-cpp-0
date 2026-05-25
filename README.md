@@ -6,6 +6,14 @@ The CLI, application layer, archive record stream, AEAD chunk pipeline, KDF/key 
 
 **No external cryptographic audit has been performed.** BSEAL is not production-ready. Do not use it to protect real secrets, long-term backups, or irreplaceable data until after an audit and a compatibility policy decision.
 
+## Platform support
+
+**Linux is the only explicitly supported and tested platform.**
+
+Windows is recognized in the codebase — the source tree includes `_WIN32` code paths for passphrase prompting, file flushing, and the CSPRNG — but Windows has not been explicitly tested and is not officially supported. Users who build and run BSEAL on Windows do so at their own risk. In particular, the POSIX-hardened extraction backend (`--hardened-extract on`) is not available on Windows; the portable fallback is used instead (see `--hardened-extract` below for the implications).
+
+macOS and other POSIX systems will likely compile and run via the POSIX code paths, but are also not explicitly tested or supported.
+
 ## Current status
 
 ### Format stability
@@ -47,6 +55,8 @@ Still unsafe or incomplete:
 * Symlink support is represented in the archive format, but extraction currently defaults to not allowing symlinks.
 
 ## Build requirements
+
+These requirements apply to the explicitly supported Linux platform. The build may work on other POSIX systems or Windows, but is not tested or supported there.
 
 * CMake 3.24 or newer
 * A C++20 compiler (GCC 11+, Clang 14+)
@@ -120,7 +130,7 @@ Show help:
 bseal --help
 ```
 
-Encrypt a directory:
+Encrypt a directory (XChaCha20-Poly1305 is the default suite; `--suite` may be omitted):
 
 ```bash
 bseal encrypt \
@@ -129,7 +139,6 @@ bseal encrypt \
   --keyfile ./k1.bin \
   --keyfile ./k2.bin \
   --passphrase-prompt \
-  --suite xchacha20-poly1305 \
   --kdf strong \
   --chunk-size 16M \
   --shard-size 4G \
@@ -150,12 +159,11 @@ bseal decrypt \
 `--keyfile` is optional. Omitting it completely gives passphrase-only mode:
 
 ```bash
-# Encrypt with passphrase only.
+# Encrypt with passphrase only (xchacha20-poly1305 is the default suite).
 bseal encrypt \
   --input ./folder \
   --output ./sealed \
   --passphrase-prompt \
-  --suite xchacha20-poly1305 \
   --kdf strong
 
 # Decrypt with passphrase only.
@@ -171,8 +179,9 @@ produces a different derived key and will fail authentication (exit code 3).
 
 **`--passphrase-prompt` mode** (recommended for interactive use):
 
-* Requires a real terminal (TTY). BSEAL uses POSIX `termios` on Linux/macOS or
-  `SetConsoleMode` on Windows to disable echo before reading.
+* Requires a real terminal (TTY). On Linux and POSIX systems BSEAL uses `termios`
+  to disable echo before reading. On Windows (not explicitly supported) it uses
+  `SetConsoleMode`. On other platforms the prompt is not implemented and will fail.
 * If echo cannot be disabled (e.g. stdin is a pipe, not a terminal), BSEAL exits
   with an error. There is no silent fallback to visible passphrase input.
 * Asks for the passphrase twice and rejects mismatches.
@@ -197,7 +206,7 @@ Common options:
 
 Encrypt-only options:
 
-* `--suite xchacha20-poly1305|aes-256-gcm`
+* `--suite xchacha20-poly1305|aes-256-gcm` (default: `xchacha20-poly1305`; `aes-256-gcm` requires AES-NI and is ~2× faster on capable hardware)
 * `--kdf fast|strong|paranoid`
 * `--chunk-size SIZE`, for example `1K`, `16M`
 * `--shard-size SIZE`, for example `16K`, `4G` — hard upper bound on total encoded frame bytes per shard; must be large enough to hold at least one maximum-size chunk frame (`40 + chunk_plain_size + 16` bytes for v1 AEADs)
@@ -220,9 +229,9 @@ Decrypt-only options:
   misleading artifact is left behind. If the output directory already existed before decrypt started,
   it is always preserved regardless of outcome — BSEAL never recursively deletes user-created directories.
 * `--hardened-extract auto|on|off` — extraction filesystem safety mode (default: `auto`)
-  * `auto`: use the hardened POSIX backend when available (Linux/macOS); fall back to the portable backend on other platforms
+  * `auto`: use the hardened POSIX backend when available (Linux and other POSIX systems); fall back to the portable backend on unsupported platforms (e.g. Windows)
   * `on`: require the hardened POSIX backend; fail immediately (exit 1) if the platform does not support it
-  * `off`: always use the portable backend (TOCTOU window is not closed)
+  * `off`: always use the portable backend — **testing and convenience only**; the TOCTOU race window is not closed
   * The hardened POSIX backend traverses intermediate directories using `openat(2)` with `O_NOFOLLOW`, so a local attacker who races a directory replacement with a symlink cannot redirect extraction outside the output root. See `docs/THREAT_MODEL.md` for the full threat model.
 * `--durability off|best-effort|on` — output file flush mode after extraction (default: `best-effort`; see `docs/DURABILITY.md`)
 * `--max-kdf-memory SIZE` — reject archives whose Argon2id memory cost exceeds SIZE (default: `2G`; covers all built-in KDF presets including `paranoid`)

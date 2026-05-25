@@ -211,6 +211,9 @@ ParsedArgs parse_args(int argc, char** argv) {
 std::string usage_text() {
     return R"USAGE(BSEAL-Cpp
 
+Supported platform: Linux. Windows is recognized in the codebase but is not
+explicitly supported or tested; use on Windows is at your own risk.
+
 Usage:
   bseal encrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
   bseal decrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
@@ -218,6 +221,9 @@ Usage:
 
 Encrypt options:
   --suite xchacha20-poly1305|aes-256-gcm
+                          AEAD cipher suite (default: xchacha20-poly1305)
+                            xchacha20-poly1305: default; constant-time, no hardware requirement
+                            aes-256-gcm:        hardware-accelerated alternative (requires AES-NI)
   --kdf fast|strong|paranoid
   --chunk-size 16M
   --shard-size 4G
@@ -234,7 +240,7 @@ Decrypt options:
                           extraction filesystem safety mode (default: auto)
                             auto: use hardened POSIX backend when available, else portable
                             on:   require hardened POSIX backend; fail if unavailable
-                            off:  always use portable backend (not TOCTOU-hardened)
+                            off:  always use portable backend (testing/convenience only; not TOCTOU-hardened)
   --durability off|best-effort|on
                           output file flush mode after extraction (default: best-effort)
                             off:          no fsync; OS page-cache only
