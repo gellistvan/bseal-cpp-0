@@ -127,6 +127,13 @@ rewrites both the global header bytes and the shard header MAC (using the final 
 every finalized shard before returning. Do not skip `finish()`, and do not reopen shard files
 between `finish()` returning and the reader verifying `header_mac`.
 
+**Durability of finalized shards.** After all header rewrites, `finish()` calls
+`DurabilityHooks::flush_file` on each shard and `DurabilityHooks::flush_dir` on the output
+directory, according to the `DurabilityMode` set in `ShardWriterOptions`. The default mode in
+`BsealApp` is `best-effort` (call fsync and swallow ENOTSUP); use `--durability=on` to require
+fsync to succeed or `--durability=off` to skip it. See `docs/DURABILITY.md` for the full
+guarantee model and platform limitations.
+
 **Invariant: shard header MAC authenticates the final global header.**
 Every `ShardPublicHeaderV1.header_mac` is computed after the final `GlobalPublicHeaderV1` (with
 correct `global_chunk_count` and `shard_count`) has been written to the shard file. A MAC computed

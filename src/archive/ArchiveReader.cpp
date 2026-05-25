@@ -437,6 +437,19 @@ void ArchiveReader::commit_temp_tree() {
 
         // For files and symlinks: ensure the parent exists then atomically promote.
         safe_tree.rename_into(src, rel, options_.overwrite_existing);
+
+        // Flush promoted file for durability (skipped when mode is Off).
+        if (options_.durability_hooks.flush_file &&
+            options_.durability_mode != platform::DurabilityMode::Off) {
+            options_.durability_hooks.flush_file(options_.output_root / rel,
+                                                  options_.durability_mode);
+        }
+    }
+
+    // Flush the output directory so promoted directory entries are durable.
+    if (options_.durability_hooks.flush_dir &&
+        options_.durability_mode != platform::DurabilityMode::Off) {
+        options_.durability_hooks.flush_dir(options_.output_root, options_.durability_mode);
     }
 }
 

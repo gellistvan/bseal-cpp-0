@@ -3,6 +3,7 @@
 #include "common/Types.hpp"
 #include "crypto/CryptoBackend.hpp"
 #include "crypto/Kdf.hpp"
+#include "platform/DurableFile.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -37,6 +38,7 @@ struct CommonOptions {
     std::vector<std::filesystem::path> keyfiles;
     bool passphrase_prompt{false};
     bool verbose{false};
+    platform::DurabilityMode durability_mode{platform::DurabilityMode::BestEffort};
 };
 
 struct EncryptOptions : CommonOptions {

@@ -4,6 +4,7 @@
 #include "archive/RecordFormat.hpp"
 #include "archive/SafeOutputTree.hpp"
 #include "common/Types.hpp"
+#include "platform/DurableFile.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,12 @@ struct ArchiveReaderOptions {
     bool restore_permissions{true};
     bool allow_symlinks{false};
     HardenedExtractMode hardened_extract_mode{HardenedExtractMode::Auto};
+
+    /// Durability mode applied when promoting temp files to the output root.
+    platform::DurabilityMode  durability_mode{platform::DurabilityMode::BestEffort};
+
+    /// Injectable hooks; defaults to noop() so existing tests are unaffected.
+    platform::DurabilityHooks durability_hooks{platform::DurabilityHooks::noop()};
 };
 
 class ArchiveReader {

@@ -30,6 +30,7 @@ add_executable(bseal_platform_gtests
     platform/TestRandom.cpp
     platform/TestMemoryLock.cpp
     platform/TestCpuFeatures.cpp
+    platform/TestDurableFile.cpp
     platform/TestPassphrasePrompt.cpp
 )
 
@@ -56,6 +57,7 @@ add_executable(bseal_io_gtests
         io/TestShardFrameHash.cpp
         io/TestShardReader.cpp
         io/TestShardWriter.cpp
+        io/TestShardWriterDurability.cpp
         io/TestFormatV1Kat.cpp
         io/TestMalformedShards.cpp
 )
@@ -72,6 +74,7 @@ bseal_enable_sanitizers_if_requested(bseal_io_gtests)
 add_executable(bseal_archive_gtests
         archive/TestPublicHeaderAuth.cpp
         archive/TestArchiveReader.cpp
+        archive/TestArchiveReaderDurability.cpp
         archive/TestArchiveWriter.cpp
         archive/TestMetadata.cpp
         archive/TestPathSanitizer.cpp

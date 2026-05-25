@@ -36,6 +36,15 @@ HardenedExtractMode parse_hardened_extract(std::string_view value) {
         "'; valid values: auto, on, off");
 }
 
+platform::DurabilityMode parse_durability(std::string_view value) {
+    if (value == "off")          return platform::DurabilityMode::Off;
+    if (value == "best-effort")  return platform::DurabilityMode::BestEffort;
+    if (value == "on")           return platform::DurabilityMode::On;
+    throw InvalidArgument(
+        "unknown --durability value '" + std::string(value) +
+        "'; valid values: off, best-effort, on");
+}
+
 crypto::KdfPreset parse_kdf(std::string_view value) {
     if (value == "fast") return crypto::KdfPreset::Fast;
     if (value == "strong") return crypto::KdfPreset::Strong;
@@ -136,6 +145,8 @@ ParsedArgs parse_args(int argc, char** argv) {
                 parsed.encrypt.shard_size = parse_size_bytes(arg_at(++i, argc, argv));
             } else if (key == "--padding") {
                 parsed.encrypt.padding = parse_padding(arg_at(++i, argc, argv));
+            } else if (key == "--durability") {
+                parsed.encrypt.durability_mode = parse_durability(arg_at(++i, argc, argv));
             } else if (key == "--input" || key == "--output" || key == "--keyfile") {
                 parse_common_option(parsed.encrypt, key, arg_at(++i, argc, argv));
             } else {
@@ -168,6 +179,8 @@ ParsedArgs parse_args(int argc, char** argv) {
             } else if (key == "--hardened-extract") {
                 parsed.decrypt.hardened_extract =
                     parse_hardened_extract(arg_at(++i, argc, argv));
+            } else if (key == "--durability") {
+                parsed.decrypt.durability_mode = parse_durability(arg_at(++i, argc, argv));
             } else if (key == "--input" || key == "--output" || key == "--keyfile") {
                 parse_common_option(parsed.decrypt, key, arg_at(++i, argc, argv));
             } else {
@@ -195,6 +208,11 @@ Encrypt options:
   --chunk-size 16M
   --shard-size 4G
   --padding none|chunk|power2|fixed-size=N
+  --durability off|best-effort|on
+                          shard flush mode after finalization (default: best-effort)
+                            off:          no fsync; OS page-cache only
+                            best-effort:  call fsync where supported; ignore ENOTSUP
+                            on:           require fsync to succeed; fail on any error
 
 Decrypt options:
   --overwrite
@@ -203,6 +221,11 @@ Decrypt options:
                             auto: use hardened POSIX backend when available, else portable
                             on:   require hardened POSIX backend; fail if unavailable
                             off:  always use portable backend (not TOCTOU-hardened)
+  --durability off|best-effort|on
+                          output file flush mode after extraction (default: best-effort)
+                            off:          no fsync; OS page-cache only
+                            best-effort:  call fsync where supported; ignore ENOTSUP
+                            on:           require fsync to succeed; fail on any error
   --max-kdf-memory SIZE   reject archives whose Argon2id memory exceeds SIZE (default: 2G)
   --max-kdf-iterations N  reject archives whose Argon2id iteration count exceeds N (default: 4)
   --max-kdf-parallelism N reject archives whose Argon2id parallelism exceeds N (default: 8)

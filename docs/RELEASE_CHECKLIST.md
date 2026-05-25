@@ -51,14 +51,32 @@ such proof must remain TODO or PARTIAL.
 
 ## Durability
 
+- [x] **DONE** — `DurableFile` platform module (`src/platform/DurableFile.hpp/.cpp`)
+  implemented with three modes: `Off`, `BestEffort`, `On`. Integrated into
+  `ShardWriter::finish()` (flush each shard + output dir) and
+  `ArchiveReader::commit_temp_tree()` (flush each promoted file + output root).
+  `--durability=off|best-effort|on` CLI option wired to both encrypt and decrypt.
+  - **Proof**: `platform.DurableFile.*`, `io.ShardWriterDurability.*`,
+    `archive.ArchiveReaderDurability.*` tests all pass
+
 - [ ] **TODO** — Replace `out.flush()` in `AsyncWriter` with a proper fsync sequence
   - **Owner**: io
   - **Files**: `src/io/AsyncWriter.cpp` (line ~79; the NOTE comment names the fix)
-  - **Details**: POSIX: `out.flush()` then `fsync(fileno(out))`; Windows:
-    `FlushFileBuffers(handle)`. The current `flush()` reaches the OS page cache but
-    does not guarantee data survives a power failure.
-  - **Proof needed**: `io.AsyncWriter.*` tests updated to verify fsync is called, or
-    a new integration test that survives simulated power loss.
+  - **Details**: The current `flush()` reaches the OS page cache but does not
+    guarantee durability within the streaming decrypt path. `DurableFile` covers
+    the finalization/promotion boundaries; this item covers intermediate AsyncWriter
+    flush calls during streaming decryption.
+  - **Proof needed**: `io.AsyncWriter.*` tests updated to verify fsync is called at
+    the correct boundary, or confirmed out-of-scope with a documented rationale.
+
+- [ ] **TODO** — Verify `--durability=on` on target production storage platforms
+  - **Owner**: infrastructure
+  - **Details**: Confirm that POSIX directory fsync succeeds on ext4, xfs, and btrfs
+    (the most common Linux production filesystems). Document any exceptions.
+    Windows directory flush is documented as unsupported by design (`flush_dir`
+    returns `false`).
+  - **Proof needed**: manual test or CI job on each target filesystem with
+    `--durability=on` returning exit 0.
 
 ---
 

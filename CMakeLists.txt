@@ -45,6 +45,7 @@ add_library(bseal_core
     src/pipeline/DecryptPipeline.cpp
     src/pipeline/EncryptPipeline.cpp
     src/platform/CpuFeatures.cpp
+    src/platform/DurableFile.cpp
     src/platform/MemoryLock.cpp
     src/platform/PassphrasePrompt.cpp
     src/platform/Random.cpp
