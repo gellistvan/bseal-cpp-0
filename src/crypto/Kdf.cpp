@@ -226,7 +226,7 @@ mix_keyfile_digests(const std::vector<KeyfileDigest>& digests) {
 }
 
 SecureBuffer derive_master_seed(const KdfInput& input) {
-    if (input.passphrase_utf8.empty()) {
+    if (input.passphrase.empty()) {
         throw InvalidArgument("passphrase must not be empty");
     }
 
@@ -238,13 +238,13 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
     SecureBuffer pass_key(input.params.output_bytes);
 
     // FORMAT.md §8: pass_key = Argon2id(password, salt=kdf_salt, memory, iterations, parallelism)
-    // The salt is the 32-byte kdf_salt directly; all three cost parameters are honored.
+    // The passphrase bytes come directly from locked SecureBuffer storage; no std::string copy.
     const int rc = argon2id_hash_raw(
         input.params.iterations,       // t_cost
         input.params.memory_kib,       // m_cost (KiB — libargon2 takes KiB, not bytes)
         input.params.parallelism,      // lanes/threads
-        input.passphrase_utf8.data(),
-        input.passphrase_utf8.size(),
+        input.passphrase.data(),
+        input.passphrase.size(),
         input.salt.data(),             // 32-byte kdf_salt per FORMAT.md §8
         input.salt.size(),
         pass_key.data(),

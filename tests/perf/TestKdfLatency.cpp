@@ -27,16 +27,35 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <string_view>
 
 namespace {
 
 using bseal::Byte;
+using bseal::Bytes;
 using bseal::crypto::KdfInput;
 using bseal::crypto::KdfParams;
 using bseal::crypto::KdfPreset;
 using bseal::crypto::SecureBuffer;
 using bseal::crypto::derive_master_seed;
 using bseal::crypto::preset_params;
+
+SecureBuffer passphrase_buf(std::string_view s) {
+    const auto* b = reinterpret_cast<const Byte*>(s.data());
+    return SecureBuffer(Bytes(b, b + s.size()));
+}
+
+KdfInput make_perf_input(std::string_view passphrase,
+                         std::array<Byte, 32> salt,
+                         std::array<Byte, 32> archive_id,
+                         KdfParams params) {
+    KdfInput input;
+    input.passphrase = passphrase_buf(passphrase);
+    input.salt       = salt;
+    input.archive_id = archive_id;
+    input.params     = params;
+    return input;
+}
 
 // Maximum wall-clock time allowed for the Fast KDF preset.
 // Fast = 256 MiB memory, 3 iterations, 4-way parallelism.
@@ -66,11 +85,10 @@ std::array<Byte, 32> make_archive_id(Byte seed) {
 
 // Measure and assert that the Fast KDF preset finishes within the time budget.
 TEST(KdfLatency, FastPresetCompletesWithinBudget) {
-    KdfInput input;
-    input.passphrase_utf8 = "perf-test-passphrase";
-    input.salt = make_salt(0x01);
-    input.archive_id = make_archive_id(0x10);
-    input.params = preset_params(KdfPreset::Fast);
+    auto input = make_perf_input("perf-test-passphrase",
+                                 make_salt(0x01),
+                                 make_archive_id(0x10),
+                                 preset_params(KdfPreset::Fast));
 
     const auto start = std::chrono::steady_clock::now();
     SecureBuffer result = derive_master_seed(input);
@@ -105,16 +123,11 @@ TEST(KdfLatency, FastPresetCompletesWithinBudget) {
 // docs/INCENTIVE.md §16.5: KDF is a bounded startup cost — two archives must not
 // produce the same derived key even with the same passphrase.
 TEST(KdfLatency, DifferentSaltsProduceDifferentOutputs) {
-    KdfInput base;
-    base.passphrase_utf8 = "same-passphrase";
-    base.archive_id = make_archive_id(0x20);
-    base.params = preset_params(KdfPreset::Fast);
+    const auto archive_id = make_archive_id(0x20);
+    const auto params     = preset_params(KdfPreset::Fast);
 
-    KdfInput in_a = base;
-    in_a.salt = make_salt(0xAA);
-
-    KdfInput in_b = base;
-    in_b.salt = make_salt(0xBB);
+    auto in_a = make_perf_input("same-passphrase", make_salt(0xAA), archive_id, params);
+    auto in_b = make_perf_input("same-passphrase", make_salt(0xBB), archive_id, params);
 
     SecureBuffer out_a = derive_master_seed(in_a);
     SecureBuffer out_b = derive_master_seed(in_b);
@@ -130,16 +143,12 @@ TEST(KdfLatency, DifferentSaltsProduceDifferentOutputs) {
 
 // Different passphrases must produce different outputs (passphrase feeds the KDF).
 TEST(KdfLatency, DifferentPassphrasesProduceDifferentOutputs) {
-    KdfInput base;
-    base.salt = make_salt(0x55);
-    base.archive_id = make_archive_id(0x30);
-    base.params = preset_params(KdfPreset::Fast);
+    const auto salt       = make_salt(0x55);
+    const auto archive_id = make_archive_id(0x30);
+    const auto params     = preset_params(KdfPreset::Fast);
 
-    KdfInput in_a = base;
-    in_a.passphrase_utf8 = "passphrase-alpha";
-
-    KdfInput in_b = base;
-    in_b.passphrase_utf8 = "passphrase-beta";
+    auto in_a = make_perf_input("passphrase-alpha", salt, archive_id, params);
+    auto in_b = make_perf_input("passphrase-beta",  salt, archive_id, params);
 
     SecureBuffer out_a = derive_master_seed(in_a);
     SecureBuffer out_b = derive_master_seed(in_b);
@@ -156,11 +165,10 @@ TEST(KdfLatency, DifferentPassphrasesProduceDifferentOutputs) {
 // Reproducibility check: same inputs → same output (KDF is deterministic).
 // This is required for decrypt to reconstruct the same key.
 TEST(KdfLatency, SameInputsProduceSameOutput) {
-    KdfInput input;
-    input.passphrase_utf8 = "reproducible";
-    input.salt = make_salt(0xCC);
-    input.archive_id = make_archive_id(0x40);
-    input.params = preset_params(KdfPreset::Fast);
+    auto input = make_perf_input("reproducible",
+                                 make_salt(0xCC),
+                                 make_archive_id(0x40),
+                                 preset_params(KdfPreset::Fast));
 
     SecureBuffer out1 = derive_master_seed(input);
     SecureBuffer out2 = derive_master_seed(input);

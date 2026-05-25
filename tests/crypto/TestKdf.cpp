@@ -1,6 +1,7 @@
 #include <array>
 
 #include "crypto/Kdf.hpp"
+#include "crypto/SecureBuffer.hpp"
 
 #include "common/Errors.hpp"
 #include "common/Types.hpp"
@@ -12,7 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
-#include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -23,6 +24,7 @@ using bseal::InvalidArgument;
 using bseal::crypto::KdfInput;
 using bseal::crypto::KdfParams;
 using bseal::crypto::KdfPreset;
+using bseal::crypto::SecureBuffer;
 using bseal::crypto::derive_master_seed;
 using bseal::crypto::hash_keyfiles_blake3;
 using bseal::crypto::mix_keyfile_digests;
@@ -31,6 +33,12 @@ using bseal::crypto::validate_kdf_params;
 using bseal::crypto::validate_kdf_resource_policy;
 using bseal::crypto::check_kdf_params_against_policy;
 using bseal::crypto::KdfResourcePolicy;
+
+// Build a SecureBuffer from an ASCII/UTF-8 string literal for tests.
+SecureBuffer passphrase_buf(std::string_view s) {
+    const auto* b = reinterpret_cast<const Byte*>(s.data());
+    return SecureBuffer(Bytes(b, b + s.size()));
+}
 
 template <typename ExceptionT, typename Fn>
 bool throws_exception(Fn&& fn) {
@@ -109,9 +117,9 @@ KdfParams small_test_kdf_params() {
 }
 
 KdfInput make_input(const std::vector<std::filesystem::path>& keyfiles,
-                    std::string passphrase = "correct horse battery staple") {
+                    std::string_view passphrase = "correct horse battery staple") {
     KdfInput input;
-    input.passphrase_utf8 = std::move(passphrase);
+    input.passphrase = passphrase_buf(passphrase);
     input.keyfiles = keyfiles;
     input.salt = make_salt();
     input.archive_id = make_archive_id();
@@ -770,4 +778,73 @@ TEST(Kdf_RealParallelism, ChangingMemoryChangesMasterSeed) {
         << "different memory costs must derive different master seeds";
 
     std::filesystem::remove_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// SecureBuffer passphrase API — structural and behavioral tests
+// ---------------------------------------------------------------------------
+
+TEST(KdfInput, PassphraseIsSecureBuffer) {
+    // Compile-time: KdfInput::passphrase must be SecureBuffer, not std::string.
+    static_assert(std::is_same_v<decltype(KdfInput::passphrase), SecureBuffer>,
+                  "KdfInput::passphrase must be SecureBuffer");
+}
+
+TEST(KdfInput, IsNonCopyable) {
+    static_assert(!std::is_copy_constructible_v<KdfInput>,
+                  "KdfInput must not be copy-constructible (contains SecureBuffer)");
+    static_assert(!std::is_copy_assignable_v<KdfInput>,
+                  "KdfInput must not be copy-assignable (contains SecureBuffer)");
+}
+
+TEST(KdfInput, IsMoveConstructible) {
+    static_assert(std::is_move_constructible_v<KdfInput>);
+    static_assert(std::is_move_assignable_v<KdfInput>);
+}
+
+TEST(Kdf, LongPassphraseDerivesKey) {
+    // 4096-byte passphrase — verify Argon2id handles large inputs correctly.
+    const std::string long_pass(4096, 'A');
+    auto input = make_input({}, long_pass);
+    auto seed = derive_master_seed(input);
+    EXPECT_EQ(seed.size(), 32u);
+
+    // Deterministic.
+    auto input2 = make_input({}, long_pass);
+    auto seed2 = derive_master_seed(input2);
+    EXPECT_EQ(to_vector(seed), to_vector(seed2));
+}
+
+TEST(Kdf, UnicodeBytesPassphraseWorks) {
+    // Multi-byte UTF-8 sequences — treated as opaque bytes, not normalised.
+    // "Ελλάδα" (Greece in Greek) encoded in UTF-8: 12 bytes.
+    const std::string_view greek = "\xCE\x95\xCE\xBB\xCE\xBB\xCE\xAC\xCE\xB4\xCE\xB1";
+    auto input = make_input({}, greek);
+    auto seed = derive_master_seed(input);
+    EXPECT_EQ(seed.size(), 32u);
+
+    // Must differ from an ASCII passphrase with the same byte count.
+    auto input_ascii = make_input({}, "AAAAAAAAAAAA");
+    auto seed_ascii = derive_master_seed(input_ascii);
+    EXPECT_NE(to_vector(seed), to_vector(seed_ascii));
+}
+
+TEST(Kdf, EmptyPassphraseRejectedWithSecureBuffer) {
+    KdfInput input;
+    input.passphrase = SecureBuffer(0);  // explicitly zero-size
+    input.salt = make_salt();
+    input.archive_id = make_archive_id();
+    input.params = small_test_kdf_params();
+
+    EXPECT_THROW(derive_master_seed(input), InvalidArgument);
+}
+
+TEST(Kdf, PassphraseMismatchWipesSecureBuffer) {
+    // Verify that a moved-from SecureBuffer left in KdfInput after a failed derivation
+    // can be explicitly wiped without crashing and leaves the buffer empty.
+    KdfInput input = make_input({}, "wipe-me");
+    input.passphrase.wipe();  // explicit early wipe — must not crash
+    for (const Byte b : input.passphrase.as_span()) {
+        EXPECT_EQ(b, 0x00);
+    }
 }

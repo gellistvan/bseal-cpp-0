@@ -281,14 +281,15 @@ Passphrase and key material flows through the following wipe-on-destruct types:
   `SecureBuffer`, so they are wiped when the ShardWriter or ShardReader is destroyed.
 
 Passphrase input flow:
-1. `obtain_passphrase()` reads the passphrase into a temporary `std::string` staging buffer,
-   transfers the bytes into a `SecureBuffer`, and calls `secure_wipe_string()` on the
-   staging string before returning.  In the double-prompt path the confirm string is wiped
-   whether or not the passphrases match.
-2. `derive_expanded_keys()` accepts a `SecureBuffer` passphrase, assigns its bytes to a
-   short-lived `KdfInput::passphrase_utf8 std::string` (needed by the Argon2id API), then
-   calls `wipe()` on the `SecureBuffer` immediately.  The string is wiped with
-   `secure_wipe_string()` immediately after `derive_master_seed()` returns.
+1. `obtain_passphrase()` reads the passphrase into a temporary `std::string` staging buffer
+   (necessary because `std::getline` requires `std::string`), transfers the bytes into a
+   `SecureBuffer`, and calls `secure_wipe_string()` on the staging string before returning.
+   In the double-prompt path the confirm string is wiped whether or not the passphrases match.
+2. `derive_expanded_keys()` moves the `SecureBuffer` directly into `KdfInput::passphrase`.
+   Argon2id receives `passphrase.data()` and `passphrase.size()` from the locked allocation
+   with no intermediate `std::string` copy.  `input.passphrase.wipe()` is called immediately
+   after `derive_master_seed()` returns; the `KdfInput` destructor zeroes any residual bytes
+   on scope exit.
 
 ### sodium_malloc properties
 
@@ -321,11 +322,12 @@ Passphrase input flow:
   material.  Disable core dumps on production deployments.
 - **Debugger access**: a process-local debugger or `/proc/<pid>/mem` reader can read key
   material at any point during execution.
-- **`KdfInput::passphrase_utf8`**: the `std::string` field exists because Argon2id takes a
-  raw `void*` pointer.  It is wiped via `secure_wipe_string()` immediately after
-  `derive_master_seed()` returns, but the `std::string` destructor will subsequently call
-  `free()` on already-zeroed memory, leaving the allocator free-list in a state that could
-  reveal the string's former length to a heap-inspection attacker.
+- **`KdfInput::passphrase` lifetime**: the `KdfInput` struct now holds a `SecureBuffer` for
+  the passphrase.  Argon2id reads `passphrase.data()` / `passphrase.size()` directly from
+  locked memory; no intermediate `std::string` copy is made.  The passphrase is explicitly
+  wiped via `input.passphrase.wipe()` after `derive_master_seed()` returns, and again by the
+  `SecureBuffer` destructor when `KdfInput` goes out of scope.  The sodium_malloc backing means
+  the pages are locked into RAM (no swap) and guarded.
 
 ### Recommended operational mitigations
 
