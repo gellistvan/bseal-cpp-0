@@ -240,6 +240,8 @@ find_package(Python3 QUIET COMPONENTS Interpreter)
 if (Python3_FOUND)
     set(BSEAL_SCANNER_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/scan_unsafe_bypasses.py")
     set(BSEAL_SCANNER_SELFTEST "${CMAKE_SOURCE_DIR}/tests/scripts/test_scan_unsafe_bypasses.py")
+    set(BSEAL_CHECKLIST_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_release_checklist.py")
+    set(BSEAL_DOCS_LANGUAGE_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_docs_language.py")
 
     add_test(
         NAME scan.UnsafeBypassGuard
@@ -259,10 +261,30 @@ if (Python3_FOUND)
     set_tests_properties(scan.UnsafeBypassGuardSelfTest PROPERTIES
         LABELS "scan"
     )
+
+    add_test(
+        NAME scan.ReleaseChecklistConsistency
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_CHECKLIST_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.ReleaseChecklistConsistency PROPERTIES
+        LABELS "scan"
+    )
+
+    add_test(
+        NAME scan.DocsLanguage
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_DOCS_LANGUAGE_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.DocsLanguage PROPERTIES
+        LABELS "scan"
+    )
 else()
     message(WARNING
-        "Python 3 not found; scan.UnsafeBypassGuard tests will not be registered. "
-        "Install Python 3 to enable the unsafe bypass guardrail."
+        "Python 3 not found; scan.* tests will not be registered. "
+        "Install Python 3 to enable the unsafe bypass guardrail and docs consistency checks."
     )
 endif()
 
