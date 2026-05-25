@@ -1,6 +1,8 @@
 # Security Notes
 
 This file records design assumptions and implementation hazards.
+See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the security boundary, attacker
+capabilities in scope, protected assets, and non-goals.
 
 ## Practical, not absolute, security
 

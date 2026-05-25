@@ -199,7 +199,7 @@ Decrypt-only options:
   * `auto`: use the hardened POSIX backend when available (Linux/macOS); fall back to the portable backend on other platforms
   * `on`: require the hardened POSIX backend; fail immediately (exit 1) if the platform does not support it
   * `off`: always use the portable backend (TOCTOU window is not closed)
-  * The hardened POSIX backend traverses intermediate directories using `openat(2)` with `O_NOFOLLOW`, so a local attacker who races a directory replacement with a symlink cannot redirect extraction outside the output root. See `SECURITY_NOTES.md` for the full threat model.
+  * The hardened POSIX backend traverses intermediate directories using `openat(2)` with `O_NOFOLLOW`, so a local attacker who races a directory replacement with a symlink cannot redirect extraction outside the output root. See `docs/THREAT_MODEL.md` for the full threat model.
 * `--max-kdf-memory SIZE` — reject archives whose Argon2id memory cost exceeds SIZE (default: `2G`; covers all built-in KDF presets including `paranoid`)
 * `--max-kdf-iterations N` — reject archives whose Argon2id iteration count exceeds N (default: `4`)
 * `--max-kdf-parallelism N` — reject archives whose Argon2id parallelism exceeds N (default: `8`)
@@ -303,7 +303,9 @@ When changing crypto/container code:
 
 * [`IMPLEMENTATION_GUIDE.md`](IMPLEMENTATION_GUIDE.md) records design rules, implementation order, and testing requirements.
 * [`SECURITY_NOTES.md`](SECURITY_NOTES.md) records security assumptions and known hazards.
+* [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) — what BSEAL protects, what it leaks, attacker capabilities in scope, and non-goals.
 * [`docs/FORMAT.md`](docs/FORMAT.md) describes the archive/container format.
+* [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) — itemised pre-release blockers with status and proof requirements.
 
 ## License
 
