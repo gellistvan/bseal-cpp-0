@@ -289,6 +289,40 @@ Format stability is **not** the same as cryptographic soundness. The following r
 
 Until an audit is completed, this implementation should be treated as a research and educational tool, not a production secret-protection system.
 
+## CryptoBackend concurrency contract
+
+Both `EncryptPipeline` and `DecryptPipeline` share a single `CryptoBackend` instance across all
+worker threads without any mutex around `encrypt_chunk` / `decrypt_chunk` calls.  This is safe
+because:
+
+1. **Interface-level enforcement**: `encrypt_chunk` and `decrypt_chunk` are declared `const` on
+   `CryptoBackend`. The compiler statically rejects any implementation that writes to a non-mutable
+   member, making it impossible to accidentally introduce shared mutable state.
+
+2. **Both production backends are fully stateless**:
+   - `XChaCha20Poly1305Backend` calls libsodium directly; all working state is on the call stack.
+   - `AesGcmBackend` allocates a fresh `EVP_CIPHER_CTX` per call and destroys it before returning;
+     no `EVP_CIPHER_CTX` member variable exists.
+
+3. **libsodium thread safety**: `crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt` are
+   documented as thread-safe after `sodium_init()` has been called (which is enforced by
+   `ensure_sodium_initialized()` before each call).
+
+4. **OpenSSL thread safety**: OpenSSL 1.1+ is thread-safe for `EVP_*` operations that use
+   independent `EVP_CIPHER_CTX` objects. `AesGcmBackend` creates one `EVP_CIPHER_CTX` per call
+   so no shared mutable state exists.
+
+**Adding a new backend**: A backend MUST NOT store per-call mutable state as a member variable
+(e.g. a cached `EVP_CIPHER_CTX`, a running counter, or an output buffer). If per-call state is
+needed, allocate it as a local variable inside `encrypt_chunk` / `decrypt_chunk`. The `const`
+declaration on those methods enforces this at compile time.
+
+**ThreadSanitizer coverage**: `tests/crypto/TestCryptoBackendConcurrency.cpp` stress-tests
+both backends under 8–32 concurrent threads. `tests/pipeline/TestMultiWorkerPipeline.cpp`
+verifies deterministic output for both backends with 1, 2, and 4 pipeline workers. Build with
+`-DBSEAL_ENABLE_TSAN=ON` (separate from `-DBSEAL_ENABLE_SANITIZERS`) to run these tests under
+ThreadSanitizer.
+
 ## Integer overflow hardening
 
 Size arithmetic in the encrypt path (padding computation, chunk-count calculation, shard payload

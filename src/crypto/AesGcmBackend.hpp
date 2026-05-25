@@ -17,8 +17,8 @@ public:
     [[nodiscard]] std::size_t nonce_size() const noexcept override;
     [[nodiscard]] std::size_t tag_size() const noexcept override;
 
-    Bytes encrypt_chunk(const EncryptChunkRequest& request) override;
-    Bytes decrypt_chunk(const DecryptChunkRequest& request) override;
+    Bytes encrypt_chunk(const EncryptChunkRequest& request) const override;
+    Bytes decrypt_chunk(const DecryptChunkRequest& request) const override;
 };
 
 } // namespace bseal::crypto

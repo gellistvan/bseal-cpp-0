@@ -89,21 +89,25 @@ add_executable(bseal_crypto_gtests
         crypto/TestXChaCha20Poly1305Backend.cpp
         crypto/TestKdf.cpp
         crypto/TestKeySchedule.cpp
+        crypto/TestCryptoBackendConcurrency.cpp
 )
 
 target_link_libraries(bseal_crypto_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_crypto_gtests)
 bseal_enable_sanitizers_if_requested(bseal_crypto_gtests)
+bseal_enable_tsan_if_requested(bseal_crypto_gtests)
 
 add_executable(bseal_pipeline_gtests
         pipeline/TestWorkQueue.cpp
         pipeline/TestEncryptPipeline.cpp
         pipeline/TestDecryptPipeline.cpp
+        pipeline/TestMultiWorkerPipeline.cpp
 )
 
 target_link_libraries(bseal_pipeline_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_pipeline_gtests)
 bseal_enable_sanitizers_if_requested(bseal_pipeline_gtests)
+bseal_enable_tsan_if_requested(bseal_pipeline_gtests)
 
 if (GTest_FOUND)
     include(GoogleTest)
