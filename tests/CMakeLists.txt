@@ -212,6 +212,7 @@ add_executable(bseal_integration_gtests
         integration/TestFormatV1Archive.cpp
         integration/TestKdfPolicyCli.cpp
         integration/TestSelfTestCommand.cpp
+        integration/TestStdoutEncrypt.cpp
 )
 
 add_dependencies(bseal_integration_gtests bseal)
