@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "crypto/XChaCha20Poly1305Backend.hpp"
 
 #include "common/CheckedArithmetic.hpp"

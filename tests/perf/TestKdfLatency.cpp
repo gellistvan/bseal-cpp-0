@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Performance tests: KDF latency.
 //
 // docs/INCENTIVE.md §16.5: password-based key derivation is intentionally expensive.

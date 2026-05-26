@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Fuzz target: archive record format parsers
 //
 // Exercises parse_record, encoded_record_size_if_complete, and parse_entry_metadata.

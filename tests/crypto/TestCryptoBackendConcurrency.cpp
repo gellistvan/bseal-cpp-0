@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Concurrency stress tests for the two production AEAD backends.
 //
 // These tests exercise encrypt_chunk / decrypt_chunk from multiple threads

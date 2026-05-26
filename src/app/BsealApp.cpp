@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "app/BsealApp.hpp"
 
 #include "archive/ArchiveReader.hpp"

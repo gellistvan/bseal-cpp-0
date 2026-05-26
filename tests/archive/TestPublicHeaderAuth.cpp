@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /// Tests for the new per-shard compute_public_header_hash and
 /// compute_shard_header_mac / verify_shard_header_mac functions (FORMAT.md §5, §6).
 

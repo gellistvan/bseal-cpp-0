@@ -256,6 +256,7 @@ if (Python3_FOUND)
     set(BSEAL_SCANNER_SELFTEST "${CMAKE_SOURCE_DIR}/tests/scripts/test_scan_unsafe_bypasses.py")
     set(BSEAL_CHECKLIST_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_release_checklist.py")
     set(BSEAL_DOCS_LANGUAGE_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_docs_language.py")
+    set(BSEAL_LICENSE_HEADERS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_license_headers.py")
 
     add_test(
         NAME scan.UnsafeBypassGuard
@@ -293,6 +294,16 @@ if (Python3_FOUND)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     set_tests_properties(scan.DocsLanguage PROPERTIES
+        LABELS "scan"
+    )
+
+    add_test(
+        NAME scan.LicenseHeaders
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_LICENSE_HEADERS_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.LicenseHeaders PROPERTIES
         LABELS "scan"
     )
 else()

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Known-answer tests for the BSEAL-F1 format (FORMAT.md §23).
 //
 // Each test computes a value from fixed inputs and either:
