@@ -84,6 +84,7 @@ add_executable(bseal_archive_gtests
         archive/TestMetadata.cpp
         archive/TestPathSanitizer.cpp
         archive/TestRecordFormat.cpp
+        archive/TestRecordPayloadCap.cpp
         archive/TestSafeOutputTree.cpp
         archive/TestMalformedRecords.cpp
 )

@@ -176,6 +176,10 @@ std::optional<std::size_t> encoded_record_size_if_complete(ConstByteSpan bytes) 
         payload_size |= static_cast<std::uint64_t>(bytes[1 + i]) << (8 * i);
     }
 
+    if (payload_size > static_cast<std::uint64_t>(kMaxRecordPayloadBytes)) {
+        throw InvalidArgument("archive record payload exceeds maximum allowed size");
+    }
+
     if (payload_size >
         static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max() -
                                    kRecordPrefixSize)) {
