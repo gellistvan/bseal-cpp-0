@@ -1,3 +1,5 @@
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 # BSEAL C++
 
 BSEAL is an experimental C++20 command-line tool for sealing a directory into randomized `*.bin` shard files and restoring it later with the same passphrase and keyfile set.
@@ -354,4 +356,8 @@ When changing crypto/container code:
 
 ## License
 
-Add the project license here before publishing release artifacts.
+[Apache License 2.0](LICENSE)
+
+This project is licensed under the Apache License, Version 2.0. See the
+[LICENSE](LICENSE) file for the full text and the [NOTICE](NOTICE) file for
+third-party dependency attributions.

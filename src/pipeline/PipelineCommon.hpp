@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #pragma once
 
 // Internal helpers shared by EncryptPipeline and DecryptPipeline.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Fuzz target: parse_shard_public_header
 //
 // Feeds arbitrary bytes to parse_shard_public_header.

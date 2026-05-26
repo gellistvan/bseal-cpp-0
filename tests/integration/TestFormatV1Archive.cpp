@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Round-trip archive fixture test for the BSEAL-F1 format (FORMAT.md §23).
 //
 // In NORMAL mode: decrypts the committed archive fixture and verifies output.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Performance tests: AEAD encrypt/decrypt throughput.
 //
 // These tests measure in-memory throughput of the two AEAD backends and assert

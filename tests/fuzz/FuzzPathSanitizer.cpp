@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Fuzz target: PathSanitizer — is_safe_relative_path and make_safe_output_path
 //
 // Interprets the input as a UTF-8 path string and exercises both APIs.

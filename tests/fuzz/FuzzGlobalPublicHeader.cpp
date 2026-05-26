@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Fuzz target: parse_global_public_header
 //
 // Feeds arbitrary bytes to parse_global_public_header.  All bseal::Error throws are

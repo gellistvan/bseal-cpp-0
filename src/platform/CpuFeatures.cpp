@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "platform/CpuFeatures.hpp"
 
 #if defined(__i386__) || defined(__x86_64__)

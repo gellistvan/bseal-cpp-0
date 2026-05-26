@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "platform/Random.hpp"
 #include "common/Errors.hpp"
 

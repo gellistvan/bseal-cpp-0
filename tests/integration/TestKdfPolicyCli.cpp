@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // CLI-level integration tests for KDF resource-policy rejection and the
 // benchmark-kdf command.
 //

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "archive/PathSanitizer.hpp"
 
 #include "ArchiveTestUtils.hpp"
