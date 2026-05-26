@@ -240,6 +240,26 @@ BSEAL is a local tool, not a server. DoS is not a primary threat model. However:
 
 ---
 
+## Hardware AES requirement
+
+The `aes-256-gcm` cipher suite requires hardware AES acceleration. On x86/x86-64 this
+means AES-NI; on aarch64 Linux it requires the ARMv8 AES extension (`AT_HWCAP & HWCAP_AES`).
+
+BSEAL enforces this at startup, before any key derivation or output file creation. If
+hardware AES is absent and `--suite aes-256-gcm` is requested, the tool exits with code 1
+and a clear error message suggesting `--suite xchacha20-poly1305` as an alternative.
+
+**Rationale**: OpenSSL's AES-256-GCM implementation falls back to a software AES path when
+hardware instructions are unavailable. Software AES is significantly slower and — depending
+on the hardware and implementation — may be vulnerable to cache-timing attacks (cache-based
+AES side channels on CPUs without hardware AES). Failing closed eliminates this class of
+deployment error.
+
+Use `bseal cpu-features` to check whether hardware AES is available on the current host
+before selecting a cipher suite.
+
+---
+
 ## Side-channel assumptions
 
 - Timing-safe comparison: libsodium's `crypto_verify_*` and HMAC implementations are

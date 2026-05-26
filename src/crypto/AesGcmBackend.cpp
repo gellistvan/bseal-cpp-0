@@ -3,6 +3,7 @@
 
 #include "common/CheckedArithmetic.hpp"
 #include "common/Errors.hpp"
+#include "platform/CpuFeatures.hpp"
 
 #include <memory>
 #include <openssl/evp.h>
@@ -22,6 +23,14 @@ EvpCipherCtxPtr make_cipher_ctx() {
 }
 
 } // namespace
+
+AesGcmBackend::AesGcmBackend() {
+    if (!bseal::platform::has_hardware_aes()) {
+        throw Error(
+            "AES-256-GCM requires hardware AES support; this CPU does not have AES-NI or "
+            "ARMv8 AES extensions. Use --suite xchacha20-poly1305 instead.");
+    }
+}
 
 CipherSuite AesGcmBackend::suite() const noexcept {
     return CipherSuite::Aes256Gcm;

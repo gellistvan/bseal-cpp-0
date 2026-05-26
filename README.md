@@ -246,6 +246,14 @@ Benchmark KDF presets on your hardware (no archive is created):
 bseal benchmark-kdf
 ```
 
+Check hardware AES availability before choosing a cipher suite:
+
+```bash
+bseal cpu-features
+```
+
+Exit code is 0 if hardware AES (AES-NI / ARMv8 AES) is available, 1 if not. See `docs/CPU_REQUIREMENTS.md` for details.
+
 Current exit codes:
 
 * `0`: success, including `--help`
