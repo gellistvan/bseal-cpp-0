@@ -99,6 +99,7 @@ add_executable(bseal_crypto_gtests
         crypto/TestAesGcmBackend.cpp
         crypto/TestXChaCha20Poly1305Backend.cpp
         crypto/TestKdf.cpp
+        crypto/TestKdfSecureMemory.cpp
         crypto/TestKeySchedule.cpp
         crypto/TestCryptoBackendConcurrency.cpp
 )
