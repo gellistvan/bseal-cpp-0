@@ -255,6 +255,10 @@ immediately with exit code 1 on Windows.
 - **Symlink extraction disabled by default** (`allow_symlinks = false`). When enabled, symlink
   targets are validated as safe relative paths (no `..` components, no absolute paths).
 
+## Bounded authenticated record sizes
+
+Archive records flow through the AEAD layer, so an external attacker without the symmetric key cannot inject records. However, anyone who possesses the key — a former collaborator, a host compromised during encryption, or a leaked backup — can craft a fully authenticated archive whose record headers declare arbitrarily large payload sizes. Without an explicit cap, `ArchiveReader::consume` would buffer up to `size_t::max - 9` bytes before even beginning to parse a record, allowing a key-holding adversary to force arbitrarily large heap allocations on the decrypting host. `encoded_record_size_if_complete` enforces `kMaxRecordPayloadBytes = 128 MiB` on the declared `payload_size` field **before** computing the total record size or waiting for payload bytes to arrive. This cap is 2× the 64 MiB `chunk_plain_size` upper bound enforced by `parse_global_public_header`, so no legitimate encryptor can produce records that reach it; any header declaring a larger payload is rejected with `InvalidArgument` immediately, with no heap allocation.
+
 ## KDF resource policy
 
 Argon2id parameters (memory, iteration count, parallelism) are stored unencrypted in the public
