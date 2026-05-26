@@ -19,6 +19,7 @@
 #include "io/ShardWriter.hpp"
 #include "pipeline/DecryptPipeline.hpp"
 #include "pipeline/EncryptPipeline.hpp"
+#include "platform/CpuFeatures.hpp"
 #include "platform/DurableFile.hpp"
 #include "platform/PassphrasePrompt.hpp"
 #include "platform/Random.hpp"
@@ -436,6 +437,11 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         }
     }
 
+    // Construct backend before key derivation so that a hardware-AES check failure
+    // (Error, exit 1) surfaces before the expensive Argon2id run and before any
+    // output files are created.
+    auto backend = make_backend(context.suite);
+
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
     auto keys       = derive_expanded_keys(context, std::move(passphrase), options.keyfiles);
 
@@ -543,7 +549,7 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     bseal::pipeline::EncryptPipeline pipeline(
         pipeline_options,
-        make_backend(context.suite),
+        std::move(backend),
         std::move(keys),
         std::move(archive_writer),
         std::move(shard_writer));
@@ -731,6 +737,27 @@ int benchmark_kdf(const bseal::cli::BenchmarkKdfOptions& options) {
     }
 
     return 0;
+}
+
+int cpu_features_info(const bseal::cli::CpuFeaturesOptions& /*options*/) {
+    const auto features = bseal::platform::detect_cpu_features();
+    const bool hw_aes   = bseal::platform::has_hardware_aes();
+
+    std::cout << "Hardware AES: " << (hw_aes ? "yes" : "no") << '\n';
+
+#if defined(__i386__) || defined(__x86_64__)
+    std::cout << "  aes-ni:    " << (features.aes_ni    ? "yes" : "no") << '\n';
+    std::cout << "  pclmulqdq: " << (features.pclmulqdq ? "yes" : "no") << '\n';
+    std::cout << "  avx2:      " << (features.avx2      ? "yes" : "no") << '\n';
+    std::cout << "  avx512f:   " << (features.avx512f   ? "yes" : "no") << '\n';
+    std::cout << "  vaes:      " << (features.vaes       ? "yes" : "no") << '\n';
+#elif defined(__aarch64__)
+    std::cout << "  neon:      " << (features.neon ? "yes" : "no") << '\n';
+#else
+    (void)features;
+#endif
+
+    return hw_aes ? 0 : 1;
 }
 
 } // namespace bseal::app

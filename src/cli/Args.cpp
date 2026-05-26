@@ -206,6 +206,15 @@ ParsedArgs parse_args(int argc, char** argv) {
         return parsed;
     }
 
+    if (command == "cpu-features") {
+        parsed.command = Command::CpuFeatures;
+        for (int i = 2; i < argc; ++i) {
+            throw InvalidArgument("cpu-features takes no options; unknown: " +
+                                  std::string(argv[i]));
+        }
+        return parsed;
+    }
+
     throw InvalidArgument("unknown command: " + std::string(command));
 }
 
@@ -219,6 +228,7 @@ Usage:
   bseal encrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
   bseal decrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
   bseal benchmark-kdf [options]
+  bseal cpu-features
 
 Encrypt options:
   --suite xchacha20-poly1305|aes-256-gcm
@@ -253,6 +263,11 @@ Decrypt options:
 
 Benchmark options:
   --dry-run               print preset parameters without running Argon2id
+
+CPU-features:
+  Prints detected hardware capabilities. AES-256-GCM requires hardware AES
+  support (AES-NI on x86/x86-64, ARMv8 AES extensions on aarch64).
+  Exit code: 0 if hardware AES is available, 1 if not.
 )USAGE";
 }
 

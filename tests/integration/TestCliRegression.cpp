@@ -1118,3 +1118,25 @@ TEST(BlackBoxCliRegression, KdfPolicyViolationReturnsExitCode1) {
   EXPECT_NE(result.exit_code, 3)
       << "KDF policy violation must be exit 1, not auth failure";
 }
+
+// cpu-features subcommand must exit 0 or 1, never 3 (auth failure).
+// The exit code is 0 when hardware AES is detected, 1 when not.
+// We only assert the range [0,1]; the exact value is CPU-dependent.
+TEST(BlackBoxCliRegression, CpuFeaturesCommandExitsZeroOrOne) {
+  TempDir temp("bseal_cpu_features");
+  const auto result = run_bseal(temp.subdir("run"), {"cpu-features"}, "");
+
+  EXPECT_TRUE(result.exit_code == 0 || result.exit_code == 1)
+      << "cpu-features must exit 0 or 1; got " << result.exit_code;
+  EXPECT_NE(result.exit_code, 3) << "cpu-features must not emit auth-failure exit code";
+  EXPECT_NE(result.stdout_text.find("Hardware AES:"), std::string::npos)
+      << "cpu-features output must contain 'Hardware AES:'; got: " << result.stdout_text;
+}
+
+// cpu-features with an unknown option must exit 1 with an error message.
+TEST(BlackBoxCliRegression, CpuFeaturesUnknownOptionExitsOne) {
+  TempDir temp("bseal_cpu_features_bad_opt");
+  const auto result = run_bseal(temp.subdir("run"), {"cpu-features", "--bogus"}, "");
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}

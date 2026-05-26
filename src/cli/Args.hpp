@@ -19,6 +19,7 @@ enum class Command {
     Encrypt,
     Decrypt,
     BenchmarkKdf,
+    CpuFeatures,
 };
 
 enum class PaddingPolicyKind {
@@ -69,11 +70,14 @@ struct BenchmarkKdfOptions {
     bool dry_run{false};
 };
 
+struct CpuFeaturesOptions {};
+
 struct ParsedArgs {
     Command command{Command::Help};
     EncryptOptions encrypt;
     DecryptOptions decrypt;
     BenchmarkKdfOptions benchmark_kdf;
+    CpuFeaturesOptions cpu_features;
 };
 
 ParsedArgs parse_args(int argc, char** argv);

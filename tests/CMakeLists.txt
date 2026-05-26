@@ -35,6 +35,7 @@ add_executable(bseal_platform_gtests
     platform/TestCpuFeatures.cpp
     platform/TestDurableFile.cpp
     platform/TestPassphrasePrompt.cpp
+    platform/TestHardwareAes.cpp
 )
 
 target_link_libraries(bseal_platform_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
@@ -102,6 +103,7 @@ add_executable(bseal_crypto_gtests
         crypto/TestKdfSecureMemory.cpp
         crypto/TestKeySchedule.cpp
         crypto/TestCryptoBackendConcurrency.cpp
+        crypto/TestAesGcmRequiresHardware.cpp
 )
 
 target_link_libraries(bseal_crypto_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
