@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "archive/RecordFormat.hpp"
 
 #include "archive/PathSanitizer.hpp"
@@ -173,6 +174,10 @@ std::optional<std::size_t> encoded_record_size_if_complete(ConstByteSpan bytes) 
     std::uint64_t payload_size = 0;
     for (int i = 0; i < 8; ++i) {
         payload_size |= static_cast<std::uint64_t>(bytes[1 + i]) << (8 * i);
+    }
+
+    if (payload_size > static_cast<std::uint64_t>(kMaxRecordPayloadBytes)) {
+        throw InvalidArgument("archive record payload exceeds maximum allowed size");
     }
 
     if (payload_size >

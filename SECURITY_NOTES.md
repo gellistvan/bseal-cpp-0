@@ -255,6 +255,10 @@ immediately with exit code 1 on Windows.
 - **Symlink extraction disabled by default** (`allow_symlinks = false`). When enabled, symlink
   targets are validated as safe relative paths (no `..` components, no absolute paths).
 
+## Bounded authenticated record sizes
+
+Archive records flow through the AEAD layer, so an external attacker without the symmetric key cannot inject records. However, anyone who possesses the key — a former collaborator, a host compromised during encryption, or a leaked backup — can craft a fully authenticated archive whose record headers declare arbitrarily large payload sizes. Without an explicit cap, `ArchiveReader::consume` would buffer up to `size_t::max - 9` bytes before even beginning to parse a record, allowing a key-holding adversary to force arbitrarily large heap allocations on the decrypting host. `encoded_record_size_if_complete` enforces `kMaxRecordPayloadBytes = 128 MiB` on the declared `payload_size` field **before** computing the total record size or waiting for payload bytes to arrive. This cap is 2× the 64 MiB `chunk_plain_size` upper bound enforced by `parse_global_public_header`, so no legitimate encryptor can produce records that reach it; any header declaring a larger payload is rejected with `InvalidArgument` immediately, with no heap allocation.
+
 ## KDF resource policy
 
 Argon2id parameters (memory, iteration count, parallelism) are stored unencrypted in the public
@@ -387,6 +391,18 @@ Passphrase input flow:
    stack or a small-string-optimized inline buffer; the wipe covers `s.data()` up to
    `s.size()`.
 
+4. **HKDF IKM in SecureBuffer**: the Argon2id output (`pass_key`) is key-equivalent
+   material. To prevent stale copies on the regular heap, `derive_master_seed` assembles
+   the HKDF IKM (`pass_key || keyfile_mix`) in a `SecureBuffer` rather than a
+   `std::vector`. A `std::vector::insert` or `reserve`+`push_back` sequence can
+   reallocate internally; the new block is initialized from the old one and the old one
+   is freed by the allocator without zeroing, leaving a heap copy that `secure_memzero`
+   on the final pointer would not reach. The `SecureBuffer` destructor zeroes and frees
+   the single locked allocation, closing this window. The HKDF salt (`archive_id ||
+   kdf_salt`) is kept in a regular `Bytes` vector because both values are stored
+   unencrypted in the public archive header and locking public data in secure memory
+   would waste `RLIMIT_MEMLOCK` quota without any security benefit.
+
 4. `derive_expanded_keys()` moves the `SecureBuffer` directly into `KdfInput::passphrase`.
    Argon2id receives `passphrase.data()` and `passphrase.size()` from the locked allocation
    with no intermediate `std::string` copy.  `input.passphrase.wipe()` is called immediately
@@ -479,3 +495,13 @@ Policy-rejection messages (e.g., the KDF memory limit) name the relevant flag so
 ### Implementation note
 
 `bseal::AuthenticationFailed` is a fixed-message exception with no parameters. Every code path that detects an authentication failure — `verify_all_shard_header_macs()`, `ShardReader::validate_shards()`, the AEAD backend `decrypt()` methods, and `DecryptPipeline` — throws this type. `src/main.cpp` maps it to exit code 3.
+
+## Stdout output mode — memory profile
+
+When `--output -` is passed, `StdoutShardWriter` accumulates the entire encrypted shard in a `std::vector<Byte>` before writing it to stdout in a single call. This differs from file output, where each encrypted chunk frame is written immediately to disk.
+
+**Memory implication:** peak resident memory during stdout-mode encryption is at least the size of the ciphertext (plaintext + AEAD tags + frame headers). For large archives this can be gigabytes. BSEAL enforces a 1 GiB guard by default: if the planned plaintext size exceeds 1 GiB, `encrypt()` exits with an error before any chunk is encrypted. Pass `--allow-large-stdout` to override — only do so when the host has sufficient RAM.
+
+**No crypto change:** stdout mode uses the same AEAD, key schedule, nonce derivation, and shard header MAC as file output. The only difference is that `max_shard_payload_len` in the global header is set to `UINT64_MAX` (instead of the `--shard-size` value) because stdout always produces exactly one shard. This value is part of the AEAD AAD, so a stdout-produced shard and a file-produced shard from the same input will decrypt to the same content but have different raw ciphertext bytes — both are valid archives.
+
+**Secret material:** the header authentication key held in `StdoutShardWriterOptions::header_authentication_key` is a `SecureBuffer` and is wiped on destruction, providing the same secret-handling guarantees as file-mode `ShardWriter`.

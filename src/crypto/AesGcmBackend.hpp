@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #pragma once
 
 #include "crypto/CryptoBackend.hpp"
@@ -11,6 +12,9 @@ namespace bseal::crypto {
 // - Use AES-NI/PCLMULQDQ/VAES via the provider, not custom AES.
 class AesGcmBackend final : public CryptoBackend {
 public:
+    // Throws Error if hardware AES instructions are not available on this CPU.
+    AesGcmBackend();
+
     [[nodiscard]] CipherSuite suite() const noexcept override;
     [[nodiscard]] std::string_view name() const noexcept override;
     [[nodiscard]] std::size_t key_size() const noexcept override;

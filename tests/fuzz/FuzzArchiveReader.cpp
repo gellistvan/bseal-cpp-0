@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Fuzz target: ArchiveReader::consume / finish
 //
 // Feeds arbitrary bytes as authenticated plaintext to ArchiveReader.

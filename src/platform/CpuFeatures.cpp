@@ -1,8 +1,14 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "platform/CpuFeatures.hpp"
 
 #if defined(__i386__) || defined(__x86_64__)
 #include <cpuid.h>
 #include <cstdint>
+#endif
+
+#if defined(__aarch64__) && defined(__linux__)
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
 #endif
 
 namespace bseal::platform {
@@ -20,6 +26,18 @@ namespace {
     return (value & (1u << bit)) != 0;
 }
 #endif
+
+bool detect_hardware_aes_native() noexcept {
+#if defined(__i386__) || defined(__x86_64__)
+    return detect_cpu_features().aes_ni;
+#elif defined(__aarch64__) && defined(__linux__)
+    return (getauxval(AT_HWCAP) & HWCAP_AES) != 0;
+#else
+    return false;
+#endif
+}
+
+static bool g_force_no_hardware_aes = false;
 
 } // namespace
 
@@ -75,6 +93,22 @@ CpuFeatures detect_cpu_features() {
 #endif
 
     return features;
+}
+
+bool has_hardware_aes() noexcept {
+    if (g_force_no_hardware_aes) {
+        return false;
+    }
+    static const bool cached = detect_hardware_aes_native();
+    return cached;
+}
+
+void cpu_features_set_no_hardware_aes_for_tests() noexcept {
+    g_force_no_hardware_aes = true;
+}
+
+void cpu_features_clear_hardware_aes_override_for_tests() noexcept {
+    g_force_no_hardware_aes = false;
 }
 
 } // namespace bseal::platform

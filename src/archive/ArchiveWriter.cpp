@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "archive/ArchiveWriter.hpp"
 
 #include "archive/PathSanitizer.hpp"
@@ -15,9 +16,8 @@ namespace {
 
 std::int64_t file_time_to_unix_ns(std::filesystem::file_time_type tp) {
     using namespace std::chrono;
-    const auto system_tp =
-        time_point_cast<nanoseconds>(tp - std::filesystem::file_time_type::clock::now() +
-                                     system_clock::now());
+    const auto system_tp = time_point_cast<nanoseconds>(
+        clock_cast<system_clock>(tp));
     return system_tp.time_since_epoch().count();
 }
 

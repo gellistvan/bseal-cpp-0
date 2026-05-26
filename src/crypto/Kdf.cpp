@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include <array>
 
 #include "crypto/Kdf.hpp"
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <argon2.h>
 #include <blake3.h>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -255,11 +257,18 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
         throw Error(std::string("Argon2id derivation failed: ") + argon2_error_message(rc));
     }
 
-    Bytes ikm;
-    ikm.reserve(pass_key.size() + keyfile_mix.size());
-    ikm.insert(ikm.end(), pass_key.data(), pass_key.data() + pass_key.size());
-    ikm.insert(ikm.end(), keyfile_mix.begin(), keyfile_mix.end());
+    // Build the HKDF IKM (pass_key || keyfile_mix) in a SecureBuffer so that Argon2id-derived
+    // key material stays in sodium_malloc-backed locked memory from derivation to HKDF input.
+    // A std::vector would reallocate on insert/push_back and could leave stale heap copies
+    // that a later secure_memzero on the final pointer would not reach.
+    const std::size_t ikm_size = pass_key.size() + keyfile_mix.size();
+    SecureBuffer ikm(ikm_size);
+    std::memcpy(ikm.data(), pass_key.data(), pass_key.size());
+    std::memcpy(ikm.data() + pass_key.size(), keyfile_mix.data(), keyfile_mix.size());
 
+    // hkdf_salt is archive_id || kdf_salt, both public values stored in the plaintext archive
+    // header. A regular Bytes allocation is sufficient here — locking public data in secure
+    // memory would waste locked-memory quota (RLIMIT_MEMLOCK) without any security benefit.
     Bytes hkdf_salt;
     hkdf_salt.reserve(input.archive_id.size() + input.salt.size());
     hkdf_salt.insert(hkdf_salt.end(), input.archive_id.begin(), input.archive_id.end());
@@ -277,7 +286,8 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
         32
     );
 
-    secure_memzero(ikm.data(), ikm.size());
+    // ikm is a SecureBuffer — its destructor zeros and frees automatically.
+    // hkdf_salt and keyfile_mix are regular heap / stack storage: wipe explicitly.
     secure_memzero(hkdf_salt.data(), hkdf_salt.size());
     secure_memzero(keyfile_mix.data(), keyfile_mix.size());
 

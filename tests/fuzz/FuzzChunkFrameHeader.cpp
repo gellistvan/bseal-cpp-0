@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Fuzz target: parse_chunk_frame_header_v1
 //
 // Feeds arbitrary bytes to parse_chunk_frame_header_v1.

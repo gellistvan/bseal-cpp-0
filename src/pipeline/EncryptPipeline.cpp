@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "pipeline/EncryptPipeline.hpp"
 
 #include "common/Errors.hpp"
@@ -83,7 +84,7 @@ void validate_encrypt_pipeline_inputs(
 }
 
 bool enqueue_planned_chunk(
-    io::ShardWriter& shard_writer,
+    io::AnyShardWriter& shard_writer,
     WorkQueue<PlainChunk>& encrypt_queue,
     std::uint64_t chunk_index,
     Bytes bytes,
@@ -112,7 +113,7 @@ bool append_record_bytes_to_chunks(
     Bytes& current_chunk,
     std::optional<Bytes>& pending_full_chunk,
     std::uint64_t& next_chunk_index,
-    io::ShardWriter& shard_writer,
+    io::AnyShardWriter& shard_writer,
     WorkQueue<PlainChunk>& encrypt_queue,
     std::uint16_t tag_size) {
     auto flush_pending_as_non_final = [&]() -> bool {
@@ -161,7 +162,7 @@ bool append_record_bytes_to_chunks(
 
 void producer_main(
     archive::ArchiveWriter& archive_writer,
-    io::ShardWriter& shard_writer,
+    io::AnyShardWriter& shard_writer,
     const EncryptPipelineOptions& options,
     std::uint16_t tag_size,
     WorkQueue<PlainChunk>& encrypt_queue,
@@ -323,7 +324,7 @@ void encryption_worker_main(
 }
 
 void ordered_writer_main(
-    io::ShardWriter& shard_writer,
+    io::AnyShardWriter& shard_writer,
     WorkQueue<CipherChunk>& write_queue,
     FailureState& failure_state) {
     std::map<std::uint64_t, CipherChunk> pending;
@@ -382,7 +383,7 @@ void ordered_writer_main(
         std::unique_ptr<crypto::CryptoBackend> backend,
         crypto::ExpandedKeys keys,
         archive::ArchiveWriter archive_writer,
-        io::ShardWriter shard_writer)
+        io::AnyShardWriter shard_writer)
         : options_(std::move(options)),
           backend_(std::move(backend)),
           keys_(std::move(keys)),

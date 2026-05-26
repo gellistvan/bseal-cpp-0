@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "archive/Metadata.hpp"
 #include "archive/RecordFormat.hpp"
 

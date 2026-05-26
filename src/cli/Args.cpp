@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include "cli/Args.hpp"
 
 #include "common/Errors.hpp"
@@ -143,15 +144,29 @@ ParsedArgs parse_args(int argc, char** argv) {
                 parsed.encrypt.chunk_size = parse_size_bytes(arg_at(++i, argc, argv));
             } else if (key == "--shard-size") {
                 parsed.encrypt.shard_size = parse_size_bytes(arg_at(++i, argc, argv));
+                parsed.encrypt.shard_size_explicit = true;
+            } else if (key == "--allow-large-stdout") {
+                parsed.encrypt.allow_large_stdout = true;
             } else if (key == "--padding") {
                 parsed.encrypt.padding = parse_padding(arg_at(++i, argc, argv));
             } else if (key == "--durability") {
                 parsed.encrypt.durability_mode = parse_durability(arg_at(++i, argc, argv));
-            } else if (key == "--input" || key == "--output" || key == "--keyfile") {
+            } else if (key == "--output") {
+                const std::string_view val = arg_at(++i, argc, argv);
+                if (val == "-") {
+                    parsed.encrypt.stdout_output = true;
+                } else {
+                    parsed.encrypt.output = std::filesystem::path(val);
+                }
+            } else if (key == "--input" || key == "--keyfile") {
                 parse_common_option(parsed.encrypt, key, arg_at(++i, argc, argv));
             } else {
                 throw InvalidArgument("unknown option: " + std::string(key));
             }
+        }
+        if (parsed.encrypt.stdout_output && parsed.encrypt.shard_size_explicit) {
+            throw InvalidArgument(
+                "--shard-size is incompatible with --output -; stdout always produces one shard");
         }
         return parsed;
     }
@@ -205,6 +220,28 @@ ParsedArgs parse_args(int argc, char** argv) {
         return parsed;
     }
 
+    if (command == "cpu-features") {
+        parsed.command = Command::CpuFeatures;
+        for (int i = 2; i < argc; ++i) {
+            throw InvalidArgument("cpu-features takes no options; unknown: " +
+                                  std::string(argv[i]));
+        }
+        return parsed;
+    }
+
+    if (command == "self-test") {
+        parsed.command = Command::SelfTest;
+        for (int i = 2; i < argc; ++i) {
+            const std::string_view key = argv[i];
+            if (key == "--strict") {
+                parsed.self_test.strict = true;
+            } else {
+                throw InvalidArgument("unknown self-test option: " + std::string(key));
+            }
+        }
+        return parsed;
+    }
+
     throw InvalidArgument("unknown command: " + std::string(command));
 }
 
@@ -215,9 +252,12 @@ Supported platform: Linux. Windows is recognized in the codebase but is not
 explicitly supported or tested; use on Windows is at your own risk.
 
 Usage:
-  bseal encrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
+  bseal encrypt --input DIR --output DIR  --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
+  bseal encrypt --input DIR --output -    [options]   (stdout mode; single buffered shard)
   bseal decrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
   bseal benchmark-kdf [options]
+  bseal cpu-features
+  bseal self-test [--strict]
 
 Encrypt options:
   --suite xchacha20-poly1305|aes-256-gcm
@@ -226,8 +266,9 @@ Encrypt options:
                             aes-256-gcm:        hardware-accelerated alternative (requires AES-NI)
   --kdf fast|strong|paranoid
   --chunk-size 16M
-  --shard-size 4G
+  --shard-size 4G         incompatible with --output -
   --padding none|chunk|power2|fixed-size=N
+  --allow-large-stdout    required when --output - and planned plaintext size exceeds 1 GiB
   --durability off|best-effort|on
                           shard flush mode after finalization (default: best-effort)
                             off:          no fsync; OS page-cache only
@@ -252,6 +293,17 @@ Decrypt options:
 
 Benchmark options:
   --dry-run               print preset parameters without running Argon2id
+
+CPU-features:
+  Prints detected hardware capabilities. AES-256-GCM requires hardware AES
+  support (AES-NI on x86/x86-64, ARMv8 AES extensions on aarch64).
+  Exit code: 0 if hardware AES is available, 1 if not.
+
+Self-test options:
+  --strict                treat a skipped AES-256-GCM check (no hardware AES) as a failure
+  Exit codes: 0 success, 2 KAT failure or strict-mode skip.
+  Run after installation, after upgrading libsodium/OpenSSL, and before trusting
+  an archive on an unfamiliar machine.
 )USAGE";
 }
 

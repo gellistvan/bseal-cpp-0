@@ -35,6 +35,7 @@ add_executable(bseal_platform_gtests
     platform/TestCpuFeatures.cpp
     platform/TestDurableFile.cpp
     platform/TestPassphrasePrompt.cpp
+    platform/TestHardwareAes.cpp
 )
 
 target_link_libraries(bseal_platform_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
@@ -84,6 +85,7 @@ add_executable(bseal_archive_gtests
         archive/TestMetadata.cpp
         archive/TestPathSanitizer.cpp
         archive/TestRecordFormat.cpp
+        archive/TestRecordPayloadCap.cpp
         archive/TestSafeOutputTree.cpp
         archive/TestMalformedRecords.cpp
 )
@@ -98,8 +100,11 @@ add_executable(bseal_crypto_gtests
         crypto/TestAesGcmBackend.cpp
         crypto/TestXChaCha20Poly1305Backend.cpp
         crypto/TestKdf.cpp
+        crypto/TestKdfSecureMemory.cpp
         crypto/TestKeySchedule.cpp
         crypto/TestCryptoBackendConcurrency.cpp
+        crypto/TestAesGcmRequiresHardware.cpp
+        crypto/TestKatVectors.cpp
 )
 
 target_link_libraries(bseal_crypto_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
@@ -206,6 +211,8 @@ add_executable(bseal_integration_gtests
         integration/TestCliRegression.cpp
         integration/TestFormatV1Archive.cpp
         integration/TestKdfPolicyCli.cpp
+        integration/TestSelfTestCommand.cpp
+        integration/TestStdoutEncrypt.cpp
 )
 
 add_dependencies(bseal_integration_gtests bseal)
@@ -256,6 +263,8 @@ if (Python3_FOUND)
     set(BSEAL_SCANNER_SELFTEST "${CMAKE_SOURCE_DIR}/tests/scripts/test_scan_unsafe_bypasses.py")
     set(BSEAL_CHECKLIST_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_release_checklist.py")
     set(BSEAL_DOCS_LANGUAGE_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_docs_language.py")
+    set(BSEAL_LICENSE_HEADERS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_license_headers.py")
+    set(BSEAL_SUBMODULE_PINS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_submodule_pins.py")
 
     add_test(
         NAME scan.UnsafeBypassGuard
@@ -293,6 +302,26 @@ if (Python3_FOUND)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     set_tests_properties(scan.DocsLanguage PROPERTIES
+        LABELS "scan"
+    )
+
+    add_test(
+        NAME scan.LicenseHeaders
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_LICENSE_HEADERS_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.LicenseHeaders PROPERTIES
+        LABELS "scan"
+    )
+
+    add_test(
+        NAME scan.SubmodulePins
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_SUBMODULE_PINS_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.SubmodulePins PROPERTIES
         LABELS "scan"
     )
 else()

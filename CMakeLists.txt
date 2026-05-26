@@ -19,6 +19,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(VerifySubmodules)
 include(ProjectWarnings)
 include(Sanitizers)
 include(Coverage)
@@ -27,6 +28,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/external_libraries/argon2.cmake)
 
 add_library(bseal_core
     src/app/BsealApp.cpp
+    src/app/SelfTest.cpp
     src/cli/Args.cpp
     src/crypto/AesGcmBackend.cpp
     src/crypto/Kdf.cpp
@@ -44,6 +46,7 @@ add_library(bseal_core
     src/io/ShardFrame.cpp
     src/io/ShardReader.cpp
     src/io/ShardWriter.cpp
+    src/io/StdoutShardWriter.cpp
     src/pipeline/DecryptPipeline.cpp
     src/pipeline/EncryptPipeline.cpp
     src/platform/CpuFeatures.cpp
