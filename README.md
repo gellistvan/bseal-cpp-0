@@ -246,6 +246,8 @@ Benchmark KDF presets on your hardware (no archive is created):
 bseal benchmark-kdf
 ```
 
+## Diagnostic commands
+
 Check hardware AES availability before choosing a cipher suite:
 
 ```bash
@@ -254,10 +256,20 @@ bseal cpu-features
 
 Exit code is 0 if hardware AES (AES-NI / ARMv8 AES) is available, 1 if not. See `docs/CPU_REQUIREMENTS.md` for details.
 
+Run known-answer tests for every cryptographic primitive after installation, after upgrading libsodium or OpenSSL, or before trusting an archive on an unfamiliar machine:
+
+```bash
+bseal self-test          # exit 0 = all pass; exit 2 = one or more KATs failed
+bseal self-test --strict # also treat "no hardware AES" as a failure
+```
+
+The command verifies XChaCha20-Poly1305, AES-256-GCM (skipped if no hardware AES, unless `--strict`), Argon2id, HKDF-SHA-256, BLAKE3, and HMAC-SHA-256 against published test vectors, plus a full round-trip encrypt/decrypt using BSEAL's own key-derivation path. See `docs/SELF_TEST.md` for each primitive's source reference and expected value.
+
 Current exit codes:
 
 * `0`: success, including `--help`
 * `1`: invalid arguments, I/O failures, format errors, unsupported algorithm, KDF policy violations, and other non-authentication errors
+* `2`: self-test failure — one or more known-answer tests failed, or `--strict` was set and a test was skipped
 * `3`: authentication failure — wrong passphrase, wrong keyfile, reordered keyfiles, tampered header MAC, or corrupted ciphertext; the user-visible message is always generic ("authentication failed or archive is corrupt") to avoid leaking which component failed
 
 ## Security model, in brief
@@ -361,6 +373,8 @@ When changing crypto/container code:
 * [`docs/COVERAGE.md`](docs/COVERAGE.md) — how to build with coverage instrumentation and generate line/function reports.
 * [`docs/KDF_POLICY.md`](docs/KDF_POLICY.md) — Argon2id presets, runtime resource policy, recommended settings, and benchmarking.
 * [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) — deployment guide: passphrase quality, keyfile management, hardened extraction, swap/core-dump hardening.
+* [`docs/CPU_REQUIREMENTS.md`](docs/CPU_REQUIREMENTS.md) — hardware AES requirements, `bseal cpu-features` usage, and fail-closed rationale for AES-256-GCM.
+* [`docs/SELF_TEST.md`](docs/SELF_TEST.md) — known-answer test vectors, source references, and what each primitive check detects.
 
 ## License
 

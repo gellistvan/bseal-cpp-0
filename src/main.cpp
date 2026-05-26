@@ -22,6 +22,8 @@ int main(int argc, char** argv) {
             return bseal::app::benchmark_kdf(args.benchmark_kdf);
         case bseal::cli::Command::CpuFeatures:
             return bseal::app::cpu_features_info(args.cpu_features);
+        case bseal::cli::Command::SelfTest:
+            return bseal::app::self_test(args.self_test);
         }
     } catch (const bseal::AuthenticationFailed& e) {
         std::cerr << "bseal: " << e.what() << '\n';

@@ -9,5 +9,6 @@ int encrypt(const cli::EncryptOptions& options);
 int decrypt(const cli::DecryptOptions& options);
 int benchmark_kdf(const cli::BenchmarkKdfOptions& options);
 int cpu_features_info(const cli::CpuFeaturesOptions& options);
+int self_test(const cli::SelfTestOptions& options);
 
 } // namespace bseal::app
