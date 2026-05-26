@@ -391,6 +391,18 @@ Passphrase input flow:
    stack or a small-string-optimized inline buffer; the wipe covers `s.data()` up to
    `s.size()`.
 
+4. **HKDF IKM in SecureBuffer**: the Argon2id output (`pass_key`) is key-equivalent
+   material. To prevent stale copies on the regular heap, `derive_master_seed` assembles
+   the HKDF IKM (`pass_key || keyfile_mix`) in a `SecureBuffer` rather than a
+   `std::vector`. A `std::vector::insert` or `reserve`+`push_back` sequence can
+   reallocate internally; the new block is initialized from the old one and the old one
+   is freed by the allocator without zeroing, leaving a heap copy that `secure_memzero`
+   on the final pointer would not reach. The `SecureBuffer` destructor zeroes and frees
+   the single locked allocation, closing this window. The HKDF salt (`archive_id ||
+   kdf_salt`) is kept in a regular `Bytes` vector because both values are stored
+   unencrypted in the public archive header and locking public data in secure memory
+   would waste `RLIMIT_MEMLOCK` quota without any security benefit.
+
 4. `derive_expanded_keys()` moves the `SecureBuffer` directly into `KdfInput::passphrase`.
    Argon2id receives `passphrase.data()` and `passphrase.size()` from the locked allocation
    with no intermediate `std::string` copy.  `input.passphrase.wipe()` is called immediately
