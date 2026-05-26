@@ -135,3 +135,90 @@ from outside `src/pipeline/`.
 lock the on-disk format at the byte level.  Do not modify these files except
 when intentionally changing the format version (which requires a FORMAT.md
 update and a new KAT set).
+
+## Submodule upgrade procedure
+
+BSEAL bundles two upstream libraries as git submodules:
+
+| Submodule | Path | Purpose |
+|---|---|---|
+| BLAKE3 | `submodules/blake3` | Fast cryptographic hash (shard-frame binding, AEAD AAD) |
+| Argon2 | `submodules/argon2` | Password hashing KDF (Argon2id via libsodium) |
+
+### Why submodule commits are pinned
+
+`submodules/PINS.md` records the exact commit SHA-1 and a directory-tree
+SHA-256 for each submodule.  `cmake/VerifySubmodules.cmake` checks these hashes
+at every configure step and aborts with a clear error if any submodule has
+drifted.
+
+This protects against:
+- A contributor accidentally running `git submodule update --remote`, silently
+  upgrading to a newer (possibly compromised) upstream commit.
+- An upstream repository tag or branch being moved to a different commit after
+  the pin was set.
+- Supply-chain attacks where an upstream maintainer's account is taken over and
+  a malicious commit is pushed.
+
+The tree-SHA-256 provides an additional integrity layer beyond git's own SHA-1,
+which has known weaknesses (SHA-1 collision attacks have been demonstrated).
+
+### Normal upgrade workflow
+
+```bash
+# 1. Choose the new commit hash you want to pin (full 40-char SHA-1).
+NEW_COMMIT=<40-hex-chars>
+
+# 2. Run the helper script (requires network to verify reachability).
+scripts/update_submodule.sh blake3 "${NEW_COMMIT}"
+# Or for argon2:
+scripts/update_submodule.sh argon2 "${NEW_COMMIT}"
+
+# 3. Rebuild and run the full test suite.
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+
+# 4. Review the staged diff and commit.
+git diff --cached
+git commit -m "chore: upgrade blake3 submodule to <new-commit>"
+```
+
+The script:
+1. Fetches the upstream remote to verify the commit is reachable (prevents
+   pinning a commit that was never pushed to the upstream).
+2. Checks out the new commit in the submodule directory.
+3. Recomputes the directory-tree SHA-256.
+4. Rewrites the matching entry in `submodules/PINS.md`.
+5. Stages both the submodule pointer and `PINS.md`.
+
+### Air-gapped environments
+
+If network access is not available, pass `--offline` to skip the reachability
+check:
+
+```bash
+scripts/update_submodule.sh blake3 "${NEW_COMMIT}" --offline
+```
+
+In this case you must manually verify the commit provenance out-of-band before
+merging (e.g., compare the hash against a trusted release announcement or
+signed release notes from the upstream maintainer).
+
+### What to review after an upgrade
+
+1. **Changelog or release notes** for the upgraded library — look for any
+   API or behaviour changes that could affect BSEAL's use of the library.
+2. **`cmake/external_libraries/<name>.cmake`** — check that the build
+   integration still works correctly with the new version (source file lists,
+   compile flags, exported targets).
+3. **`ctest --test-dir build --output-on-failure`** — all tests must pass,
+   including `scan.SubmodulePins` which re-verifies the tree hash.
+
+### Invariants to preserve
+
+- Never commit a submodule update without also updating `submodules/PINS.md`.
+- Never edit `submodules/PINS.md` by hand — always use `scripts/update_submodule.sh`.
+- Never run `git submodule update --remote` without immediately updating the pin file.
+- The tree-SHA-256 in `PINS.md` must always match the actual submodule content;
+  `scan.SubmodulePins` (run by `ctest`) enforces this.
