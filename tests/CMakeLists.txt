@@ -104,6 +104,7 @@ add_executable(bseal_crypto_gtests
         crypto/TestKeySchedule.cpp
         crypto/TestCryptoBackendConcurrency.cpp
         crypto/TestAesGcmRequiresHardware.cpp
+        crypto/TestKatVectors.cpp
 )
 
 target_link_libraries(bseal_crypto_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
@@ -210,6 +211,7 @@ add_executable(bseal_integration_gtests
         integration/TestCliRegression.cpp
         integration/TestFormatV1Archive.cpp
         integration/TestKdfPolicyCli.cpp
+        integration/TestSelfTestCommand.cpp
 )
 
 add_dependencies(bseal_integration_gtests bseal)

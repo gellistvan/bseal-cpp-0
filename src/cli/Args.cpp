@@ -215,6 +215,19 @@ ParsedArgs parse_args(int argc, char** argv) {
         return parsed;
     }
 
+    if (command == "self-test") {
+        parsed.command = Command::SelfTest;
+        for (int i = 2; i < argc; ++i) {
+            const std::string_view key = argv[i];
+            if (key == "--strict") {
+                parsed.self_test.strict = true;
+            } else {
+                throw InvalidArgument("unknown self-test option: " + std::string(key));
+            }
+        }
+        return parsed;
+    }
+
     throw InvalidArgument("unknown command: " + std::string(command));
 }
 
@@ -229,6 +242,7 @@ Usage:
   bseal decrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
   bseal benchmark-kdf [options]
   bseal cpu-features
+  bseal self-test [--strict]
 
 Encrypt options:
   --suite xchacha20-poly1305|aes-256-gcm
@@ -268,6 +282,12 @@ CPU-features:
   Prints detected hardware capabilities. AES-256-GCM requires hardware AES
   support (AES-NI on x86/x86-64, ARMv8 AES extensions on aarch64).
   Exit code: 0 if hardware AES is available, 1 if not.
+
+Self-test options:
+  --strict                treat a skipped AES-256-GCM check (no hardware AES) as a failure
+  Exit codes: 0 success, 2 KAT failure or strict-mode skip.
+  Run after installation, after upgrading libsodium/OpenSSL, and before trusting
+  an archive on an unfamiliar machine.
 )USAGE";
 }
 

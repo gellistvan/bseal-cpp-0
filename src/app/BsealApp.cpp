@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "app/BsealApp.hpp"
+#include "app/SelfTest.hpp"
 
 #include "archive/ArchiveReader.hpp"
 #include "archive/ArchiveWriter.hpp"
@@ -737,6 +738,10 @@ int benchmark_kdf(const bseal::cli::BenchmarkKdfOptions& options) {
     }
 
     return 0;
+}
+
+int self_test(const bseal::cli::SelfTestOptions& options) {
+    return bseal::app::run_self_test(options.strict);
 }
 
 int cpu_features_info(const bseal::cli::CpuFeaturesOptions& /*options*/) {
