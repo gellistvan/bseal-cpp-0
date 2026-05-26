@@ -196,12 +196,37 @@ produces a different derived key and will fail authentication (exit code 3).
   shell history has been cleared, or via a secrets manager).
 * An empty passphrase is rejected.
 
+### Stdout output mode
+
+Pass `--output -` to write the sealed archive to standard output instead of a directory of shard files. The entire archive is buffered in memory and emitted as a single binary shard when encryption completes:
+
+```bash
+# Encrypt and stream directly to an S3 object (no temp file needed).
+echo "$PASSPHRASE" | bseal encrypt \
+  --input ./folder \
+  --output - \
+  --kdf strong \
+  --chunk-size 16M | \
+  aws s3 cp - s3://my-bucket/my-archive.bin
+
+# Decrypt from that object.
+aws s3 cp s3://my-bucket/my-archive.bin ./my-archive.bin
+echo "$PASSPHRASE" | bseal decrypt \
+  --input ./   \   # directory containing my-archive.bin
+  --output ./restored
+```
+
+Constraints:
+* `--shard-size` is incompatible with `--output -` (stdout always produces one shard).
+* If the planned plaintext size exceeds 1 GiB, the `--allow-large-stdout` flag is required. Without it, BSEAL exits with an error before writing any output.
+* Because the full shard is buffered in RAM, memory usage equals roughly the compressed ciphertext size. For large archives, prefer file output or use `--allow-large-stdout` only when the host has sufficient RAM.
+
 ## Supported options
 
 Common options:
 
 * `--input DIR`
-* `--output DIR`
+* `--output DIR` (encrypt also accepts `--output -` to write a single shard to standard output; see [Stdout output mode](#stdout-output-mode))
 * `--keyfile FILE`, repeatable, optional (omit for passphrase-only mode)
 * `--passphrase-prompt`
 * `--verbose`, parsed but not yet a complete logging mode

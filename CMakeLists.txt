@@ -45,6 +45,7 @@ add_library(bseal_core
     src/io/ShardFrame.cpp
     src/io/ShardReader.cpp
     src/io/ShardWriter.cpp
+    src/io/StdoutShardWriter.cpp
     src/pipeline/DecryptPipeline.cpp
     src/pipeline/EncryptPipeline.cpp
     src/platform/CpuFeatures.cpp

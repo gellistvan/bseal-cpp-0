@@ -5,7 +5,7 @@
 #include "common/Types.hpp"
 #include "crypto/CryptoBackend.hpp"
 #include "crypto/KeySchedule.hpp"
-#include "io/ShardWriter.hpp"
+#include "io/AnyShardWriter.hpp"
 
 #include <array>
 #include <cstdint>
@@ -52,7 +52,7 @@ public:
                     std::unique_ptr<crypto::CryptoBackend> backend,
                     crypto::ExpandedKeys keys,
                     archive::ArchiveWriter archive_writer,
-                    io::ShardWriter shard_writer);
+                    io::AnyShardWriter shard_writer);
 
     // Runs the complete encryption pipeline:
     //
@@ -77,7 +77,7 @@ private:
     std::unique_ptr<crypto::CryptoBackend> backend_;
     crypto::ExpandedKeys keys_;
     archive::ArchiveWriter archive_writer_;
-    io::ShardWriter shard_writer_;
+    io::AnyShardWriter shard_writer_;
 };
 
 } // namespace bseal::pipeline

@@ -15,9 +15,11 @@
 #include "crypto/KeySchedule.hpp"
 #include "crypto/SecureBuffer.hpp"
 #include "crypto/XChaCha20Poly1305Backend.hpp"
+#include "io/AnyShardWriter.hpp"
 #include "io/ShardFrame.hpp"
 #include "io/ShardReader.hpp"
 #include "io/ShardWriter.hpp"
+#include "io/StdoutShardWriter.hpp"
 #include "pipeline/DecryptPipeline.hpp"
 #include "pipeline/EncryptPipeline.hpp"
 #include "platform/CpuFeatures.hpp"
@@ -29,9 +31,11 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -136,6 +140,30 @@ void require_keyfiles_exist(const std::vector<std::filesystem::path>& keyfiles) 
 template <std::size_t N> std::array<Byte, N> random_array() {
     std::array<Byte, N> out{};
     bseal::platform::fill_secure_random(std::span<Byte>{out.data(), out.size()});
+    return out;
+}
+
+// Test seam: parse a 2*N hex-character env var into a fixed-size byte array.
+// Returns std::nullopt if the variable is unset or has incorrect length/content.
+template <std::size_t N>
+std::optional<std::array<Byte, N>> try_env_hex_array(const char* name) {
+    const char* val = std::getenv(name);
+    if (!val) return std::nullopt;
+    std::string_view sv(val);
+    if (sv.size() != 2 * N) return std::nullopt;
+    std::array<Byte, N> out{};
+    for (std::size_t i = 0; i < N; ++i) {
+        auto hex_digit = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        };
+        const int hi = hex_digit(sv[2 * i]);
+        const int lo = hex_digit(sv[2 * i + 1]);
+        if (hi < 0 || lo < 0) return std::nullopt;
+        out[i] = static_cast<Byte>((hi << 4) | lo);
+    }
     return out;
 }
 
@@ -250,8 +278,8 @@ ArchiveOpenContext make_encrypt_context(const bseal::cli::EncryptOptions& option
     context.suite       = options.suite;
     context.kdf_params  = bseal::crypto::preset_params(options.kdf_preset);
     bseal::crypto::validate_kdf_params(context.kdf_params);
-    context.kdf_salt    = random_array<32>();
-    context.archive_id  = random_array<32>(); // 32 bytes per FORMAT.md §3
+    context.kdf_salt   = try_env_hex_array<32>("BSEAL_TEST_KDF_SALT").value_or(random_array<32>());
+    context.archive_id = try_env_hex_array<32>("BSEAL_TEST_ARCHIVE_ID").value_or(random_array<32>());
     context.chunk_plain_size = options.chunk_size;
 
     // Build GlobalPublicHeaderV1 (shard_count and related counters will be set after planning).
@@ -415,20 +443,29 @@ void verify_all_shard_header_macs(
 int encrypt(const bseal::cli::EncryptOptions& options) {
     require_directory(options.input, "input path");
     require_keyfiles_exist(options.keyfiles);
-    std::filesystem::create_directories(options.output);
 
-    auto context    = make_encrypt_context(options);
+    // In stdout mode the shard is buffered in memory; use an unlimited shard size so
+    // plan_shards always produces exactly one shard.
+    const std::uint64_t effective_shard_size = options.stdout_output
+        ? std::numeric_limits<std::uint64_t>::max()
+        : options.shard_size;
 
-    // Validate shard size can hold at least one full chunk frame before the
-    // expensive Argon2id key derivation.
-    {
+    if (!options.stdout_output) {
+        std::filesystem::create_directories(options.output);
+    }
+
+    auto context = make_encrypt_context(options);
+
+    // For file mode, validate shard size can hold at least one full chunk frame before
+    // the expensive Argon2id key derivation.
+    if (!options.stdout_output) {
         const std::uint16_t v1_tag_len = 16;
         const std::uint64_t min_shard =
             bseal::io::chunk_frame_v1_encoded_size_from_params(
                 context.chunk_plain_size, v1_tag_len);
-        if (min_shard > options.shard_size) {
+        if (min_shard > effective_shard_size) {
             throw bseal::InvalidArgument(
-                "--shard-size " + std::to_string(options.shard_size) +
+                "--shard-size " + std::to_string(effective_shard_size) +
                 " bytes is too small: --chunk-size " +
                 std::to_string(options.chunk_size) +
                 " bytes produces a minimum frame of " +
@@ -440,7 +477,7 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     // Construct backend before key derivation so that a hardware-AES check failure
     // (Error, exit 1) surfaces before the expensive Argon2id run and before any
-    // output files are created.
+    // output is created.
     auto backend = make_backend(context.suite);
 
     auto passphrase = obtain_passphrase(options.passphrase_prompt);
@@ -471,6 +508,18 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 
     const std::uint64_t padded_plaintext_size = pad.target_size;
 
+    // Stdout mode buffers the full shard in memory. Refuse if the planned size exceeds
+    // 1 GiB unless the user explicitly acknowledged the cost.
+    if (options.stdout_output && !options.allow_large_stdout) {
+        const std::uint64_t kOneGiB = std::uint64_t{1} << 30;
+        if (padded_plaintext_size > kOneGiB) {
+            throw bseal::InvalidArgument(
+                "--output - buffers the entire shard in memory; planned plaintext size (" +
+                std::to_string(padded_plaintext_size) +
+                " bytes) exceeds 1 GiB. Pass --allow-large-stdout to proceed.");
+        }
+    }
+
     std::uint64_t global_chunk_count = 0;
     std::uint32_t final_plaintext_chunk_len = 0;
 
@@ -498,17 +547,18 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         : padded_plaintext_size;
 
     auto& gh = context.global_header;
-    gh.padding_policy_id    = pad.policy_id;
-    gh.padding_policy_value = pad.policy_value;
+    gh.padding_policy_id         = pad.policy_id;
+    gh.padding_policy_value      = pad.policy_value;
     gh.global_chunk_count        = global_chunk_count;
     gh.padded_plaintext_size     = effective_padded_size;
     gh.final_plaintext_chunk_len = final_plaintext_chunk_len;
+    gh.max_shard_payload_len     = effective_shard_size;
 
     auto shard_plans = plan_shards(
         global_chunk_count,
         chunk_plain_size,
         tag_len,
-        options.shard_size,
+        effective_shard_size,
         gh);
 
     gh.shard_count = static_cast<std::uint32_t>(shard_plans.size());
@@ -521,20 +571,30 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         per_shard_hashes.push_back(sp.public_header_hash);
     }
 
-    bseal::io::ShardWriterOptions shard_options{};
-    shard_options.output_dir              = options.output;
-    shard_options.max_shard_payload_len   = options.shard_size;
-    shard_options.filename_extension      = ".bin";
-    shard_options.global_header              = gh;
-    // Move the header_authentication_key from ExpandedKeys directly into
-    // ShardWriterOptions.  EncryptPipeline does not use this key; it only
-    // needs chunk_encryption_key and nonce_derivation_key.
-    shard_options.header_authentication_key  = std::move(keys.header_authentication_key);
-    shard_options.per_shard_public_header_hashes = per_shard_hashes;
-    shard_options.durability_mode  = options.durability_mode;
-    shard_options.durability_hooks = bseal::platform::DurabilityHooks::production();
+    // Build the appropriate shard writer (file-based or stdout-buffered).
+    bseal::io::AnyShardWriter any_writer = [&]() -> bseal::io::AnyShardWriter {
+        if (options.stdout_output) {
+            bseal::io::StdoutShardWriterOptions sw_opts{};
+            sw_opts.out                            = &std::cout;
+            sw_opts.global_header                  = gh;
+            sw_opts.header_authentication_key      = std::move(keys.header_authentication_key);
+            sw_opts.per_shard_public_header_hashes = per_shard_hashes;
+            return bseal::io::StdoutShardWriter(std::move(sw_opts));
+        }
 
-    bseal::io::ShardWriter shard_writer(std::move(shard_options));
+        bseal::io::ShardWriterOptions shard_options{};
+        shard_options.output_dir                     = options.output;
+        shard_options.max_shard_payload_len          = effective_shard_size;
+        shard_options.filename_extension             = ".bin";
+        shard_options.global_header                  = gh;
+        // Move header_authentication_key directly into ShardWriterOptions.
+        // EncryptPipeline does not use this key.
+        shard_options.header_authentication_key      = std::move(keys.header_authentication_key);
+        shard_options.per_shard_public_header_hashes = per_shard_hashes;
+        shard_options.durability_mode                = options.durability_mode;
+        shard_options.durability_hooks               = bseal::platform::DurabilityHooks::production();
+        return bseal::io::ShardWriter(std::move(shard_options));
+    }();
 
     bseal::pipeline::EncryptPipelineOptions pipeline_options;
     pipeline_options.chunk_plain_size               = options.chunk_size;
@@ -553,7 +613,7 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         std::move(backend),
         std::move(keys),
         std::move(archive_writer),
-        std::move(shard_writer));
+        std::move(any_writer));
 
     try {
         pipeline.run();

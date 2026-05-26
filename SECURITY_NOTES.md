@@ -495,3 +495,13 @@ Policy-rejection messages (e.g., the KDF memory limit) name the relevant flag so
 ### Implementation note
 
 `bseal::AuthenticationFailed` is a fixed-message exception with no parameters. Every code path that detects an authentication failure — `verify_all_shard_header_macs()`, `ShardReader::validate_shards()`, the AEAD backend `decrypt()` methods, and `DecryptPipeline` — throws this type. `src/main.cpp` maps it to exit code 3.
+
+## Stdout output mode — memory profile
+
+When `--output -` is passed, `StdoutShardWriter` accumulates the entire encrypted shard in a `std::vector<Byte>` before writing it to stdout in a single call. This differs from file output, where each encrypted chunk frame is written immediately to disk.
+
+**Memory implication:** peak resident memory during stdout-mode encryption is at least the size of the ciphertext (plaintext + AEAD tags + frame headers). For large archives this can be gigabytes. BSEAL enforces a 1 GiB guard by default: if the planned plaintext size exceeds 1 GiB, `encrypt()` exits with an error before any chunk is encrypted. Pass `--allow-large-stdout` to override — only do so when the host has sufficient RAM.
+
+**No crypto change:** stdout mode uses the same AEAD, key schedule, nonce derivation, and shard header MAC as file output. The only difference is that `max_shard_payload_len` in the global header is set to `UINT64_MAX` (instead of the `--shard-size` value) because stdout always produces exactly one shard. This value is part of the AEAD AAD, so a stdout-produced shard and a file-produced shard from the same input will decrypt to the same content but have different raw ciphertext bytes — both are valid archives.
+
+**Secret material:** the header authentication key held in `StdoutShardWriterOptions::header_authentication_key` is a `SecureBuffer` and is wiped on destruction, providing the same secret-handling guarantees as file-mode `ShardWriter`.

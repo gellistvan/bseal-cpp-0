@@ -51,6 +51,12 @@ struct EncryptOptions : CommonOptions {
     std::uint64_t chunk_size{16ull * 1024ull * 1024ull};
     std::uint64_t shard_size{4ull * 1024ull * 1024ull * 1024ull};
     PaddingPolicy padding{};
+    /// True when --output - is passed; output is written to stdout as a single buffered shard.
+    bool stdout_output{false};
+    /// True when --shard-size was explicitly passed; incompatible with --output -.
+    bool shard_size_explicit{false};
+    /// Must be set when stdout mode and planned plaintext size exceeds 1 GiB.
+    bool allow_large_stdout{false};
 };
 
 enum class HardenedExtractMode {

@@ -144,15 +144,29 @@ ParsedArgs parse_args(int argc, char** argv) {
                 parsed.encrypt.chunk_size = parse_size_bytes(arg_at(++i, argc, argv));
             } else if (key == "--shard-size") {
                 parsed.encrypt.shard_size = parse_size_bytes(arg_at(++i, argc, argv));
+                parsed.encrypt.shard_size_explicit = true;
+            } else if (key == "--allow-large-stdout") {
+                parsed.encrypt.allow_large_stdout = true;
             } else if (key == "--padding") {
                 parsed.encrypt.padding = parse_padding(arg_at(++i, argc, argv));
             } else if (key == "--durability") {
                 parsed.encrypt.durability_mode = parse_durability(arg_at(++i, argc, argv));
-            } else if (key == "--input" || key == "--output" || key == "--keyfile") {
+            } else if (key == "--output") {
+                const std::string_view val = arg_at(++i, argc, argv);
+                if (val == "-") {
+                    parsed.encrypt.stdout_output = true;
+                } else {
+                    parsed.encrypt.output = std::filesystem::path(val);
+                }
+            } else if (key == "--input" || key == "--keyfile") {
                 parse_common_option(parsed.encrypt, key, arg_at(++i, argc, argv));
             } else {
                 throw InvalidArgument("unknown option: " + std::string(key));
             }
+        }
+        if (parsed.encrypt.stdout_output && parsed.encrypt.shard_size_explicit) {
+            throw InvalidArgument(
+                "--shard-size is incompatible with --output -; stdout always produces one shard");
         }
         return parsed;
     }
@@ -238,7 +252,8 @@ Supported platform: Linux. Windows is recognized in the codebase but is not
 explicitly supported or tested; use on Windows is at your own risk.
 
 Usage:
-  bseal encrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
+  bseal encrypt --input DIR --output DIR  --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
+  bseal encrypt --input DIR --output -    [options]   (stdout mode; single buffered shard)
   bseal decrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
   bseal benchmark-kdf [options]
   bseal cpu-features
@@ -251,8 +266,9 @@ Encrypt options:
                             aes-256-gcm:        hardware-accelerated alternative (requires AES-NI)
   --kdf fast|strong|paranoid
   --chunk-size 16M
-  --shard-size 4G
+  --shard-size 4G         incompatible with --output -
   --padding none|chunk|power2|fixed-size=N
+  --allow-large-stdout    required when --output - and planned plaintext size exceeds 1 GiB
   --durability off|best-effort|on
                           shard flush mode after finalization (default: best-effort)
                             off:          no fsync; OS page-cache only
