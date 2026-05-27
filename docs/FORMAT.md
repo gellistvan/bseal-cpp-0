@@ -252,6 +252,21 @@ Keyfiles are optional. Zero keyfiles is a valid, explicitly supported mode: `key
 
 When keyfiles are supplied, their order is part of the KDF input. Keyfiles are hashed and mixed in the exact CLI order supplied by the user. Adding, removing, or reordering a keyfile produces a different `keyfile_mix` and therefore a different master seed. The archive format does not store keyfile paths, names, counts, or digests.
 
+### 7.1. Application-level minimum security floor
+
+The format-level bounds above (§7) are sufficient to prevent absurd cost values in archive headers, but they do not guarantee that the chosen parameters provide adequate security. BSEAL enforces a separate minimum security floor whenever Argon2id is actually invoked (i.e., during both encryption and decryption):
+
+| Condition | Minimum iterations |
+|---|---:|
+| `argon2_memory_kib` ≥ 262144 (256 MiB) | 3 |
+| `argon2_memory_kib` < 262144 (256 MiB) | 4 |
+
+The rationale: at memory ≥ 256 MiB, Argon2id's memory-hardness provides strong resistance even at 3 iterations; below that threshold, extra iterations are required to compensate for the reduced memory cost.
+
+All three named presets (`fast`, `strong`, `paranoid`) satisfy this floor. Custom KDF parameters that fall below the floor are rejected with an explicit error message before Argon2id is invoked. This check is performed inside `derive_master_seed()` in addition to the format-level validation, so it applies on both the encrypt and decrypt paths.
+
+Note: the format-level `argon2_iterations` lower bound remains `1` (§7) to allow BSEAL-F1 header parsers to validate header syntax independently from the security floor. The security floor is an application-level constraint, not a format syntax constraint.
+
 ## 8. Key derivation contract
 
 For `kdf_alg_id = 1`, the key schedule is:

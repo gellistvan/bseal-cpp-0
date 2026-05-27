@@ -18,20 +18,41 @@ enum class KdfPreset {
     Custom,
 };
 
-// Application-level Argon2id public-parameter bounds.
+// Application-level Argon2id public-parameter bounds (FORMAT.md §7).
 //
-// These are intentionally stricter than "whatever libsodium can accept".
-// Public archive headers are attacker-controlled before authentication, so
-// decrypt must reject absurd costs before allocation or crypto_pwhash().
+// These are the format-level absolute limits checked during header parsing,
+// before authentication.  They are intentionally stricter than "whatever
+// libsodium can accept" — archive headers are attacker-controlled before
+// header_mac verifies, so absurd costs must be rejected before allocation or
+// crypto_pwhash().
+//
+// Note: passing these format-level bounds does NOT imply the parameters are
+// strong enough for real use.  A minimum application-level security floor is
+// enforced separately by validate_kdf_security_floor() (FORMAT.md §7.1).
 inline constexpr std::uint32_t kArgon2MemoryKiBMin = 65536u;              // 64 MiB — FORMAT.md §7 lower bound.
 inline constexpr std::uint32_t kArgon2MemoryKiBMax = 4194304u;            // 4 GiB  — FORMAT.md §7 upper bound.
-inline constexpr std::uint32_t kArgon2IterationsMin = 1u;
+inline constexpr std::uint32_t kArgon2IterationsMin = 1u;                 // FORMAT.md §7 lower bound (format only).
 inline constexpr std::uint32_t kArgon2IterationsMax = 10u;                // FORMAT.md §7 max.
 inline constexpr std::uint32_t kArgon2ParallelismMin = 1u;
 inline constexpr std::uint32_t kArgon2ParallelismMax = 32u;               // FORMAT.md §7 max.
 inline constexpr std::uint32_t kArgon2OutputBytesMin = 32u;
 inline constexpr std::uint32_t kArgon2OutputBytesMax = 64u;
 inline constexpr std::uint32_t kArgon2OutputBytesDefault = 32u;
+
+// Minimum KDF security floor (FORMAT.md §7.1).
+//
+// Applied by validate_kdf_security_floor() and enforced inside derive_master_seed()
+// for both encryption and decryption paths.
+//
+// Rule:
+//   memory_kib >= kArgon2FloorMemoryKiB  →  iterations >= kArgon2FloorIterationsHigh
+//   memory_kib <  kArgon2FloorMemoryKiB  →  iterations >= kArgon2FloorIterationsLow
+//
+// Rationale: the floor matches the weakest named CLI preset (fast: 256 MiB / t=3).
+// Below 256 MiB, extra iterations compensate for reduced memory hardness.
+inline constexpr std::uint32_t kArgon2FloorMemoryKiB       = 256u * 1024u; // 256 MiB
+inline constexpr std::uint32_t kArgon2FloorIterationsHigh  = 3u;            // when memory >= 256 MiB
+inline constexpr std::uint32_t kArgon2FloorIterationsLow   = 4u;            // when memory <  256 MiB
 
 struct KdfParams {
     KdfPreset preset{KdfPreset::Strong};
@@ -72,9 +93,20 @@ struct KeyfileDigest {
     std::array<Byte, 32> digest{};
 };
 
-// Validate public KDF parameters before any allocation based on them and
-// before calling crypto_pwhash().
+// Validate public KDF parameters against the format-level absolute bounds
+// (FORMAT.md §7).  Called during header parsing before authentication.
+// Passing this check does not imply the parameters meet the security floor.
 void validate_kdf_params(const KdfParams& params);
+
+// Enforce the minimum KDF security floor (FORMAT.md §7.1).
+//
+// Must be called before invoking Argon2id during both encryption and
+// decryption.  Throws InvalidArgument with a descriptive message if the
+// parameters represent a cryptographically unacceptable combination.
+//
+// This check is separate from validate_kdf_params() so that header parsers
+// can validate format-level bounds independently of the security floor.
+void validate_kdf_security_floor(const KdfParams& params);
 
 // Validate that a KdfResourcePolicy is internally consistent.
 // Throws InvalidArgument if any limit is zero or exceeds the format maximum.

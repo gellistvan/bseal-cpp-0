@@ -1000,8 +1000,9 @@ TEST(BlackBoxCli, TamperedKdfIterationsFailsAuthentication) {
         },
         "passphrase\n");
 
-    // Change iterations from 3 to 2 — different KDF output, header MAC fails.
-    patch_u32_le_at_offset(sealed, kOffsetArgon2Iterations, 2u);
+    // Change iterations from 3 to 4 — above the floor so format-validation passes,
+    // but the different KDF output makes the header MAC fail (exit code 3).
+    patch_u32_le_at_offset(sealed, kOffsetArgon2Iterations, 4u);
 
     const auto result = run_bseal(
         temp.subdir("decrypt-run"),

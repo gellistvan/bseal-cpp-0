@@ -113,7 +113,7 @@ KdfInput make_test_input() {
 
     input.params.preset      = KdfPreset::Custom;
     input.params.memory_kib  = kArgon2MemoryKiBMin;  // 64 MiB minimum — fast test
-    input.params.iterations  = 1;
+    input.params.iterations  = 4;                    // floor: <256 MiB requires t>=4
     input.params.parallelism = 1;
     input.params.output_bytes = 32;
 

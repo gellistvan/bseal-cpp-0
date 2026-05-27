@@ -352,7 +352,7 @@ KatResult kat_xchacha20_round_trip_impl() {
         std::memcpy(kdf_input.archive_id.data(), kArchiveId, 32);
         kdf_input.params.preset      = bseal::crypto::KdfPreset::Custom;
         kdf_input.params.memory_kib  = bseal::crypto::kArgon2MemoryKiBMin;  // 64 MiB
-        kdf_input.params.iterations  = 1;
+        kdf_input.params.iterations  = 4;  // floor: <256 MiB requires t>=4
         kdf_input.params.parallelism = 1;
         kdf_input.params.output_bytes = 32;
 
