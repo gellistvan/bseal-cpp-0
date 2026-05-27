@@ -233,7 +233,6 @@ inline std::array<Byte, 32> make_test_public_header_hash(
 
 inline io::ShardWriterOptions make_test_shard_writer_options(
     const std::filesystem::path& sealed_dir,
-    std::uint64_t /*chunk_plain_size_unused*/ = 128,
     std::uint64_t shard_payload_size = kTestShardPayloadSize) {
     io::ShardWriterOptions options{};
     options.output_dir            = sealed_dir;
@@ -588,7 +587,6 @@ inline io::ShardReader make_valid_test_shard_reader(
     io::ShardWriter shard_writer(
         make_test_shard_writer_options(
             sealed_dir,
-            chunk_size,
             kTestShardPayloadSize));
 
     EncryptPipeline pipeline(

@@ -57,7 +57,7 @@ TEST(EncryptPipeline, ThrowsWhenChunkSizeIsZero) {
             false,
         });
 
-    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path(), 128));
+    io::ShardWriter shard_writer( make_test_shard_writer_options(sealed_root.path()));
 
     EncryptPipeline pipeline(
         options,
