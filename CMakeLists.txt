@@ -53,6 +53,7 @@ add_library(bseal_core
     src/platform/DurableFile.cpp
     src/platform/MemoryLock.cpp
     src/platform/PassphrasePrompt.cpp
+    src/platform/ProcessMemoryLock.cpp
     src/platform/Random.cpp
 )
 

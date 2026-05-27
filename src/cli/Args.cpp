@@ -151,6 +151,11 @@ ParsedArgs parse_args(int argc, char** argv) {
                 parsed.encrypt.shard_size_explicit = true;
             } else if (key == "--allow-large-stdout") {
                 parsed.encrypt.allow_large_stdout = true;
+            } else if (key == "--lock-memory") {
+                parsed.encrypt.lock_memory = true;
+            } else if (key == "--require-lock-memory") {
+                parsed.encrypt.lock_memory = true;
+                parsed.encrypt.require_lock_memory = true;
             } else if (key == "--padding") {
                 parsed.encrypt.padding = parse_padding(arg_at(++i, argc, argv));
             } else if (key == "--durability") {
@@ -198,6 +203,11 @@ ParsedArgs parse_args(int argc, char** argv) {
             } else if (key == "--hardened-extract") {
                 parsed.decrypt.hardened_extract =
                     parse_hardened_extract(arg_at(++i, argc, argv));
+            } else if (key == "--lock-memory") {
+                parsed.decrypt.lock_memory = true;
+            } else if (key == "--require-lock-memory") {
+                parsed.decrypt.lock_memory = true;
+                parsed.decrypt.require_lock_memory = true;
             } else if (key == "--durability") {
                 parsed.decrypt.durability_mode = parse_durability(arg_at(++i, argc, argv));
             } else if (key == "--input" || key == "--output" || key == "--keyfile") {
@@ -270,6 +280,12 @@ Common options (encrypt and decrypt):
   --passphrase-prompt     read passphrase from TTY with echo suppressed;
                           if omitted, reads one passphrase line from stdin
   --verbose               print per-chunk progress to stderr
+  --lock-memory           attempt mlockall(MCL_CURRENT | MCL_FUTURE) to reduce the risk
+                          of key material appearing in swap; warn and continue if locking
+                          fails.  Requires sufficient RLIMIT_MEMLOCK (see `ulimit -l`).
+                          Best-effort only: does not protect against kernel-level or
+                          root adversaries.  Not enabled by default.
+  --require-lock-memory   as --lock-memory but abort with exit code 1 if locking fails
 
 Encrypt options:
   --suite xchacha20-poly1305|aes-256-gcm

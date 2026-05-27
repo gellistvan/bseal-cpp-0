@@ -25,6 +25,7 @@
 #include "platform/CpuFeatures.hpp"
 #include "platform/DurableFile.hpp"
 #include "platform/PassphrasePrompt.hpp"
+#include "platform/ProcessMemoryLock.hpp"
 #include "platform/Random.hpp"
 
 #include <algorithm>
@@ -441,6 +442,10 @@ void verify_all_shard_header_macs(
 } // namespace
 
 int encrypt(const bseal::cli::EncryptOptions& options) {
+    bseal::platform::enforce_memory_lock_policy(
+        options.lock_memory, options.require_lock_memory,
+        bseal::platform::try_lock_process_memory);
+
     require_directory(options.input, "input path");
     require_keyfiles_exist(options.keyfiles);
 
@@ -626,6 +631,10 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
 }
 
 int decrypt(const bseal::cli::DecryptOptions& options) {
+    bseal::platform::enforce_memory_lock_policy(
+        options.lock_memory, options.require_lock_memory,
+        bseal::platform::try_lock_process_memory);
+
     require_directory(options.input, "input path");
     require_keyfiles_exist(options.keyfiles);
 

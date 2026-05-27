@@ -2068,3 +2068,83 @@ TEST(BlackBoxCli, FailedDecryptWithOverwritePreservesPreExistingFiles) {
     EXPECT_TRUE(fs::exists(output / "sentinel.txt"))
         << "pre-existing file in output dir must survive a failed --overwrite decrypt";
 }
+
+// ---------------------------------------------------------------------------
+// --lock-memory / --require-lock-memory integration
+// ---------------------------------------------------------------------------
+
+// --lock-memory is best-effort: the encrypt pipeline must complete with exit 0
+// regardless of whether mlockall succeeds or fails on this system.
+TEST(BlackBoxCli, LockMemoryFlagDoesNotBreakEncrypt) {
+    TempDir temp("bseal_integration_lock_memory_enc");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    create_sample_input_tree(input);
+    create_keyfiles(key_a, key_b);
+
+    auto args = encrypt_args(input, sealed, key_a, key_b);
+    args.emplace_back("--lock-memory");
+
+    const auto result = run_bseal(temp.subdir("run"), args, "lock-memory-pass\n");
+    EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+}
+
+// --lock-memory is best-effort for decrypt too.
+TEST(BlackBoxCli, LockMemoryFlagDoesNotBreakDecrypt) {
+    TempDir temp("bseal_integration_lock_memory_dec");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    create_sample_input_tree(input);
+    create_keyfiles(key_a, key_b);
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        encrypt_args(input, sealed, key_a, key_b),
+        "lock-memory-pass\n");
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    auto dec_args = decrypt_args(sealed, output, key_a, key_b);
+    dec_args.emplace_back("--lock-memory");
+
+    const auto dec = run_bseal(temp.subdir("decrypt-run"), dec_args, "lock-memory-pass\n");
+    EXPECT_EQ(dec.exit_code, 0) << dec.stderr_text;
+}
+
+// --require-lock-memory: either succeeds (exit 0, mlockall available) or fails
+// deterministically (exit 1, stderr mentions "require-lock-memory").
+// The unit tests in TestProcessMemoryLock cover the failure branch exhaustively;
+// this test verifies the end-to-end flag wiring is correct.
+TEST(BlackBoxCli, RequireLockMemoryDeterministicBehavior) {
+    TempDir temp("bseal_integration_require_lock_memory");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    create_sample_input_tree(input);
+    create_keyfiles(key_a, key_b);
+
+    auto args = encrypt_args(input, sealed, key_a, key_b);
+    args.emplace_back("--require-lock-memory");
+
+    const auto result = run_bseal(temp.subdir("run"), args, "require-lock-pass\n");
+
+    if (result.exit_code != 0) {
+        // mlockall failed on this system — error must be fatal (exit 1) and
+        // the message must identify the flag that caused the abort.
+        EXPECT_EQ(result.exit_code, 1);
+        EXPECT_NE(result.stderr_text.find("require-lock-memory"), std::string::npos)
+            << "stderr: " << result.stderr_text;
+    }
+    // exit 0 is also acceptable: mlockall succeeded and the full pipeline ran.
+}
