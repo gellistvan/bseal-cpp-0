@@ -64,6 +64,7 @@ add_executable(bseal_io_gtests
         io/TestShardReader.cpp
         io/TestShardWriter.cpp
         io/TestShardWriterDurability.cpp
+        io/TestTornWrite.cpp
         io/TestFormatV1Kat.cpp
         io/TestMalformedShards.cpp
 )

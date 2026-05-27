@@ -40,6 +40,11 @@ struct ShardWriterOptions {
     /// Injectable hooks; defaults to noop() so existing tests are unaffected.
     /// BsealApp sets this to DurabilityHooks::production() before construction.
     platform::DurabilityHooks durability_hooks{platform::DurabilityHooks::noop()};
+
+    /// Test-only fault-injection hook called at the start of write_chunk_frame, before
+    /// any file I/O for this chunk. Throwing from this hook simulates a write-path
+    /// failure. Leave empty (default) in all production code.
+    std::function<void(std::uint64_t chunk_index)> before_chunk_write;
 };
 
 struct ShardWritePosition {
