@@ -2149,3 +2149,91 @@ TEST(BlackBoxCli, RequireLockMemoryDeterministicBehavior) {
     }
     // exit 0 is also acceptable: mlockall succeeded and the full pipeline ran.
 }
+
+// ---------------------------------------------------------------------------
+// --kdf fast warning tests
+// ---------------------------------------------------------------------------
+
+TEST(BlackBoxCli, KdfFastEmitsWarningToStderr) {
+    TempDir temp("bseal_integration_kdf_fast_warning");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "test");
+
+    const auto result = run_bseal(
+        temp.subdir("run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
+        },
+        "testpass\n");
+
+    ASSERT_EQ(result.exit_code, 0) << result.stderr_text;
+    EXPECT_NE(result.stderr_text.find("WARNING"), std::string::npos)
+        << "encrypt --kdf fast must emit a WARNING; stderr: " << result.stderr_text;
+    EXPECT_NE(result.stderr_text.find("fast"), std::string::npos)
+        << "warning must mention 'fast'; stderr: " << result.stderr_text;
+    EXPECT_TRUE(
+        result.stderr_text.find("strong") != std::string::npos ||
+        result.stderr_text.find("paranoid") != std::string::npos)
+        << "warning must recommend strong or paranoid; stderr: " << result.stderr_text;
+}
+
+TEST(BlackBoxCli, KdfStrongDoesNotEmitFastWarning) {
+    TempDir temp("bseal_integration_kdf_strong_no_warning");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "test");
+
+    const auto result = run_bseal(
+        temp.subdir("run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--kdf", "strong", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
+        },
+        "testpass\n");
+
+    ASSERT_EQ(result.exit_code, 0) << result.stderr_text;
+    EXPECT_EQ(result.stderr_text.find("WARNING"), std::string::npos)
+        << "encrypt --kdf strong must not emit a fast-preset warning; stderr: "
+        << result.stderr_text;
+}
+
+TEST(BlackBoxCli, KdfFastWarningDoesNotAppearOnDecrypt) {
+    TempDir temp("bseal_integration_kdf_fast_no_warn_decrypt");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "test");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
+        },
+        "testpass\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string()},
+        "testpass\n");
+
+    ASSERT_EQ(dec.exit_code, 0) << dec.stderr_text;
+    EXPECT_EQ(dec.stderr_text.find("WARNING"), std::string::npos)
+        << "decrypt must not emit the fast-preset warning; stderr: " << dec.stderr_text;
+}

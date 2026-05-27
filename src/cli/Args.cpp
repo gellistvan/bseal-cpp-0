@@ -293,6 +293,11 @@ Encrypt options:
                             xchacha20-poly1305: default; constant-time, no hardware requirement
                             aes-256-gcm:        hardware-accelerated alternative (requires AES-NI)
   --kdf fast|strong|paranoid
+                          KDF preset (default: strong)
+                            fast:     256 MiB / t=3 — low-value data or testing ONLY;
+                                      prints a warning. Use strong or paranoid for secrets.
+                            strong:   1 GiB  / t=3 — recommended for most secrets
+                            paranoid: 2 GiB  / t=4 — high-value, long-lived secrets
   --chunk-size 16M
   --shard-size 4G         incompatible with --output -
   --padding none|chunk|power2|fixed-size=N

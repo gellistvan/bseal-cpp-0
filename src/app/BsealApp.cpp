@@ -446,6 +446,13 @@ int encrypt(const bseal::cli::EncryptOptions& options) {
         options.lock_memory, options.require_lock_memory,
         bseal::platform::try_lock_process_memory);
 
+    if (options.kdf_preset == bseal::crypto::KdfPreset::Fast) {
+        std::cerr
+            << "WARNING: --kdf fast uses 256 MiB / 3 iterations. "
+               "This is suitable for low-value data or testing only. "
+               "Use --kdf strong or --kdf paranoid for valuable long-term secrets.\n";
+    }
+
     require_directory(options.input, "input path");
     require_keyfiles_exist(options.keyfiles);
 
