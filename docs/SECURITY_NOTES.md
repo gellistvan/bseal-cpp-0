@@ -114,6 +114,49 @@ BSEAL does **not** guarantee:
   appear in a subsequent directory listing. DurabilityMode::On fsyncs the directory to
   reduce this window (POSIX only).
 
+## Extraction security policy
+
+### Default: hardened POSIX extraction
+
+On POSIX platforms, BSEAL defaults to `HardenedExtractMode::Auto`, which uses
+`openat` / `mkdirat` / `renameat` throughout the extraction path. This eliminates
+the TOCTOU (time-of-check / time-of-use) window that exists in the portable backend
+(lstat → mkdir / rename). The hardened backend can be forced with `--hardened-extract=on`
+or disabled with `--hardened-extract=off`.
+
+**`--hardened-extract=off` prints a warning to stderr** because it downgrades to the
+portable backend, which is not protected against symlink-race attacks. Use the default
+or `--hardened-extract=on` for archives from untrusted sources.
+
+### Symlinks
+
+Symlink extraction is **disabled by default** (`allow_symlinks = false` in
+`ArchiveReaderOptions`). If an archive contains a symlink record and symlink extraction
+is disabled, decryption fails with exit code 1. This prevents symlink-following attacks
+where a malicious archive plants a symlink before subsequent records follow it.
+
+### Permission bit sanitization
+
+When restoring POSIX permissions (`--restore-permissions`), BSEAL strips the
+**setuid (04000)**, **setgid (02000)**, and **sticky (01000)** bits before calling
+`std::filesystem::permissions()`. Only the rwxrwxrwx bits (mask `00777`) are applied.
+
+This prevents a malicious archive from creating setuid-root executables on the
+decrypting system.
+
+### Path validation
+
+All archive-relative paths pass through `PathSanitizer::is_safe_relative_path()` before
+any filesystem operation. The sanitizer rejects:
+
+- Absolute paths (`/etc/passwd`, `C:\Windows\System32`)
+- Parent-traversal components (`../`, `folder/../../evil`)
+- Windows drive letters (`C:`, `z:`)
+- UNC paths (`//server/share`, `\\\\server\\share`)
+- The empty path
+
+This is verified by `tests/archive/TestPathSanitizer.cpp`.
+
 ## Threat model interaction
 
 Power-loss data integrity is an availability concern, not a confidentiality concern.

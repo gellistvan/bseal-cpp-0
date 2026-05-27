@@ -2237,3 +2237,78 @@ TEST(BlackBoxCli, KdfFastWarningDoesNotAppearOnDecrypt) {
     EXPECT_EQ(dec.stderr_text.find("WARNING"), std::string::npos)
         << "decrypt must not emit the fast-preset warning; stderr: " << dec.stderr_text;
 }
+
+// ---------------------------------------------------------------------------
+// Extraction security policy tests
+// ---------------------------------------------------------------------------
+
+TEST(BlackBoxCli, HardenedExtractOffEmitsWarning) {
+    TempDir temp("bseal_integration_hardened_off_warn");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "test");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
+        },
+        "testpass\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+            "--hardened-extract", "off",
+        },
+        "testpass\n");
+
+    ASSERT_EQ(dec.exit_code, 0) << dec.stderr_text;
+    EXPECT_NE(dec.stderr_text.find("WARNING"), std::string::npos)
+        << "--hardened-extract=off must emit a warning; stderr: " << dec.stderr_text;
+    EXPECT_TRUE(contains_text(dec.stderr_text, "TOCTOU") ||
+                contains_text(dec.stderr_text, "symlink") ||
+                contains_text(dec.stderr_text, "portable"))
+        << "warning must describe the risk; stderr: " << dec.stderr_text;
+}
+
+TEST(BlackBoxCli, HardenedExtractAutoDoesNotEmitWarning) {
+    TempDir temp("bseal_integration_hardened_auto_no_warn");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+
+    fs::create_directories(input);
+    write_file(input / "data.txt", "test");
+
+    const auto enc = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K", "--padding", "none",
+        },
+        "testpass\n");
+
+    ASSERT_EQ(enc.exit_code, 0) << enc.stderr_text;
+
+    const auto dec = run_bseal(
+        temp.subdir("decrypt-run"),
+        {"decrypt", "--input", sealed.string(), "--output", output.string()},
+        "testpass\n");
+
+    ASSERT_EQ(dec.exit_code, 0) << dec.stderr_text;
+    EXPECT_EQ(dec.stderr_text.find("WARNING"), std::string::npos)
+        << "decrypt with default hardened-extract must not emit a warning; stderr: "
+        << dec.stderr_text;
+}

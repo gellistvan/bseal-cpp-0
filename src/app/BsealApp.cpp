@@ -642,6 +642,13 @@ int decrypt(const bseal::cli::DecryptOptions& options) {
         options.lock_memory, options.require_lock_memory,
         bseal::platform::try_lock_process_memory);
 
+    if (options.hardened_extract == bseal::cli::HardenedExtractMode::Off) {
+        std::cerr
+            << "WARNING: --hardened-extract=off disables TOCTOU-hardened extraction. "
+               "The portable backend is not protected against symlink races. "
+               "Use the default (auto) or --hardened-extract=on for untrusted archives.\n";
+    }
+
     require_directory(options.input, "input path");
     require_keyfiles_exist(options.keyfiles);
 

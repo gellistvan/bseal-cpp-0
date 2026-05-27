@@ -23,7 +23,8 @@ namespace bseal::archive {
 namespace {
 
 std::filesystem::perms bits_to_permissions(std::uint32_t bits) {
-    return static_cast<std::filesystem::perms>(bits & 07777u);
+    // Strip setuid (04000), setgid (02000), and sticky (01000) bits; keep rwxrwxrwx only.
+    return static_cast<std::filesystem::perms>(bits & 00777u);
 }
 
 std::filesystem::file_time_type unix_ns_to_file_time(std::int64_t ns) {
