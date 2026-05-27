@@ -857,6 +857,33 @@ TEST(BlackBoxCliRegression, GlobalHeaderWrongMagic_Fails) {
   EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
 }
 
+TEST(BlackBoxCliRegression, UnsupportedFormatMajorVersion_Fails) {
+  // format_major is at file offset 8 (u16le, per FORMAT.md §5).
+  // Readers MUST reject any value other than 1 as an unsupported version.
+  TempDir temp("bseal_malformed_format_major");
+  const auto input   = temp.subdir("input");
+  const auto sealed  = temp.subdir("sealed");
+  const auto output  = temp.subdir("output");
+  const auto keyfile = temp.subdir("keys") / "keyfile.bin";
+
+  write_file(input / "tiny.txt", "hello");
+  create_keyfile(keyfile);
+
+  ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, keyfile),
+                       kPassphrase).exit_code, 0);
+
+  const auto shards = list_bin_files(sealed);
+  ASSERT_EQ(shards.size(), 1u);
+
+  patch_file_u16_le(shards[0], 8, 2u);  // format_major → 2
+
+  const auto result = run_bseal(
+      temp.subdir("dec"),
+      decrypt_args(sealed, output, keyfile),
+      kPassphrase);
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
 TEST(BlackBoxCliRegression, UnknownAeadAlgId_Fails) {
   TempDir temp("bseal_malformed_aead_alg");
   const auto input   = temp.subdir("input");
@@ -1137,6 +1164,162 @@ TEST(BlackBoxCliRegression, CpuFeaturesCommandExitsZeroOrOne) {
 TEST(BlackBoxCliRegression, CpuFeaturesUnknownOptionExitsOne) {
   TempDir temp("bseal_cpu_features_bad_opt");
   const auto result = run_bseal(temp.subdir("run"), {"cpu-features", "--bogus"}, "");
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+// An unrecognised top-level command must exit 1.
+TEST(BlackBoxCliRegression, UnknownCommandExitsOne) {
+  TempDir temp("bseal_unknown_cmd");
+  const auto result = run_bseal(temp.subdir("run"), {"nosuchcommand"}, "");
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+// --help / -h / help must exit 0 and print the documented option strings.
+TEST(BlackBoxCliRegression, HelpOutputContainsDocumentedOptions) {
+  TempDir temp("bseal_help_opts");
+  for (const auto& flag : std::vector<std::string>{"--help", "-h", "help"}) {
+    const auto result = run_bseal(temp.subdir("run_" + flag), {flag}, "");
+    EXPECT_EQ(result.exit_code, 0) << flag << ": " << result.stderr_text;
+    for (const auto& expected : {"--input", "--output", "--keyfile",
+                                 "--passphrase-prompt", "--suite", "--kdf",
+                                 "--padding", "--durability"}) {
+      EXPECT_NE(result.stdout_text.find(expected), std::string::npos)
+          << flag << ": help text missing '" << expected << "'";
+    }
+  }
+}
+
+// An invalid --suite value must exit 1 and mention the bad value.
+TEST(BlackBoxCliRegression, InvalidSuiteValueFails) {
+  TempDir temp("bseal_bad_suite");
+  const auto input = temp.subdir("in");
+  fs::create_directories(input);
+  write_file(input / "f.txt", "x");
+
+  const auto result = run_bseal(temp.subdir("run"), {
+      "encrypt",
+      "--input", input.string(),
+      "--output", temp.subdir("out").string(),
+      "--suite", "bad-cipher",
+  }, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+  EXPECT_TRUE(contains_text(result.stderr_text, "bad-cipher") ||
+              contains_text(result.stderr_text, "suite"))
+      << "error should mention the bad value or 'suite'; got: " << result.stderr_text;
+}
+
+// An invalid --kdf preset must exit 1 and mention the bad value.
+TEST(BlackBoxCliRegression, InvalidKdfPresetFails) {
+  TempDir temp("bseal_bad_kdf");
+  const auto input = temp.subdir("in");
+  fs::create_directories(input);
+  write_file(input / "f.txt", "x");
+
+  const auto result = run_bseal(temp.subdir("run"), {
+      "encrypt",
+      "--input", input.string(),
+      "--output", temp.subdir("out").string(),
+      "--kdf", "turbo-kdf",
+  }, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+  EXPECT_TRUE(contains_text(result.stderr_text, "turbo-kdf") ||
+              contains_text(result.stderr_text, "kdf") ||
+              contains_text(result.stderr_text, "preset"))
+      << "error should mention the bad value; got: " << result.stderr_text;
+}
+
+// An invalid --padding value must exit 1.
+TEST(BlackBoxCliRegression, InvalidPaddingPolicyFails) {
+  TempDir temp("bseal_bad_padding");
+  const auto input = temp.subdir("in");
+  fs::create_directories(input);
+  write_file(input / "f.txt", "x");
+
+  const auto result = run_bseal(temp.subdir("run"), {
+      "encrypt",
+      "--input", input.string(),
+      "--output", temp.subdir("out").string(),
+      "--padding", "bad-policy",
+  }, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+// An invalid --durability value in encrypt must exit 1.
+TEST(BlackBoxCliRegression, InvalidEncryptDurabilityFails) {
+  TempDir temp("bseal_bad_enc_durability");
+  const auto input = temp.subdir("in");
+  fs::create_directories(input);
+  write_file(input / "f.txt", "x");
+
+  const auto result = run_bseal(temp.subdir("run"), {
+      "encrypt",
+      "--input", input.string(),
+      "--output", temp.subdir("out").string(),
+      "--durability", "maximum",
+  }, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+// An invalid --durability value in decrypt must exit 1.
+TEST(BlackBoxCliRegression, InvalidDecryptDurabilityFails) {
+  TempDir temp("bseal_bad_dec_durability");
+
+  const auto result = run_bseal(temp.subdir("run"), {
+      "decrypt",
+      "--input", temp.subdir("sealed").string(),
+      "--output", temp.subdir("out").string(),
+      "--durability", "maximum",
+  }, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+// --output - combined with --shard-size must exit 1 before touching the filesystem.
+TEST(BlackBoxCliRegression, StdoutModeWithShardSizeRejected) {
+  TempDir temp("bseal_stdout_shard_size");
+  const auto input = temp.subdir("in");
+  fs::create_directories(input);
+  write_file(input / "f.txt", "x");
+
+  const auto result = run_bseal(temp.subdir("run"), {
+      "encrypt",
+      "--input", input.string(),
+      "--output", "-",
+      "--shard-size", "1G",
+  }, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+  EXPECT_TRUE(contains_text(result.stderr_text, "shard") ||
+              contains_text(result.stderr_text, "stdout"))
+      << "error should mention shard-size or stdout; got: " << result.stderr_text;
+}
+
+// encrypt without --input must exit 1.
+TEST(BlackBoxCliRegression, EncryptMissingInputFails) {
+  TempDir temp("bseal_enc_no_input");
+
+  const auto result = run_bseal(temp.subdir("run"), {
+      "encrypt",
+      "--output", temp.subdir("out").string(),
+  }, kPassphrase);
+
+  EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+}
+
+// decrypt without --input must exit 1.
+TEST(BlackBoxCliRegression, DecryptMissingInputFails) {
+  TempDir temp("bseal_dec_no_input");
+
+  const auto result = run_bseal(temp.subdir("run"), {
+      "decrypt",
+      "--output", temp.subdir("out").string(),
+  }, kPassphrase);
 
   EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
 }

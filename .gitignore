@@ -3,6 +3,7 @@ build/
 .cache
 build-tsan/
 build-fuzz/
+build-debug/
 build-coverage/
 CLAUDE.md
 build-sani/

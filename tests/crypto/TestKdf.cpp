@@ -855,6 +855,44 @@ TEST(KdfResourcePolicy, PolicyCheckFiresBeforeArgon2id) {
         InvalidArgument);
 }
 
+TEST(Kdf, DeriveMasterSeedWithKeyfileDiffersFromPassphraseOnly) {
+    // Adding a keyfile must change the master seed relative to passphrase-only mode,
+    // because keyfile_mix enters ikm before HKDF even when only one keyfile is used.
+    const auto dir = unique_test_dir();
+    const auto kf  = write_keyfile(dir, "k.bin", make_bytes(64, 0x55));
+
+    auto input_passphrase_only = make_input({});
+    auto input_with_keyfile    = make_input({kf});
+
+    const auto seed_pass  = to_vector(derive_master_seed(input_passphrase_only));
+    const auto seed_keyed = to_vector(derive_master_seed(input_with_keyfile));
+
+    EXPECT_NE(seed_pass, seed_keyed)
+        << "passphrase-only and passphrase+keyfile must produce different master seeds";
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Kdf, DeriveMasterSeedTwoKeyfilesOrderABDiffersFromBA) {
+    // End-to-end proof that keyfile order propagates through derive_master_seed:
+    // encrypting with [A, B] and decrypting with [B, A] produces different keys
+    // and fails authentication.
+    const auto dir = unique_test_dir();
+    const auto kf_a = write_keyfile(dir, "a.bin", make_bytes(64, 0xAA));
+    const auto kf_b = write_keyfile(dir, "b.bin", make_bytes(64, 0xBB));
+
+    auto input_ab = make_input({kf_a, kf_b});
+    auto input_ba = make_input({kf_b, kf_a});
+
+    const auto seed_ab = to_vector(derive_master_seed(input_ab));
+    const auto seed_ba = to_vector(derive_master_seed(input_ba));
+
+    EXPECT_NE(seed_ab, seed_ba)
+        << "keyfile order [A,B] and [B,A] must produce different master seeds";
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Kdf, PassphraseMismatchWipesSecureBuffer) {
     // Verify that a moved-from SecureBuffer left in KdfInput after a failed derivation
     // can be explicitly wiped without crashing and leaves the buffer empty.

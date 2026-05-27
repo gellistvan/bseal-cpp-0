@@ -25,7 +25,9 @@ crypto::CipherSuite parse_suite(std::string_view value) {
     if (value == "aes-256-gcm") {
         return crypto::CipherSuite::Aes256Gcm;
     }
-    throw InvalidArgument("unknown cipher suite");
+    throw InvalidArgument(
+        "unknown cipher suite '" + std::string(value) +
+        "'; valid values: xchacha20-poly1305, aes-256-gcm");
 }
 
 HardenedExtractMode parse_hardened_extract(std::string_view value) {
@@ -50,7 +52,9 @@ crypto::KdfPreset parse_kdf(std::string_view value) {
     if (value == "fast") return crypto::KdfPreset::Fast;
     if (value == "strong") return crypto::KdfPreset::Strong;
     if (value == "paranoid") return crypto::KdfPreset::Paranoid;
-    throw InvalidArgument("unknown KDF preset");
+    throw InvalidArgument(
+        "unknown KDF preset '" + std::string(value) +
+        "'; valid values: fast, strong, paranoid");
 }
 
 PaddingPolicy parse_padding(std::string_view value) {
@@ -252,12 +256,20 @@ Supported platform: Linux. Windows is recognized in the codebase but is not
 explicitly supported or tested; use on Windows is at your own risk.
 
 Usage:
-  bseal encrypt --input DIR --output DIR  --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
-  bseal encrypt --input DIR --output -    [options]   (stdout mode; single buffered shard)
-  bseal decrypt --input DIR --output DIR --keyfile FILE [--keyfile FILE ...] --passphrase-prompt [options]
+  bseal encrypt --input DIR --output DIR [--keyfile FILE ...] [--passphrase-prompt] [options]
+  bseal encrypt --input DIR --output -   [options]   (stdout mode; single buffered shard)
+  bseal decrypt --input DIR --output DIR [--keyfile FILE ...] [--passphrase-prompt] [options]
   bseal benchmark-kdf [options]
   bseal cpu-features
   bseal self-test [--strict]
+
+Common options (encrypt and decrypt):
+  --input DIR             source directory (plaintext for encrypt, archive dir for decrypt)
+  --output DIR|-          destination directory (or - for stdout, encrypt only)
+  --keyfile FILE          key material file; may be repeated for multiple keyfiles
+  --passphrase-prompt     read passphrase from TTY with echo suppressed;
+                          if omitted, reads one passphrase line from stdin
+  --verbose               print per-chunk progress to stderr
 
 Encrypt options:
   --suite xchacha20-poly1305|aes-256-gcm

@@ -181,6 +181,10 @@ Keyfile order matters: the archive will only decrypt when exactly the same keyfi
 are supplied in exactly the same order. Adding, removing, or reordering a keyfile
 produces a different derived key and will fail authentication (exit code 3).
 
+**Keyfile error handling**: a missing keyfile (path does not exist) or an unreadable
+keyfile (permission denied) is detected before key derivation starts and produces exit
+code 1. There is no silent fallback to passphrase-only mode if a keyfile cannot be read.
+
 **`--passphrase-prompt` mode** (recommended for interactive use):
 
 * Requires a real terminal (TTY). On Linux and POSIX systems BSEAL uses `termios`
@@ -308,7 +312,7 @@ The visible outside shape still leaks at least the number of shard files and tot
 The current design uses:
 
 * Argon2id through libsodium for passphrase hardening.
-* Ordered keyfile hashing and mixing.
+* Ordered keyfile hashing and mixing (BLAKE3-256 per-file digests; order-sensitive BLAKE3-256 mix).
 * HKDF-SHA-256 through OpenSSL for key expansion.
 * Domain-separated expanded keys for distinct purposes.
 * A keyed public-header MAC using `header_authentication_key`.
@@ -338,6 +342,8 @@ Those fields are authenticated with a keyed MAC:
 10. Decrypt fails before reading or decrypting chunk records if the header MAC is invalid.
 
 This gives early detection for wrong passphrases, wrong keyfiles, and public-header tampering. It also prevents unauthenticated changes to fields such as suite id, archive id, KDF salt, chunk size, shard size, and shard index.
+
+The exact byte sequence fed to Argon2id, HKDF, and the keyfile mix is documented in [`SECURITY_NOTES.md` — KDF input transcript](SECURITY_NOTES.md).
 
 `public_header_hash` is a BLAKE3-256 digest of the global header concatenated with the per-shard header (with `header_mac` zeroed). It is computed once per shard, included as AEAD associated data for every chunk in that shard, and is therefore covered by each chunk's authentication tag. It is not a MAC and must not be treated as one — its role is to bind each ciphertext chunk to its public shard context.
 
