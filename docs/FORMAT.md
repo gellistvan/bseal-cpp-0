@@ -351,8 +351,13 @@ The decryptor recovers shard ordering as follows:
 
 1. Scan the input directory for regular files with extension `.bin`.
 2. Parse the global and per-shard public headers from each `.bin` file.
-3. Reject any `.bin` file that is not a valid BSEAL-F1 shard.
+3. Reject any `.bin` file that is not a valid BSEAL-F1 shard. "Reject" means the
+   entire decrypt operation fails immediately — not that the invalid file is silently
+   skipped.  A single invalid `.bin` file in the input directory causes the whole
+   decrypt to fail with a format error (exit code 1).
 4. Require all parsed shards to have byte-for-byte identical `GlobalPublicHeaderV1` values.
+   A mismatch means the directory contains shards from more than one archive and the
+   decrypt MUST fail.
 5. Require exactly one shard for every `shard_index` in `0..shard_count-1`.
 6. Sort shards by the authenticated `shard_index` field, never by filename.
 7. Require the sorted chunk ranges to be contiguous:

@@ -15,7 +15,7 @@ This guide records design rules, the implementation order used to build BSEAL, a
 
 ## Suggested dependency choices
 
-The skeleton avoids hard dependencies so it can compile anywhere. Recommended production choices:
+BSEAL uses the following libraries. Recommended production choices:
 
 - AEAD default: libsodium `crypto_aead_xchacha20poly1305_ietf_*`.
 - AES-GCM backend: OpenSSL EVP, BoringSSL, Botan, or another audited provider with AES-NI/VAES support.

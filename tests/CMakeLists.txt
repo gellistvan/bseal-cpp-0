@@ -11,7 +11,7 @@ if (GTest_FOUND)
     message(STATUS "Using system GoogleTest")
     set(BSEAL_GTEST_LIBS GTest::gtest_main)
 else()
-    message(STATUS "System GoogleTest not found; using local lightweight compatibility harness for skeleton tests")
+    message(STATUS "System GoogleTest not found; using bundled lightweight compatibility harness")
     add_library(bseal_minigtest_main STATIC vendor/minigtest/gtest_main.cpp)
     target_include_directories(bseal_minigtest_main PUBLIC vendor/minigtest)
     target_compile_features(bseal_minigtest_main PUBLIC cxx_std_20)
@@ -259,12 +259,23 @@ endif()
 find_package(Python3 QUIET COMPONENTS Interpreter)
 
 if (Python3_FOUND)
+    set(BSEAL_SOURCE_MANIFEST_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/check_source_manifest.py")
     set(BSEAL_SCANNER_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/scan_unsafe_bypasses.py")
     set(BSEAL_SCANNER_SELFTEST "${CMAKE_SOURCE_DIR}/tests/scripts/test_scan_unsafe_bypasses.py")
     set(BSEAL_CHECKLIST_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_release_checklist.py")
     set(BSEAL_DOCS_LANGUAGE_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_docs_language.py")
     set(BSEAL_LICENSE_HEADERS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_license_headers.py")
     set(BSEAL_SUBMODULE_PINS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_submodule_pins.py")
+
+    add_test(
+        NAME scan.SourceManifest
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_SOURCE_MANIFEST_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.SourceManifest PROPERTIES
+        LABELS "scan"
+    )
 
     add_test(
         NAME scan.UnsafeBypassGuard

@@ -167,6 +167,38 @@ chunk range, and authenticated MAC) — **never by filename**. Filenames may be 
 without affecting correctness or security. The only purpose of randomness here is to avoid leaking
 archive structure (e.g. shard ordering or count) through predictable names.
 
+## Shard discovery invariants
+
+The decryptor enforces the following invariants during shard discovery (FORMAT.md §10, §19):
+
+1. **Any invalid `.bin` file fails the entire decrypt.** A `.bin` file that fails global-header
+   or shard-header parsing is not silently skipped — it causes an immediate format error (exit
+   code 1). This prevents an attacker who can inject files into the sealed directory from
+   causing the decryptor to behave unpredictably or to silently decrypt a different subset of
+   shards than expected.
+
+2. **All shards must belong to the same archive.** `verify_all_shard_header_macs()` and
+   `validate_shards()` both enforce this. Because the keys are derived from whichever archive's
+   global header is read first, a shard from a different archive will fail the per-shard MAC
+   verification (the MAC was computed with a different `header_authentication_key`) →
+   `AuthenticationFailed` → exit 3. In the unlikely event that MACs happen to match despite
+   different headers, `validate_shards()` will still reject the archive for having non-identical
+   `GlobalPublicHeaderV1` bytes → `InvalidArgument` → exit 1. Either way, a mixed directory
+   is rejected before any plaintext is produced.
+
+3. **Shard ordering is purely header-driven.** Shards are sorted by the authenticated
+   `shard_index` field after all header MACs are verified. Filenames, modification times,
+   directory enumeration order, and inode numbers play no role. A decryptor that relied on
+   filenames for ordering could be tricked by a rename.
+
+4. **Unsupported format versions are rejected immediately.** Any shard file with `format_major ≠ 1`
+   or `format_minor ≠ 0` is rejected before key derivation (exit code 1). This ensures that a
+   future incompatible format cannot be silently parsed as the current format.
+
+These invariants are tested by `BlackBoxCli.GarbageBinFileInSealedDirFailsDecrypt`,
+`BlackBoxCli.MixedArchiveShardsFailDecrypt`, `BlackBoxCli.RenamedShardsDecryptSucceeds`,
+and `BlackBoxCliRegression.UnsupportedFormatMajorVersion_Fails`.
+
 ## Mandatory header MAC verification in ShardReader
 
 The production `ShardReader` constructor requires a non-zero `header_authentication_key`
@@ -348,6 +380,143 @@ The helpers are unit-tested in `tests/common/TestCheckedArithmetic.cpp`, includi
 at `UINT64_MAX` and `2^63` (the largest representable power of two). The sanitizer build
 (`-DBSEAL_ENABLE_SANITIZERS=ON`) additionally catches any remaining unsigned arithmetic that was
 intentionally left unchecked (e.g. bitfield masks and loop counters) via UBSan.
+
+## KDF input transcript
+
+This section documents the exact byte sequence that produces the master seed, so any
+reimplementation or auditor can reproduce the computation independently.
+
+### Passphrase and keyfile intake
+
+All inputs are treated as opaque byte sequences.  The passphrase is held in a
+`SecureBuffer` (sodium_malloc-backed) throughout; no `std::string` copy is made.
+Keyfiles are read sequentially in the order they appear on the command line.
+
+### Step 1 — per-keyfile digests (FORMAT.md §8)
+
+For each keyfile at index `i`:
+
+```
+keyfile_digest[i] = BLAKE3-256(
+    "BSEAL keyfile digest v1\0"     // 24 bytes including the null terminator
+    || u64le(file_size[i])          // 8 bytes, little-endian
+    || file_bytes[i]                // verbatim file content
+)
+```
+
+If no keyfiles are supplied (passphrase-only mode), this step produces an empty list.
+There is no fallback or special-case: zero keyfiles is a fully valid mode, not an error.
+
+### Step 2 — keyfile mix (FORMAT.md §8)
+
+```
+keyfile_mix = BLAKE3-256(
+    "BSEAL keyfile mix v1\0"        // 21 bytes including the null terminator
+    || u32le(keyfile_count)         // 4 bytes; 0 in passphrase-only mode
+    || keyfile_digest[0]            // 32 bytes each, omitted if count == 0
+    || keyfile_digest[1]
+    || ...
+    || keyfile_digest[N-1]
+)
+```
+
+`keyfile_mix` is always 32 bytes.  Swapping, adding, or removing any keyfile changes
+`keyfile_mix`, which propagates through to a different master seed and every derived key.
+Order is significant: `mix([A, B]) ≠ mix([B, A])`.
+
+### Step 3 — Argon2id pass-key (FORMAT.md §7)
+
+```
+pass_key = Argon2id(
+    password    = passphrase_bytes,           // raw passphrase bytes; must be non-empty
+    salt        = kdf_salt,                   // 32 bytes from GlobalPublicHeaderV1.kdf_salt
+    t_cost      = argon2_iterations,          // FORMAT.md §7 range: 1–10
+    m_cost      = argon2_memory_kib,          // in KiB; FORMAT.md §7 range: 64 MiB–4 GiB
+    parallelism = argon2_parallelism,         // FORMAT.md §7 range: 1–32
+    taglen      = 32                          // kArgon2OutputBytesDefault
+)
+```
+
+`pass_key` is 32 bytes and lives in a `SecureBuffer` from derivation to HKDF input.
+
+### Step 4 — master seed (FORMAT.md §8)
+
+The Argon2id output and the keyfile mix are concatenated in a single `SecureBuffer`
+to avoid any intermediate heap copy of key material:
+
+```
+ikm = pass_key || keyfile_mix        // 64 bytes total, in SecureBuffer
+
+hkdf_salt = archive_id || kdf_salt   // 64 bytes total, public values (not locked)
+
+master_seed = HKDF-SHA256(
+    ikm  = ikm,                               // 64 bytes
+    salt = hkdf_salt,                         // 64 bytes
+    info = "BSEAL master key v1",             // 19 bytes, no null terminator
+    L    = 32
+)
+```
+
+`archive_id` is 32 bytes of CSPRNG output written into the public header at encryption
+time.  Binding `archive_id` in the HKDF salt means the same passphrase and keyfiles
+produce a different master seed for every archive.  `kdf_salt` is a separate 32-byte
+CSPRNG value also stored in the public header.
+
+### Step 5 — key expansion (FORMAT.md §9)
+
+Four domain-separated keys are derived from `master_seed` via HKDF-SHA256.  Each call
+uses an empty HKDF salt and an info string that includes the cipher suite as a 2-byte
+little-endian integer (`u16le(suite_id)`):
+
+```
+chunk_encryption_key      = HKDF-SHA256(ikm=master_seed, salt=∅,
+                                info="BSEAL chunk encryption key v1" || u16le(suite),
+                                L=key_len_for_suite)
+
+manifest_key              = HKDF-SHA256(ikm=master_seed, salt=∅,
+                                info="BSEAL manifest key v1" || u16le(suite),
+                                L=32)
+
+header_authentication_key = HKDF-SHA256(ikm=master_seed, salt=∅,
+                                info="BSEAL header authentication key v1" || u16le(suite),
+                                L=32)
+
+nonce_derivation_key      = HKDF-SHA256(ikm=master_seed, salt=∅,
+                                info="BSEAL nonce derivation key v1" || u16le(suite),
+                                L=32)
+```
+
+`suite_id` values: `0x0001` = XChaCha20-Poly1305; `0x0002` = AES-256-GCM.
+`key_len_for_suite`: 32 bytes for XChaCha20-Poly1305; 32 bytes for AES-256-GCM.
+
+### Passphrase-only vs keyfile modes
+
+Both modes follow the exact same transcript.  In passphrase-only mode:
+
+- `hash_keyfiles_blake3({})` returns an empty vector.
+- `mix_keyfile_digests({})` returns `BLAKE3-256("BSEAL keyfile mix v1\0" || u32le(0))`.
+- `keyfile_mix` is a fixed 32-byte constant (depends only on the domain string and zero count).
+- `ikm = pass_key || keyfile_mix` is still 64 bytes.
+
+This means passphrase-only mode and passphrase+keyfile mode differ in the `keyfile_mix`
+component of `ikm`, not in a mode flag.  There is no way to accidentally confuse one mode
+with the other.
+
+### Failure modes
+
+| Condition | Behavior | Exit code |
+|---|---|---|
+| Empty passphrase | `InvalidArgument` before Argon2id | 1 |
+| Missing keyfile | `InvalidArgument` in `require_keyfiles_exist` before key derivation | 1 |
+| Unreadable keyfile | `InvalidArgument` in `hash_keyfiles_blake3` | 1 |
+| KDF params above policy limit | `InvalidArgument` in `check_kdf_params_against_policy` before Argon2id | 1 |
+| KDF params outside format bounds | `InvalidArgument` in `validate_kdf_params` before Argon2id | 1 |
+| Wrong passphrase or keyfiles | `AuthenticationFailed` from header MAC or AEAD verification | 3 |
+| Reordered keyfiles | `AuthenticationFailed` (different `keyfile_mix` → different keys) | 3 |
+
+Silent fallback from missing keyfile to passphrase-only mode is explicitly prevented by
+`require_keyfiles_exist()` in `BsealApp::encrypt()` and `BsealApp::decrypt()`, which
+validates every listed keyfile path before calling `obtain_passphrase`.
 
 ## Secret handling
 

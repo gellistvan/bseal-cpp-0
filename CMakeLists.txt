@@ -2,11 +2,11 @@ cmake_minimum_required(VERSION 3.24)
 
 project(bseal
     VERSION 0.1.0
-    DESCRIPTION "BSEAL binary folder sealing skeleton"
+    DESCRIPTION "BSEAL experimental directory encryption tool"
     LANGUAGES CXX
 )
 
-option(BSEAL_BUILD_TESTS "Build smoke tests" ON)
+option(BSEAL_BUILD_TESTS "Build tests" ON)
 option(BSEAL_BUILD_FUZZERS "Build coverage-guided fuzz targets (requires Clang with libFuzzer)" OFF)
 option(BSEAL_ENABLE_SANITIZERS "Enable ASan/UBSan for local development" OFF)
 option(BSEAL_ENABLE_TSAN "Enable ThreadSanitizer (incompatible with BSEAL_ENABLE_SANITIZERS)" OFF)

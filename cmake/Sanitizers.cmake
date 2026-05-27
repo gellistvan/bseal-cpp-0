@@ -4,7 +4,7 @@ function(bseal_enable_sanitizers_if_requested target_name)
     endif()
 
     if (MSVC)
-        message(WARNING "BSEAL_ENABLE_SANITIZERS is not configured for MSVC in this skeleton.")
+        message(WARNING "BSEAL_ENABLE_SANITIZERS is not supported for MSVC; sanitizers are only configured for GCC and Clang.")
         return()
     endif()
 

@@ -508,6 +508,72 @@ TEST(BlackBoxCli, HelpCommandSucceedsAndPrintsUsage) {
     EXPECT_TRUE(contains_text(result.stdout_text, "decrypt"));
 }
 
+TEST(BlackBoxCli, EmptyPassphraseIsRejected) {
+    // An empty passphrase (EOF on stdin with no bytes) must be rejected with exit 1
+    // before any key derivation or output is produced.
+    TempDir temp("bseal_integration_empty_passphrase");
+
+    const auto input = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+
+    fs::create_directories(input);
+    write_file(input / "f.txt", "data");
+
+    const auto result = run_bseal(
+        temp.subdir("run"),
+        {
+            "encrypt",
+            "--input", input.string(),
+            "--output", sealed.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast",
+            "--chunk-size", "64K",
+            "--padding", "none",
+        },
+        "");  // empty passphrase — no bytes on stdin
+
+    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+    EXPECT_TRUE(list_bin_files(sealed).empty())
+        << "no shard files should be created when passphrase is empty";
+}
+
+#if !defined(_WIN32)
+TEST(BlackBoxCli, UnreadableKeyfileFailsBeforeEncryption) {
+    // A keyfile that exists but cannot be read must produce exit 1 before any
+    // encryption work begins; no shard files should be created.
+    TempDir temp("bseal_integration_unreadable_keyfile");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto keyfile = temp.subdir("keys") / "locked.bin";
+
+    fs::create_directories(input);
+    write_file(input / "f.txt", "data");
+    write_binary_file(keyfile, {0x01, 0x02, 0x03, 0x04});
+    fs::permissions(keyfile, fs::perms::none);   // chmod 000
+
+    const auto result = run_bseal(
+        temp.subdir("run"),
+        {
+            "encrypt",
+            "--input",   input.string(),
+            "--output",  sealed.string(),
+            "--keyfile", keyfile.string(),
+            "--suite",   "xchacha20-poly1305",
+            "--kdf",     "fast",
+            "--chunk-size", "64K",
+            "--padding", "none",
+        },
+        "passphrase\n");
+
+    fs::permissions(keyfile, fs::perms::owner_read | fs::perms::owner_write);  // restore
+
+    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+    EXPECT_TRUE(list_bin_files(sealed).empty())
+        << "no shard files should be created when keyfile is unreadable";
+}
+#endif
+
 TEST(BlackBoxCli, MissingKeyfileFailsBeforeEncryption) {
     TempDir temp("bseal_integration_missing_keyfile");
 
@@ -1364,6 +1430,10 @@ TEST(BlackBoxCli, TamperedShardPublicHeaderFailsAuthentication) {
     EXPECT_FALSE(fs::exists(output)) << "failed decrypt must remove the output dir it created";
 }
 
+// ---------------------------------------------------------------------------
+// Shard discovery and filename independence tests
+// ---------------------------------------------------------------------------
+
 // Swap the filenames of two shard files after encryption and verify that
 // decryption still succeeds.  Shard filenames are random labels only; the
 // shard_index stored inside each file's header determines ordering.
@@ -1415,6 +1485,157 @@ TEST(BlackBoxCli, SwappedShardFilenamesDecryptSucceeds) {
 
     EXPECT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
     expect_roundtrip_equal(input, output);
+}
+
+// Rename every shard to a completely arbitrary .bin filename and verify that
+// decryption still succeeds.  The decryptor must use only the authenticated
+// shard_index field inside each header to determine shard ordering — filenames
+// are irrelevant.
+TEST(BlackBoxCli, RenamedShardsDecryptSucceeds) {
+    TempDir temp("bseal_integration_renamed_shards");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    fs::create_directories(input);
+    create_keyfiles(key_a, key_b);
+    write_file(input / "big.bin", repeated("0123456789abcdef", 8192)); // 131072 bytes → multi-shard
+
+    const auto encrypt_result = run_bseal(
+        temp.subdir("encrypt-run"),
+        {
+            "encrypt",
+            "--input", input.string(), "--output", sealed.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+            "--suite", "xchacha20-poly1305",
+            "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "128K",
+            "--padding", "none",
+        },
+        "rename-test-passphrase\n");
+
+    ASSERT_EQ(encrypt_result.exit_code, 0) << encrypt_result.stderr_text;
+
+    // Rename every shard to an arbitrary name that bears no resemblance to the originals.
+    const auto shards = list_bin_files(sealed);
+    ASSERT_GE(shards.size(), 2u) << "expected multiple shards for this input size";
+    for (std::size_t i = 0; i < shards.size(); ++i) {
+        fs::rename(shards[i],
+                   sealed / ("arbitrary-label-" + std::to_string(i * 17 + 3) + ".bin"));
+    }
+
+    const auto decrypt_result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed.string(), "--output", output.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+        },
+        "rename-test-passphrase\n");
+
+    EXPECT_EQ(decrypt_result.exit_code, 0) << decrypt_result.stderr_text;
+    expect_roundtrip_equal(input, output);
+}
+
+// Plant a shard from a different archive in the sealed directory.  The two
+// archives have different GlobalPublicHeaderV1 values (different archive_id and
+// kdf_salt), so the decryptor must reject the mixed directory as ambiguous
+// per FORMAT.md §10.
+TEST(BlackBoxCli, MixedArchiveShardsFailDecrypt) {
+    TempDir temp("bseal_integration_mixed_archives");
+
+    const auto input_a  = temp.subdir("input-a");
+    const auto input_b  = temp.subdir("input-b");
+    const auto sealed_a = temp.subdir("sealed-a");
+    const auto sealed_b = temp.subdir("sealed-b");
+    const auto output   = temp.subdir("output");
+    const auto key_a    = temp.subdir("keys") / "key-a.bin";
+    const auto key_b    = temp.subdir("keys") / "key-b.bin";
+
+    fs::create_directories(input_a);
+    fs::create_directories(input_b);
+    create_keyfiles(key_a, key_b);
+    write_file(input_a / "file-a.txt", "archive A content");
+    write_file(input_b / "file-b.txt", "archive B content");
+
+    const auto common_enc_opts = std::vector<std::string>{
+        "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+        "--suite", "xchacha20-poly1305",
+        "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
+        "--padding", "none",
+    };
+
+    {
+        std::vector<std::string> args = {"encrypt",
+            "--input", input_a.string(), "--output", sealed_a.string()};
+        args.insert(args.end(), common_enc_opts.begin(), common_enc_opts.end());
+        ASSERT_EQ(run_bseal(temp.subdir("enc-a"), args, "mixed-passphrase\n").exit_code, 0);
+    }
+    {
+        std::vector<std::string> args = {"encrypt",
+            "--input", input_b.string(), "--output", sealed_b.string()};
+        args.insert(args.end(), common_enc_opts.begin(), common_enc_opts.end());
+        ASSERT_EQ(run_bseal(temp.subdir("enc-b"), args, "mixed-passphrase\n").exit_code, 0);
+    }
+
+    // Plant one of archive B's shards into archive A's sealed directory.
+    const auto shards_b = list_bin_files(sealed_b);
+    ASSERT_FALSE(shards_b.empty());
+    fs::copy_file(shards_b.front(), sealed_a / "foreign-shard.bin",
+                  fs::copy_options::overwrite_existing);
+
+    const auto result = run_bseal(
+        temp.subdir("decrypt-run"),
+        {
+            "decrypt",
+            "--input", sealed_a.string(), "--output", output.string(),
+            "--keyfile", key_a.string(), "--keyfile", key_b.string(),
+        },
+        "mixed-passphrase\n");
+
+    // The key is derived from whichever archive's global header is parsed first;
+    // the other archive's per-shard MAC will not verify under that key →
+    // AuthenticationFailed → exit 3.
+    EXPECT_EQ(result.exit_code, 3) << result.stderr_text;
+    EXPECT_FALSE(fs::exists(output))
+        << "output must not be committed when a foreign shard is present";
+}
+
+// A .bin file containing garbage bytes placed in the sealed directory must cause
+// decrypt to fail with exit code 1.  Per FORMAT.md §10, any .bin file that fails
+// to parse as a valid BSEAL-F1 shard rejects the entire decrypt operation.
+TEST(BlackBoxCli, GarbageBinFileInSealedDirFailsDecrypt) {
+    TempDir temp("bseal_integration_garbage_shard");
+
+    const auto input  = temp.subdir("input");
+    const auto sealed = temp.subdir("sealed");
+    const auto output = temp.subdir("output");
+    const auto key_a  = temp.subdir("keys") / "key-a.bin";
+    const auto key_b  = temp.subdir("keys") / "key-b.bin";
+
+    create_sample_input_tree(input);
+    create_keyfiles(key_a, key_b);
+
+    ASSERT_EQ(run_bseal(temp.subdir("enc"), encrypt_args(input, sealed, key_a, key_b),
+                         "passphrase\n").exit_code, 0);
+
+    // Write a .bin file with garbage bytes — not a valid BSEAL-F1 shard.
+    write_binary_file(sealed / "garbage.bin", {
+        0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    });
+
+    const auto result = run_bseal(
+        temp.subdir("dec"),
+        decrypt_args(sealed, output, key_a, key_b),
+        "passphrase\n");
+
+    EXPECT_EQ(result.exit_code, 1) << result.stderr_text;
+    EXPECT_FALSE(fs::exists(output))
+        << "output must not be committed when a garbage .bin file is present";
 }
 
 // Overwrite shard 1's ciphertext payload with shard 0's ciphertext bytes.

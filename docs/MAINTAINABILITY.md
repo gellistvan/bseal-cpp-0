@@ -136,6 +136,38 @@ lock the on-disk format at the byte level.  Do not modify these files except
 when intentionally changing the format version (which requires a FORMAT.md
 update and a new KAT set).
 
+### Source manifest is the single source of truth
+
+Every `.cpp` file added to the project must be explicitly listed in a
+`CMakeLists.txt`.  A file that exists on disk but is not compiled is a silent
+dead-code hazard — especially dangerous in a security-sensitive codebase where
+an unlisted implementation could be confused for a compiled one.
+
+`scripts/check_source_manifest.py` enforces this:
+
+| Directory | CMakeLists.txt checked | Exception |
+|---|---|---|
+| `src/**` | root `CMakeLists.txt` | none |
+| `tests/**` (excluding `fuzz/`, `vendor/`, `scripts/`, `fixtures/`) | `tests/CMakeLists.txt` | none |
+| `tests/fuzz/**` | `tests/fuzz/CMakeLists.txt` (stem must appear in `BSEAL_FUZZ_TARGETS`) | none |
+
+The script runs as `scan.SourceManifest` in every `ctest` invocation.  It must
+pass on both clean checkouts and before merging any branch.
+
+**When adding a new production source file:**
+1. Create `src/<layer>/<FileName>.cpp`.
+2. Add `src/<layer>/<FileName>.cpp` to the `bseal_core` source list in the root
+   `CMakeLists.txt` (alphabetically within its layer group).
+3. Run `cmake -S . -B build && cmake --build build -j` to verify it compiles.
+4. Run `ctest --test-dir build -R scan.SourceManifest` to verify the manifest
+   check passes.
+
+**When adding a new test source file:**
+1. Create `tests/<layer>/Test<Name>.cpp`.
+2. Add `<layer>/Test<Name>.cpp` to the appropriate `add_executable` block in
+   `tests/CMakeLists.txt` (alphabetically within its layer group).
+3. Re-run `cmake --build build -j && ctest --test-dir build --output-on-failure`.
+
 ## Submodule upgrade procedure
 
 BSEAL bundles two upstream libraries as git submodules:
