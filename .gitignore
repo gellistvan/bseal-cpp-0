@@ -5,6 +5,7 @@ build-tsan/
 build-fuzz/
 build-debug/
 build-coverage/
+build-cfl/
 CLAUDE.md
 build-sani/
 cmake-build-*/
