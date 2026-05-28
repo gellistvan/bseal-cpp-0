@@ -5,6 +5,7 @@ build-tsan/
 build-fuzz/
 build-debug/
 build-coverage/
+build-static-test/
 build-cfl/
 build-sani-cfl/
 CLAUDE.md
