@@ -1,0 +1,112 @@
+name: ClusterFuzzLite batch fuzzing
+
+# Scheduled deep fuzzing: runs daily at 03:00 UTC and on manual dispatch.
+# Longer fuzz-seconds budget lets the fuzzer explore more deeply and prune
+# the corpus of redundant inputs.
+#
+# Corpus storage: GitHub Actions cache (the default when no storage-repo is
+# set). This is the simplest option for a single-repo project — no extra
+# branch, no extra repository, no write permissions needed. The cache is
+# keyed per-fuzzer so each target's corpus grows independently. The
+# downside is that GitHub may evict cache entries older than 7 days if the
+# repository is quiet; the seed corpus in tests/fuzz/corpus/ provides a
+# permanent fallback so fuzzer coverage never regresses to zero.
+#
+# If the project later migrates to branch-based storage (e.g. to share
+# corpus across forks or to retain it beyond 7 days), set storage-repo to
+# a dedicated repository and grant contents: write permission. See
+# docs/FUZZING.md for migration notes.
+
+on:
+  schedule:
+    # Daily at 03:00 UTC — avoids peak GitHub Actions load windows.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzz-seconds:
+        description: 'Fuzzing budget in seconds (default: 1800)'
+        required: false
+        default: '1800'
+
+# Cache-based corpus storage needs only read access.
+# If migrating to branch storage, change contents to: write.
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # Batch fuzzing matrix — ASan + UBSan, long budget.
+  # ------------------------------------------------------------------
+  cflite-batch:
+    name: Batch fuzz (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer:
+          - address
+          - undefined
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: c++
+          sanitizer: ${{ matrix.sanitizer }}
+          bad-build-check: true
+
+      - name: Run fuzzers (batch)
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          language: c++
+          # Use the manual-dispatch override when supplied, otherwise default.
+          fuzz-seconds: ${{ github.event.inputs.fuzz-seconds || '1800' }}
+          mode: batch
+          sanitizer: ${{ matrix.sanitizer }}
+          output-sarif: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload crashing testcases
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-batch-${{ matrix.sanitizer }}-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 30
+
+  # ------------------------------------------------------------------
+  # Corpus pruning — runs after both batch jobs succeed.
+  # Removes redundant corpus entries that are dominated by other inputs,
+  # keeping the corpus lean for the next day's run.
+  # ------------------------------------------------------------------
+  cflite-prune:
+    name: Prune corpus
+    runs-on: ubuntu-latest
+    needs: cflite-batch
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: c++
+          sanitizer: address
+
+      - name: Prune corpus
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          language: c++
+          fuzz-seconds: 600
+          mode: prune
+          sanitizer: address
+          github-token: ${{ secrets.GITHUB_TOKEN }}
