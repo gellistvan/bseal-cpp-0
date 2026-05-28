@@ -1,0 +1,19 @@
+# libFuzzer dictionary for FuzzShardPublicHeader.
+# Magic bytes and field tokens from:
+#   src/io/ShardFrame.hpp  — kShardHeaderV1Magic, ShardPublicHeaderV1 layout
+#   src/io/ShardFrame.cpp  — parse_shard_public_header rejection rules
+
+# Shard header magic (ShardFrame.hpp:112)
+shard_magic="BSEAL-S1"
+
+# Global header magic — not in this header but mutation may produce it
+global_magic="BSEAL-F1"
+
+# shard_header_len = 80 (u32 LE) — kShardPublicHeaderV1Size (ShardFrame.hpp:30)
+shard_header_len_80="\x50\x00\x00\x00"
+
+# shard_chunk_count = 1 (u64 LE) — minimum non-zero value
+chunk_count_one="\x01\x00\x00\x00\x00\x00\x00\x00"
+
+# shard_payload_len = 65592 (u64 LE) — 65536 + 16 tag + 40 frame header
+payload_len_65592="\x38\x00\x01\x00\x00\x00\x00\x00"
