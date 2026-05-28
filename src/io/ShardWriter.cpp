@@ -261,6 +261,11 @@ ShardWritePosition ShardWriter::write_chunk_frame(
             " bytes); increase --shard-size or decrease --chunk-size");
     }
 
+    // Test-only fault injection: fires before any file I/O for this chunk.
+    if (options_.before_chunk_write) {
+        options_.before_chunk_write(header.global_chunk_index);
+    }
+
     // Overflow-safe: frame_size <= max_shard_payload_len (checked above).
     if (!current_stream_.is_open()) {
         open_next_shard(header.global_chunk_index);

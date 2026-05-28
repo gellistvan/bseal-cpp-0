@@ -43,6 +43,10 @@ struct CommonOptions {
     bool passphrase_prompt{false};
     bool verbose{false};
     platform::DurabilityMode durability_mode{platform::DurabilityMode::BestEffort};
+    // Attempt mlockall(MCL_CURRENT | MCL_FUTURE); warn on failure.
+    bool lock_memory{false};
+    // As lock_memory but abort (exit 1) if locking fails.
+    bool require_lock_memory{false};
 };
 
 struct EncryptOptions : CommonOptions {

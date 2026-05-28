@@ -33,6 +33,7 @@ using bseal::crypto::preset_params;
 using bseal::crypto::validate_kdf_params;
 using bseal::crypto::validate_kdf_resource_policy;
 using bseal::crypto::check_kdf_params_against_policy;
+using bseal::crypto::validate_kdf_security_floor;
 using bseal::crypto::KdfResourcePolicy;
 
 // Build a SecureBuffer from an ASCII/UTF-8 string literal for tests.
@@ -107,11 +108,15 @@ std::array<Byte, 32> make_archive_id() {
     return id;
 }
 
+// Minimum floor-compliant params for fast unit tests.
+// Memory is at the format-level minimum (64 MiB); because memory < 256 MiB, the
+// security floor (FORMAT.md §7.1) requires t >= 4.  This combination is accepted
+// by derive_master_seed and is the cheapest valid input for tests that invoke Argon2id.
 KdfParams small_test_kdf_params() {
     return KdfParams{
         KdfPreset::Custom,
-        bseal::crypto::kArgon2MemoryKiBMin, // minimum valid value per FORMAT.md §7
-        1,
+        bseal::crypto::kArgon2MemoryKiBMin, // 64 MiB — format-level minimum
+        4,                                   // floor requires t >= 4 when memory < 256 MiB
         1,
         32
     };
@@ -491,8 +496,8 @@ TEST(KdfResourcePolicy, CheckRejectsParamsExceedingParallelismLimit) {
 
 TEST(KdfResourcePolicy, CheckAcceptsParamsAtExactLimit) {
     KdfResourcePolicy policy{};
-    policy.max_memory_kib = bseal::crypto::kArgon2MemoryKiBMin;
-    policy.max_iterations = 1;
+    policy.max_memory_kib  = bseal::crypto::kArgon2MemoryKiBMin;
+    policy.max_iterations  = 4;  // matches small_test_kdf_params (floor requires t>=4 at 64 MiB)
     policy.max_parallelism = 1;
 
     auto params = small_test_kdf_params();
@@ -514,6 +519,123 @@ TEST(KdfResourcePolicy, CheckErrorMessageMentionsOverrideFlag) {
         EXPECT_NE(msg.find("--max-kdf-memory"), std::string::npos)
             << "error message must mention --max-kdf-memory: " << msg;
     }
+}
+
+// ---------------------------------------------------------------------------
+// KDF security floor tests (FORMAT.md §7.1)
+//
+// Rule: memory < 256 MiB → iterations >= 4; memory >= 256 MiB → iterations >= 3.
+// The floor is enforced by validate_kdf_security_floor() and inside derive_master_seed().
+// ---------------------------------------------------------------------------
+
+TEST(KdfSecurityFloor, RejectsMinMemoryWithOneIteration) {
+    KdfParams p;
+    p.memory_kib  = bseal::crypto::kArgon2MemoryKiBMin; // 64 MiB — below 256 MiB floor
+    p.iterations  = 1;
+    p.parallelism = 1;
+    p.output_bytes = 32;
+    EXPECT_THROW(validate_kdf_security_floor(p), InvalidArgument);
+}
+
+TEST(KdfSecurityFloor, RejectsMinMemoryWithTwoIterations) {
+    KdfParams p;
+    p.memory_kib   = bseal::crypto::kArgon2MemoryKiBMin;
+    p.iterations   = 2;
+    p.parallelism  = 1;
+    p.output_bytes = 32;
+    EXPECT_THROW(validate_kdf_security_floor(p), InvalidArgument);
+}
+
+TEST(KdfSecurityFloor, RejectsMinMemoryWithThreeIterations) {
+    KdfParams p;
+    p.memory_kib   = bseal::crypto::kArgon2MemoryKiBMin; // 64 MiB — needs t>=4
+    p.iterations   = 3;
+    p.parallelism  = 1;
+    p.output_bytes = 32;
+    EXPECT_THROW(validate_kdf_security_floor(p), InvalidArgument);
+}
+
+TEST(KdfSecurityFloor, AcceptsMinMemoryWithFourIterations) {
+    KdfParams p;
+    p.memory_kib   = bseal::crypto::kArgon2MemoryKiBMin; // 64 MiB, t=4: exactly at floor
+    p.iterations   = 4;
+    p.parallelism  = 1;
+    p.output_bytes = 32;
+    EXPECT_NO_THROW(validate_kdf_security_floor(p));
+}
+
+TEST(KdfSecurityFloor, RejectsBelowFloorMemoryWithThreeIterations) {
+    KdfParams p;
+    p.memory_kib   = 128u * 1024u; // 128 MiB — still < 256 MiB, so needs t>=4
+    p.iterations   = 3;
+    p.parallelism  = 1;
+    p.output_bytes = 32;
+    EXPECT_THROW(validate_kdf_security_floor(p), InvalidArgument);
+}
+
+TEST(KdfSecurityFloor, AcceptsBelowFloorMemoryWithFourIterations) {
+    KdfParams p;
+    p.memory_kib   = 128u * 1024u; // 128 MiB, t=4: above floor
+    p.iterations   = 4;
+    p.parallelism  = 1;
+    p.output_bytes = 32;
+    EXPECT_NO_THROW(validate_kdf_security_floor(p));
+}
+
+TEST(KdfSecurityFloor, RejectsFloorMemoryWithTwoIterations) {
+    KdfParams p;
+    p.memory_kib   = bseal::crypto::kArgon2FloorMemoryKiB; // 256 MiB, needs t>=3
+    p.iterations   = 2;
+    p.parallelism  = 4;
+    p.output_bytes = 32;
+    EXPECT_THROW(validate_kdf_security_floor(p), InvalidArgument);
+}
+
+TEST(KdfSecurityFloor, AcceptsFloorMemoryWithMinIterations) {
+    KdfParams p;
+    p.memory_kib   = bseal::crypto::kArgon2FloorMemoryKiB; // 256 MiB, t=3: exactly at floor
+    p.iterations   = 3;
+    p.parallelism  = 4;
+    p.output_bytes = 32;
+    EXPECT_NO_THROW(validate_kdf_security_floor(p));
+}
+
+TEST(KdfSecurityFloor, AcceptsAllBuiltinPresets) {
+    EXPECT_NO_THROW(validate_kdf_security_floor(preset_params(KdfPreset::Fast)));
+    EXPECT_NO_THROW(validate_kdf_security_floor(preset_params(KdfPreset::Strong)));
+    EXPECT_NO_THROW(validate_kdf_security_floor(preset_params(KdfPreset::Paranoid)));
+}
+
+TEST(KdfSecurityFloor, ErrorMessageDescribesFloor) {
+    KdfParams p;
+    p.memory_kib   = bseal::crypto::kArgon2MemoryKiBMin; // 64 MiB
+    p.iterations   = 1;
+    p.parallelism  = 1;
+    p.output_bytes = 32;
+    try {
+        validate_kdf_security_floor(p);
+        FAIL() << "expected InvalidArgument";
+    } catch (const InvalidArgument& e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("security floor"), std::string::npos) << "msg: " << msg;
+    }
+}
+
+// derive_master_seed must enforce the security floor even when called directly.
+TEST(KdfSecurityFloor, DeriveRejectsWeakParams) {
+    auto input = make_input({});
+    input.params.memory_kib = bseal::crypto::kArgon2MemoryKiBMin; // 64 MiB, t=1
+    input.params.iterations = 1;
+    EXPECT_THROW(derive_master_seed(input), InvalidArgument);
+}
+
+TEST(KdfSecurityFloor, DeriveAcceptsFloorCompliantParams) {
+    auto input = make_input({});
+    // 64 MiB, t=4 is the minimum floor-compliant combination.
+    input.params.memory_kib = bseal::crypto::kArgon2MemoryKiBMin;
+    input.params.iterations = 4;
+    auto seed = derive_master_seed(input);
+    EXPECT_EQ(seed.size(), 32u);
 }
 
 // ---------------------------------------------------------------------------
@@ -543,12 +665,6 @@ static constexpr std::array<Byte, 32> kVecDigestEmpty = {{
 static constexpr std::array<Byte, 32> kVecDigestHello = {{
     0x6c, 0x5f, 0x1a, 0xc4, 0x22, 0x29, 0xba, 0x1b, 0x33, 0x12, 0x28, 0xe7, 0x50, 0xc3, 0x94, 0x44,
     0xcc, 0x37, 0xbd, 0xe0, 0xac, 0xd5, 0x55, 0x88, 0x98, 0x4a, 0x1b, 0x81, 0x03, 0xe3, 0xf1, 0xf5,
-}};
-
-// Keyfile containing exactly b"world" (5 bytes).
-static constexpr std::array<Byte, 32> kVecDigestWorld = {{
-    0xf7, 0x92, 0x54, 0xc4, 0xc6, 0x11, 0xe0, 0x15, 0x89, 0x17, 0xdf, 0x63, 0x8a, 0x84, 0x4d, 0x4c,
-    0x4e, 0xb0, 0x17, 0x5c, 0x4a, 0xbb, 0x33, 0xb9, 0xfe, 0x83, 0x18, 0x9a, 0x24, 0x55, 0x6b, 0xd5,
 }};
 
 // Expected BLAKE3-256 mixes produced by mix_keyfile_digests() per FORMAT.md §8:
@@ -752,14 +868,15 @@ TEST(Kdf_RealParallelism, ChangingIterationsChangesMasterSeed) {
     const auto kf  = write_keyfile(dir, "k.bin", make_bytes(32, 0xBB));
 
     auto input = make_input({kf});
-    input.params.iterations = 1;
+    // Use floor-compliant values: 64 MiB needs t>=4.
+    input.params.iterations = 4;
     const auto seed_i1 = to_vector(derive_master_seed(input));
 
-    input.params.iterations = 2;
+    input.params.iterations = 5;
     const auto seed_i2 = to_vector(derive_master_seed(input));
 
     EXPECT_NE(seed_i1, seed_i2)
-        << "iterations=1 and iterations=2 must derive different master seeds";
+        << "iterations=4 and iterations=5 must derive different master seeds";
 
     std::filesystem::remove_all(dir);
 }

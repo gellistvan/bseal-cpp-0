@@ -1,0 +1,32 @@
+# libFuzzer dictionary for FuzzArchiveReader.
+# The ArchiveReader consumes the same plaintext record stream as the record format
+# parser, so this dictionary mirrors record_format.dict and adds stream-level tokens.
+# Sources:
+#   src/archive/RecordFormat.hpp / RecordFormat.cpp
+#   src/archive/ArchiveReader.hpp
+
+# Record type discriminant bytes (RecordFormat.hpp:26)
+type_archive_begin="\x01"
+type_dir_entry="\x02"
+type_file_entry="\x03"
+type_file_bytes="\x04"
+type_file_end="\x05"
+type_symlink_entry="\x06"
+type_archive_end="\x07"
+type_random_padding="\x08"
+
+# kArchiveFormatVersion = 1 (u32 LE)
+archive_format_v1="\x01\x00\x00\x00"
+
+# Zero payload_size (u64 LE)
+payload_size_zero="\x00\x00\x00\x00\x00\x00\x00\x00"
+
+# Entry kind bytes
+kind_regular="\x01"
+kind_directory="\x02"
+kind_symlink="\x03"
+
+# Path strings commonly seen in archives
+path_fuzz_txt="fuzz.txt"
+path_nested="dir/file.txt"
+path_traversal="../etc/passwd"

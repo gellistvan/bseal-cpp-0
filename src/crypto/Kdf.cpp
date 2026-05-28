@@ -141,6 +141,21 @@ void validate_kdf_params(const KdfParams& params) {
     );
 }
 
+void validate_kdf_security_floor(const KdfParams& params) {
+    const std::uint32_t min_iter = (params.memory_kib >= kArgon2FloorMemoryKiB)
+        ? kArgon2FloorIterationsHigh
+        : kArgon2FloorIterationsLow;
+
+    if (params.iterations < min_iter) {
+        throw InvalidArgument(
+            "Argon2id parameters are below the minimum security floor: "
+            "memory=" + std::to_string(params.memory_kib) + " KiB with " +
+            std::to_string(params.iterations) + " iteration(s); "
+            "require at least " + std::to_string(min_iter) + " iteration(s) at this "
+            "memory size (floor: >=256 MiB requires t>=3, <256 MiB requires t>=4)");
+    }
+}
+
 std::vector<KeyfileDigest>
 hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
     std::vector<KeyfileDigest> digests;
@@ -233,6 +248,7 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
     }
 
     validate_kdf_params(input.params);
+    validate_kdf_security_floor(input.params);
 
     const auto keyfile_digests = hash_keyfiles_blake3(input.keyfiles);
     auto keyfile_mix = mix_keyfile_digests(keyfile_digests);

@@ -742,3 +742,83 @@ TEST(TestArchiveReader, RandomTempNamesDifferBetweenInstances) {
     ASSERT_FALSE(tmp2.empty()) << "second temp dir not found";
     EXPECT_NE(tmp1, tmp2) << "two ArchiveReader instances produced identical temp dir names";
 }
+
+// ---------------------------------------------------------------------------
+// Permission bit sanitization tests
+// ---------------------------------------------------------------------------
+
+#if !defined(_WIN32)
+
+TEST(TestArchiveReader, SetuidBitIsStrippedFromRestoredFile) {
+    TemporaryDirectory output;
+
+    ArchiveReaderOptions options;
+    options.output_root         = output.path();
+    options.restore_permissions = true;
+    options.restore_timestamps  = false;
+
+    ArchiveReader reader(options);
+
+    const auto content = bytes_from_string("payload");
+    // posix_mode 06644: setuid (04000) + setgid (02000) + owner-rw + group-r + other-r
+    const auto meta = file_metadata("secret.txt", content.size(), 06644u);
+
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+    consume_in_fragments(reader, record_bytes(RecordType::FileEntry,
+                                              serialize_entry_metadata(meta)));
+    consume_in_fragments(reader, record_bytes(RecordType::FileBytes, content));
+    consume_in_fragments(reader, record_bytes(RecordType::FileEnd));
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveEnd));
+    reader.finish();
+
+    const auto extracted = output.path() / "secret.txt";
+    ASSERT_TRUE(std::filesystem::exists(extracted));
+
+    std::error_code ec;
+    const auto status = std::filesystem::status(extracted, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    const auto perms = status.permissions();
+    const auto raw = static_cast<unsigned>(perms);
+
+    EXPECT_EQ(raw & 04000u, 0u) << "setuid bit must be stripped; mode=" << std::oct << raw;
+    EXPECT_EQ(raw & 02000u, 0u) << "setgid bit must be stripped; mode=" << std::oct << raw;
+    EXPECT_EQ(raw & 00777u, 0644u) << "rwxrwxrwx bits must be preserved; mode=" << std::oct << raw;
+}
+
+TEST(TestArchiveReader, StickyBitIsStrippedFromRestoredDirectory) {
+    TemporaryDirectory output;
+
+    ArchiveReaderOptions options;
+    options.output_root         = output.path();
+    options.restore_permissions = true;
+    options.restore_timestamps  = false;
+
+    ArchiveReader reader(options);
+
+    // posix_mode 01755: sticky bit + rwxr-xr-x
+    EntryMetadata dir_meta;
+    dir_meta.kind          = EntryKind::Directory;
+    dir_meta.relative_path = "stickydir";
+    dir_meta.posix_mode    = 01755u;
+
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveBegin, archive_begin_payload()));
+    consume_in_fragments(reader, record_bytes(RecordType::DirectoryEntry,
+                                              serialize_entry_metadata(dir_meta)));
+    consume_in_fragments(reader, record_bytes(RecordType::ArchiveEnd));
+    reader.finish();
+
+    const auto extracted = output.path() / "stickydir";
+    ASSERT_TRUE(std::filesystem::is_directory(extracted));
+
+    std::error_code ec;
+    const auto status = std::filesystem::status(extracted, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    const auto raw = static_cast<unsigned>(status.permissions());
+
+    EXPECT_EQ(raw & 01000u, 0u) << "sticky bit must be stripped; mode=" << std::oct << raw;
+    EXPECT_EQ(raw & 00777u, 0755u) << "rwxrwxrwx bits must be preserved; mode=" << std::oct << raw;
+}
+
+#endif // !_WIN32

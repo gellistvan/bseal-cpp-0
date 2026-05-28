@@ -1,0 +1,25 @@
+# libFuzzer dictionary for FuzzChunkFrameHeader.
+# Magic bytes and field tokens from:
+#   src/io/ShardFrame.hpp  — kChunkFrameV1Magic, ChunkFrameHeaderV1 layout
+#   src/io/ShardFrame.cpp  — serialize_chunk_frame_header_v1, parse_chunk_frame_header_v1
+
+# Chunk frame magic (ShardFrame.hpp:189)
+chunk_magic="BSC1"
+
+# frame_header_len = 40 (u16 LE) — kChunkFrameHeaderV1Size (ShardFrame.hpp:196)
+frame_header_len_40="\x28\x00"
+
+# frame_flags = 0 (u16 LE) — normal chunk
+flags_normal="\x00\x00"
+
+# frame_flags = 1 (u16 LE) — kChunkFrameFlagFinalChunk (ShardFrame.hpp:197)
+flags_final="\x01\x00"
+
+# plaintext_len = 65536 (u32 LE) — minimum valid chunk size
+plaintext_64k="\x00\x00\x01\x00"
+
+# plaintext_len = 67108864 (u32 LE) — maximum valid chunk size 2^26
+plaintext_64m="\x00\x00\x00\x04"
+
+# tag_len = 16 (u16 LE) — only valid AEAD tag length (ShardFrame.cpp:555)
+tag_len_16="\x10\x00"

@@ -92,7 +92,7 @@ bseal::io::GlobalPublicHeaderV1 make_global_header()
 
     h.argon2_version     = 0x13;
     h.argon2_memory_kib  = bseal::crypto::kArgon2MemoryKiBMin;
-    h.argon2_iterations  = 1;
+    h.argon2_iterations  = 4;  // floor: <256 MiB requires t>=4
     h.argon2_parallelism = 1;
     h.chunk_plain_size   = 65536;    // 64 KiB — minimum power-of-two
     h.shard_count        = 1;

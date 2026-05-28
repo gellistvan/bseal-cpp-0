@@ -1,0 +1,49 @@
+# libFuzzer dictionary for FuzzGlobalPublicHeader.
+# Magic bytes and algorithm ID tokens from:
+#   src/io/ShardFrame.hpp  — kGlobalHeaderV1Magic, kAeadAlgId*, kKdfAlgId*, etc.
+#   src/io/ShardFrame.cpp  — parse_global_public_header rejection rules
+
+# Global file header magic (ShardFrame.hpp:18)
+global_magic="BSEAL-F1"
+
+# Shard header magic — embedded in global_header_len consistency checks (ShardFrame.hpp:112)
+shard_magic="BSEAL-S1"
+
+# Chunk frame magic — referenced in frame_header_len field (ShardFrame.hpp:189)
+chunk_magic="BSC1"
+
+# format_major = 1, format_minor = 0 (u16 LE) — only version accepted
+format_v1="\x01\x00\x00\x00"
+
+# global_header_len = 192 (u32 LE) — kGlobalPublicHeaderV1Size (ShardFrame.hpp:29)
+global_header_len_192="\xc0\x00\x00\x00"
+
+# shard_header_len = 80 (u32 LE) — kShardPublicHeaderV1Size (ShardFrame.hpp:30)
+shard_header_len_80="\x50\x00\x00\x00"
+
+# frame_header_len = 40 (u16 LE) — kChunkFrameHeaderV1Size (ShardFrame.hpp:196)
+frame_header_len_40="\x28\x00"
+
+# aead_alg_id = 1 (u16 LE) — XChaCha20-Poly1305 (ShardFrame.hpp:33)
+aead_xchacha20="\x01\x00"
+
+# aead_alg_id = 2 (u16 LE) — AES-256-GCM (ShardFrame.hpp:34)
+aead_aes256gcm="\x02\x00"
+
+# kdf_alg_id = hash_alg_id = mac_alg_id = 1 (u16 LE) (ShardFrame.hpp:37-39)
+alg_id_one="\x01\x00"
+
+# argon2_version = 0x13 (u32 LE) — Argon2 v1.3
+argon2_v13="\x13\x00\x00\x00"
+
+# chunk_plain_size = 65536 (u32 LE) — minimum valid (ShardFrame.cpp:239)
+chunk_size_64k="\x00\x00\x01\x00"
+
+# chunk_plain_size = 67108864 (u32 LE) — maximum valid 2^26
+chunk_size_64m="\x00\x00\x00\x04"
+
+# padding_policy_id values (u16 LE): none=0, chunk=1, power2=2, fixed=3
+padding_none="\x00\x00"
+padding_chunk="\x01\x00"
+padding_power2="\x02\x00"
+padding_fixed="\x03\x00"

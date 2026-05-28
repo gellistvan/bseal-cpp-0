@@ -5,6 +5,7 @@
 #include "archive/ArchiveWriter.hpp"
 #include "archive/Metadata.hpp"
 #include "archive/RecordFormat.hpp"
+#include "common/Endian.hpp"
 #include "common/Errors.hpp"
 #include "common/Types.hpp"
 
@@ -13,7 +14,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -82,12 +82,6 @@ inline std::string read_text_file(const std::filesystem::path& path) {
     }
 
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
-
-inline void append_u32_le(Bytes& out, std::uint32_t value) {
-    for (int i = 0; i < 4; ++i) {
-        out.push_back(static_cast<Byte>((value >> (8 * i)) & 0xffu));
-    }
 }
 
 inline Bytes archive_begin_payload() {

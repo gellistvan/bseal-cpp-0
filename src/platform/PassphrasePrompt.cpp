@@ -4,9 +4,10 @@
 #include "common/Errors.hpp"
 #include "crypto/SecureBuffer.hpp"
 
+#include <sodium.h>
+
 #include <iostream>
 #include <string>
-#include <string_view>
 
 #if defined(_POSIX_VERSION)
 #    include <termios.h>
@@ -16,17 +17,6 @@
 #endif
 
 namespace bseal::platform {
-namespace {
-
-// Move a std::string into a SecureBuffer and wipe the source.
-crypto::SecureBuffer to_secure_buffer(std::string& s) {
-    crypto::SecureBuffer buf(s.size());
-    std::copy(s.begin(), s.end(), buf.as_span().begin());
-    crypto::secure_wipe_string(s);
-    return buf;
-}
-
-} // namespace
 
 // ---------------------------------------------------------------------------
 // Platform-specific terminal reader
@@ -34,8 +24,49 @@ crypto::SecureBuffer to_secure_buffer(std::string& s) {
 
 #if defined(_POSIX_VERSION)
 
+namespace {
+
+// RAII guard: restores terminal echo and emits a newline on scope exit.
+struct EchoRestorer {
+    int      fd;
+    termios  saved;
+    ~EchoRestorer() noexcept {
+        ::tcsetattr(fd, TCSAFLUSH, &saved);
+        std::cerr << '\n';
+    }
+};
+
+} // namespace
+
+crypto::SecureBuffer read_passphrase_from_fd(int fd) {
+    crypto::SecureBuffer buf(kMaxPassphraseBytes);
+    std::size_t n = 0;
+    unsigned char byte = 0;
+
+    while (true) {
+        const ssize_t r = ::read(fd, &byte, 1);
+        if (r < 0) {
+            crypto::secure_memzero(&byte, sizeof(byte));
+            throw bseal::InvalidArgument("failed to read passphrase");
+        }
+        if (r == 0 || byte == '\n') {
+            break;
+        }
+        if (n == kMaxPassphraseBytes) {
+            crypto::secure_memzero(&byte, sizeof(byte));
+            throw bseal::InvalidArgument("passphrase exceeds maximum length of " +
+                                         std::to_string(kMaxPassphraseBytes) + " bytes");
+        }
+        buf.as_span()[n++] = static_cast<Byte>(byte);
+    }
+
+    crypto::secure_memzero(&byte, sizeof(byte));
+    buf.resize(n);
+    return buf;
+}
+
 TerminalLineReader platform_terminal_reader() {
-    return [](std::string_view prompt) -> std::string {
+    return [](std::string_view prompt) -> crypto::SecureBuffer {
         std::cerr << prompt;
 
         termios old_termios{};
@@ -52,22 +83,17 @@ TerminalLineReader platform_terminal_reader() {
                 "passphrase prompt requires a terminal: could not disable echo");
         }
 
-        std::string line;
-        std::getline(std::cin, line);
-        ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_termios);
-        std::cerr << '\n';
-
-        if (!std::cin) {
-            throw bseal::InvalidArgument("failed to read passphrase from terminal");
-        }
-        return line;
+        // EchoRestorer runs on both normal return and exception: restores ECHO and
+        // emits '\n' so the terminal cursor moves to a new line after the hidden input.
+        EchoRestorer restorer{STDIN_FILENO, old_termios};
+        return read_passphrase_from_fd(STDIN_FILENO);
     };
 }
 
 #elif defined(_WIN32)
 
 TerminalLineReader platform_terminal_reader() {
-    return [](std::string_view prompt) -> std::string {
+    return [](std::string_view prompt) -> crypto::SecureBuffer {
         std::cerr << prompt;
 
         HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
@@ -89,22 +115,44 @@ TerminalLineReader platform_terminal_reader() {
                 "passphrase prompt requires a terminal: could not disable echo");
         }
 
-        std::string line;
-        std::getline(std::cin, line);
+        crypto::SecureBuffer buf(kMaxPassphraseBytes);
+        std::size_t  n        = 0;
+        unsigned char byte    = 0;
+        bool          too_long = false;
+
+        while (true) {
+            DWORD bytes_read = 0;
+            if (!ReadFile(hStdin, &byte, 1, &bytes_read, nullptr) || bytes_read == 0) {
+                break;
+            }
+            if (byte == '\n' || byte == '\r') {
+                break;
+            }
+            if (n == kMaxPassphraseBytes) {
+                too_long = true;
+                break;
+            }
+            buf.as_span()[n++] = static_cast<Byte>(byte);
+        }
+
+        crypto::secure_memzero(&byte, sizeof(byte));
         SetConsoleMode(hStdin, old_mode);
         std::cerr << '\n';
 
-        if (!std::cin) {
-            throw bseal::InvalidArgument("failed to read passphrase from terminal");
+        if (too_long) {
+            throw bseal::InvalidArgument("passphrase exceeds maximum length of " +
+                                         std::to_string(kMaxPassphraseBytes) + " bytes");
         }
-        return line;
+
+        buf.resize(n);
+        return buf;
     };
 }
 
 #else
 
 TerminalLineReader platform_terminal_reader() {
-    return [](std::string_view) -> std::string {
+    return [](std::string_view) -> crypto::SecureBuffer {
         throw bseal::NotImplemented("passphrase terminal prompt on this platform");
     };
 }
@@ -116,20 +164,22 @@ TerminalLineReader platform_terminal_reader() {
 // ---------------------------------------------------------------------------
 
 crypto::SecureBuffer read_passphrase_prompt(TerminalLineReader reader) {
-    auto first = reader("Passphrase: ");
+    auto first  = reader("Passphrase: ");
     auto second = reader("Confirm passphrase: ");
 
-    const bool match = (first == second);
-    crypto::secure_wipe_string(second);
+    const bool sizes_match = (first.size() == second.size());
+    const bool bytes_match = sizes_match && (first.empty() ||
+        sodium_memcmp(first.data(), second.data(), first.size()) == 0);
+    second.wipe();
 
-    if (!match) {
-        crypto::secure_wipe_string(first);
+    if (!bytes_match) {
+        first.wipe();
         throw bseal::InvalidArgument("passphrases do not match");
     }
     if (first.empty()) {
         throw bseal::InvalidArgument("passphrase must not be empty");
     }
-    return to_secure_buffer(first);
+    return first;
 }
 
 crypto::SecureBuffer read_passphrase_prompt() {
@@ -138,12 +188,44 @@ crypto::SecureBuffer read_passphrase_prompt() {
 
 crypto::SecureBuffer read_passphrase_from_stdin() {
     std::cerr << "Passphrase: ";
-    std::string line;
-    std::getline(std::cin, line);
-    if (!std::cin || line.empty()) {
+#if defined(_POSIX_VERSION)
+    auto buf = read_passphrase_from_fd(STDIN_FILENO);
+    if (buf.empty()) {
         throw bseal::InvalidArgument("failed to read passphrase from stdin");
     }
-    return to_secure_buffer(line);
+    return buf;
+#else
+    // Non-POSIX fallback: bounded read via std::cin into a stack buffer, then
+    // copy to SecureBuffer.  Wipe the staging bytes on all paths.
+    constexpr std::size_t kBuf = kMaxPassphraseBytes + 1;
+    char staging[kBuf]         = {};
+    std::size_t n              = 0;
+    int         c;
+    bool        too_long = false;
+
+    while ((c = std::cin.get()) != EOF && c != '\n') {
+        if (n == kMaxPassphraseBytes) {
+            too_long = true;
+            break;
+        }
+        staging[n++] = static_cast<char>(c);
+    }
+
+    if (too_long) {
+        crypto::secure_memzero(staging, kBuf);
+        throw bseal::InvalidArgument("passphrase exceeds maximum length of " +
+                                     std::to_string(kMaxPassphraseBytes) + " bytes");
+    }
+    if (n == 0 || !std::cin) {
+        crypto::secure_memzero(staging, kBuf);
+        throw bseal::InvalidArgument("failed to read passphrase from stdin");
+    }
+
+    crypto::SecureBuffer buf(n);
+    std::copy(staging, staging + n, buf.as_span().begin());
+    crypto::secure_memzero(staging, kBuf);
+    return buf;
+#endif
 }
 
 } // namespace bseal::platform

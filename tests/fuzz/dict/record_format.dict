@@ -1,0 +1,42 @@
+# libFuzzer dictionary for FuzzRecordFormat.
+# Record type bytes, field tokens, and entry kind values from:
+#   src/archive/RecordFormat.hpp — RecordType enum, kRecordPrefixSize, kMaxRecordPayloadBytes
+#   src/archive/RecordFormat.cpp — serialize_record, parse_record, parse_entry_metadata
+
+# Record type discriminant bytes (RecordFormat.hpp:26)
+# ArchiveBegin = 1
+type_archive_begin="\x01"
+# DirectoryEntry = 2
+type_dir_entry="\x02"
+# FileEntry = 3
+type_file_entry="\x03"
+# FileBytes = 4
+type_file_bytes="\x04"
+# FileEnd = 5
+type_file_end="\x05"
+# SymlinkEntry = 6
+type_symlink_entry="\x06"
+# ArchiveEnd = 7
+type_archive_end="\x07"
+# RandomPadding = 8
+type_random_padding="\x08"
+
+# kArchiveFormatVersion = 1 (u32 LE) — ArchiveBegin payload (RecordFormat.hpp:24)
+archive_format_v1="\x01\x00\x00\x00"
+
+# Zero payload_size (u64 LE) — used for ArchiveEnd, FileEnd, etc.
+payload_size_zero="\x00\x00\x00\x00\x00\x00\x00\x00"
+
+# Entry kind discriminant bytes used in EntryMetadata (RecordFormat.cpp:101)
+# RegularFile = 1
+kind_regular="\x01"
+# Directory = 2
+kind_directory="\x02"
+# Symlink = 3
+kind_symlink="\x03"
+
+# Common path strings for metadata seeds
+path_hello="hello.txt"
+path_nested="dir/file.txt"
+path_traversal="../etc/passwd"
+path_absolute="/etc/passwd"
