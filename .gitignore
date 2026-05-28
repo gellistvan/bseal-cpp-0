@@ -6,6 +6,7 @@ build-fuzz/
 build-debug/
 build-coverage/
 build-cfl/
+build-sani-cfl/
 CLAUDE.md
 build-sani/
 cmake-build-*/
