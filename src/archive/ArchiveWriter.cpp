@@ -16,9 +16,10 @@ namespace {
 
 std::int64_t file_time_to_unix_ns(std::filesystem::file_time_type tp) {
     using namespace std::chrono;
-    const auto system_tp = time_point_cast<nanoseconds>(
-        clock_cast<system_clock>(tp));
-    return system_tp.time_since_epoch().count();
+    // clock_cast<system_clock> is absent in some libc++ builds.
+    // On POSIX, file_time_type::clock uses the Unix epoch on both libstdc++ and
+    // libc++, so time_since_epoch() already gives ns since Unix epoch directly.
+    return duration_cast<nanoseconds>(tp.time_since_epoch()).count();
 }
 
 std::uint32_t permissions_to_bits(std::filesystem::perms perms) {
