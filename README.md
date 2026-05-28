@@ -1,4 +1,5 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Nightly fuzzing](https://github.com/gellistvan/bseal-cpp-0/actions/workflows/cflite_batch.yml/badge.svg)](https://github.com/gellistvan/bseal-cpp-0/actions/workflows/cflite_batch.yml)
 
 # BSEAL C++
 
@@ -386,13 +387,21 @@ When changing crypto/container code:
 6. Keep archive paths relative and reject traversal, absolute paths, Windows drive paths, UNC paths, and symlink escapes.
 7. Prefer black-box tests for user-visible behavior and unit tests for parser/crypto invariants.
 
+## Continuous fuzzing
+
+All six format-parser and path-sanitizer surfaces are fuzz-tested continuously
+via ClusterFuzzLite: on every pull request (300 s, ASan + UBSan) and nightly
+(1800 s, ASan + UBSan). Findings surface as GitHub Security tab alerts and
+workflow artifacts. See [`docs/FUZZING.md`](docs/FUZZING.md) for the full
+setup, how to reproduce a crash locally with `scripts/reproduce_crash_local.sh`,
+and the checklist for adding a new target.
+
 ## High-value next work
 
-1. Add fuzzing targets for the shard and archive record parsers (libFuzzer or AFL).
-2. Retire the legacy `archive::PublicHeaderAuth` compatibility layer; consolidate all header MAC and hash operations on the `io/ShardFrame` functions.
-3. Decide the compatibility policy for archive format version 1.
-4. Extend benchmarks beyond the current AEAD throughput and KDF latency perf tests to cover end-to-end encrypt/decrypt directory throughput.
-5. Prepare the codebase for external cryptographic review.
+1. Retire the legacy `archive::PublicHeaderAuth` compatibility layer; consolidate all header MAC and hash operations on the `io/ShardFrame` functions.
+2. Decide the compatibility policy for archive format version 1.
+3. Extend benchmarks beyond the current AEAD throughput and KDF latency perf tests to cover end-to-end encrypt/decrypt directory throughput.
+4. Prepare the codebase for external cryptographic review.
 
 ## Related docs
 
