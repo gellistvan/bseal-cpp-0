@@ -12,6 +12,7 @@ option(BSEAL_ENABLE_SANITIZERS "Enable ASan/UBSan for local development" OFF)
 option(BSEAL_ENABLE_TSAN "Enable ThreadSanitizer (incompatible with BSEAL_ENABLE_SANITIZERS)" OFF)
 option(BSEAL_ENABLE_COVERAGE "Enable line/function coverage instrumentation (gcov/gcovr)" OFF)
 option(BSEAL_ENABLE_INSTALL "Enable install rules" OFF)
+option(BSEAL_FUZZ_STATIC_LINK "Link libsodium and OpenSSL statically (required for OSS-Fuzz/ClusterFuzzLite)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -59,12 +60,28 @@ add_library(bseal_core
 
 add_library(bseal::core ALIAS bseal_core)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+if (BSEAL_FUZZ_STATIC_LINK)
+    # OSS-Fuzz/ClusterFuzzLite: fuzzer runner containers have no shared libs.
+    # Locate the static archives directly so the binaries are self-contained.
+    find_library(SODIUM_STATIC_LIB NAMES libsodium.a REQUIRED)
+    find_path(SODIUM_INCLUDE_DIR NAMES sodium.h PATH_SUFFIXES sodium)
+    add_library(_bseal_sodium STATIC IMPORTED)
+    set_target_properties(_bseal_sodium PROPERTIES IMPORTED_LOCATION "${SODIUM_STATIC_LIB}")
+    if (SODIUM_INCLUDE_DIR)
+        set_target_properties(_bseal_sodium PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_INCLUDE_DIR}")
+    endif()
+    set(BSEAL_SODIUM_TARGET _bseal_sodium)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+else()
+    pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+    set(BSEAL_SODIUM_TARGET PkgConfig::SODIUM)
+endif()
 find_package(OpenSSL REQUIRED)
 
 target_link_libraries(bseal_core
         PRIVATE
-        PkgConfig::SODIUM
+        ${BSEAL_SODIUM_TARGET}
         OpenSSL::Crypto
         blake3::blake3
         argon2::argon2

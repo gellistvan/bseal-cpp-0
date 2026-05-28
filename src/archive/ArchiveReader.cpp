@@ -30,10 +30,11 @@ std::filesystem::perms bits_to_permissions(std::uint32_t bits) {
 std::filesystem::file_time_type unix_ns_to_file_time(std::int64_t ns) {
     using namespace std::chrono;
 
-    const auto sys_tp = system_clock::time_point{nanoseconds{ns}};
-
-    return time_point_cast<std::filesystem::file_time_type::duration>(
-        sys_tp - system_clock::now() + std::filesystem::file_time_type::clock::now());
+    // On POSIX, file_time_type::clock uses the Unix epoch on both libstdc++ and
+    // libc++, so we can construct directly from ns-since-epoch without clock_cast
+    // or now(). The cast handles the case where file_time_type::duration ≠ nanoseconds.
+    return std::filesystem::file_time_type(
+        duration_cast<std::filesystem::file_time_type::duration>(nanoseconds{ns}));
 }
 
 } // namespace
