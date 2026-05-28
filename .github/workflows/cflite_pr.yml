@@ -1,0 +1,90 @@
+name: ClusterFuzzLite PR fuzzing
+
+# Runs on every pull request to catch regressions before merge.
+# Fuzzes code touched by the PR (mode: code-change) for a short budget so
+# feedback is fast. A longer nightly run (cflite_batch.yml) accumulates corpus.
+
+on:
+  pull_request:
+    branches:
+      - master
+      - develop
+
+# Minimal permissions: read source, write SARIF results to the Security tab.
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # Job 1: Build-only smoke check.
+  # Verifies the ClusterFuzzLite Dockerfile + build.sh stay green on
+  # every PR, even those that don't touch fuzzed code paths.
+  # ------------------------------------------------------------------
+  cflite-build-only:
+    name: Build fuzzers (smoke check)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: c++
+          sanitizer: address
+          bad-build-check: true
+
+  # ------------------------------------------------------------------
+  # Job 2: PR fuzzing matrix — ASan + UBSan.
+  # UBSan adds ~25 % to wall time on a 300-second budget; both sanitizers
+  # are included here because catching UB early (especially in format
+  # parsers) is worth the extra minutes on PR CI. If this proves too
+  # slow, remove the 'undefined' matrix entry and let cflite_batch.yml
+  # handle UBSan exclusively.
+  # ------------------------------------------------------------------
+  cflite-pr:
+    name: Fuzz PR (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    needs: cflite-build-only
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer:
+          - address
+          - undefined
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: c++
+          sanitizer: ${{ matrix.sanitizer }}
+          bad-build-check: true
+
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          language: c++
+          fuzz-seconds: 300
+          mode: code-change
+          sanitizer: ${{ matrix.sanitizer }}
+          # Publish findings to the GitHub Security tab via SARIF upload.
+          output-sarif: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload crashing testcases
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.sanitizer }}-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 14
