@@ -60,6 +60,7 @@ cmake -S "$BSEAL_SRC" -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -DBSEAL_BUILD_FUZZERS=ON \
     -DBSEAL_BUILD_TESTS=OFF \
+    -DBSEAL_FUZZ_STATIC_LINK=ON \
     "-DBSEAL_FUZZING_ENGINE_LINK=$LIB_FUZZING_ENGINE"
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ option(BSEAL_ENABLE_SANITIZERS "Enable ASan/UBSan for local development" OFF)
 option(BSEAL_ENABLE_TSAN "Enable ThreadSanitizer (incompatible with BSEAL_ENABLE_SANITIZERS)" OFF)
 option(BSEAL_ENABLE_COVERAGE "Enable line/function coverage instrumentation (gcov/gcovr)" OFF)
 option(BSEAL_ENABLE_INSTALL "Enable install rules" OFF)
+option(BSEAL_FUZZ_STATIC_LINK "Link libsodium and OpenSSL statically (required for OSS-Fuzz/ClusterFuzzLite)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -59,7 +60,12 @@ add_library(bseal_core
 
 add_library(bseal::core ALIAS bseal_core)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+if (BSEAL_FUZZ_STATIC_LINK)
+    pkg_check_modules(SODIUM REQUIRED STATIC IMPORTED_TARGET libsodium)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+else()
+    pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+endif()
 find_package(OpenSSL REQUIRED)
 
 target_link_libraries(bseal_core
