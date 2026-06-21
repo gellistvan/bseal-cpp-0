@@ -341,6 +341,17 @@ The GUI calls the same `core_encrypt` / `core_decrypt` API as the CLI:
 - Same AEAD cipher (XChaCha20-Poly1305 default, AES-256-GCM optional).
 - Same public-header keyed MAC verification before any chunk decryption begins.
 - No passphrase or keyfile content is persisted to disk by the GUI.
+- **No `QSettings` persistence**: the GUI writes no data to `QSettings` (the
+  Qt registry/config abstraction).  Passphrase fields, keyfile lists, input/output
+  paths, and all option states are reset to defaults on every launch.  Regression
+  tests in `TestGuiNonPersistence.cpp` verify this at the `QSettings` key level.
+- **Preview cache is memory-only**: the lazy preview/options-summary cache exists
+  only in process memory and is lost when the window is closed.  It is never written
+  to disk, temp files, or any persistence layer.
+- **Clipboard writes are explicit only**: nothing is copied to the system clipboard
+  automatically.  The "Copy equivalent options summary" button is the only clipboard
+  write in the GUI, and it requires an explicit click.  Passphrase and keyfile
+  contents are never placed on the clipboard.
 
 An archive produced by the GUI is byte-identical to one produced by the CLI with
 the same inputs, and is decryptable by either.

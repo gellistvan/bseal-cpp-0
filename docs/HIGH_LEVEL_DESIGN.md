@@ -959,3 +959,17 @@ and `DecryptOptionsWidget` each have a dedicated test binary that instantiates
 the widget directly and calls `apply()`, separate from the `MainWindow`-level
 tests that verify end-to-end behavior.
 
+**Feature-parity regression tests** (`tests/gui/TestGuiFeatureParity.cpp`,
+ctest label `gui.FeatureParity`) serve as a living checklist: every
+`CoreEncryptParams` and `CoreDecryptParams` field is named explicitly with
+an assertion that `to_core_params()` copies it correctly.  CLI-only fields
+(`stdout_stream`, `allow_large_stdout`) are asserted `nullptr`/`false`.
+The `ProgressEvent` struct is statically asserted to contain only
+numeric/enum fields (no strings).  See `docs/COVERAGE.md` §GUI feature-parity
+coverage for the full field-by-field table and maintenance rule.
+
+**Validation ordering** (`tests/gui/TestGuiValidationOrder.cpp`,
+ctest `gui.ValidationOrder`) proves that options validation, risky-option
+confirmations, and memory-lock checks all run before `extractPassphrase()` is
+called, so the passphrase widget is never cleared on an aborted operation.
+
