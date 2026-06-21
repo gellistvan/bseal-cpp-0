@@ -80,11 +80,11 @@ static QWidget* find_preview_panel(MainWindow& w) {
 // Tests
 // ---------------------------------------------------------------------------
 
-// Preview toggle exists and is initially visible and unchecked.
+// Preview button exists and is initially visible.
 void test_preview_toggle_exists(MainWindow& w) {
     auto* btn = find_preview_toggle(w);
     ASSERT_TRUE(btn != nullptr);
-    ASSERT_FALSE(btn->isChecked());
+    ASSERT_TRUE(btn->isVisible());
 }
 
 // Preview panel starts hidden.
@@ -103,15 +103,15 @@ void test_toggle_click_shows_panel(MainWindow& w) {
     ASSERT_TRUE(panel->isVisible());
 }
 
-// Clicking toggle twice hides panel again.
-void test_double_toggle_hides_panel(MainWindow& w) {
+// Dialog can be closed (e.g. via hide()) and re-opened.
+void test_preview_dialog_can_be_closed(MainWindow& w) {
     w.setInputScanFnForTests([](const std::string&) { return std::nullopt; });
     auto* btn   = find_preview_toggle(w);
     auto* panel = find_preview_panel(w);
-    btn->click();        // open (starts async preview)
-    pump_events(400);    // let worker finish so no queued events remain
-    btn->click();        // close
-    pump_events(50);     // process any remaining queued events
+    btn->click();
+    pump_events(50);
+    ASSERT_TRUE(panel->isVisible());
+    panel->hide();
     ASSERT_FALSE(panel->isVisible());
 }
 
@@ -155,7 +155,7 @@ void test_preview_cache_hit_skips_scan(MainWindow& w) {
     pump_events(400);
     ASSERT_TRUE(done >= 1);
 
-    btn->click();               // close
+    find_preview_panel(w)->hide(); // close the dialog
     btn->click();               // open again: same key → cache hit, no new scan
     pump_events(100);
 
@@ -247,7 +247,7 @@ int main() {
     run_test("ToggleExists",                 test_preview_toggle_exists);
     run_test("PanelHiddenOnStart",           test_preview_panel_hidden_on_start);
     run_test("ToggleClickShowsPanel",        test_toggle_click_shows_panel);
-    run_test("DoubleToggleHidesPanel",       test_double_toggle_hides_panel);
+    run_test("PreviewDialogCanBeClosed",     test_preview_dialog_can_be_closed);
     run_test("NotTriggeredOnConstruction",   test_preview_not_triggered_on_construction);
     run_test("GeneratesOnFirstOpen",         test_preview_generates_on_first_open);
     run_test("CacheHitSkipsScan",            test_preview_cache_hit_skips_scan);

@@ -7,51 +7,41 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
 #include <QVBoxLayout>
 
 #include <string>
 
 namespace bseal::gui {
 
-DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QWidget(parent) {
+DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QDialog(parent) {
+    setWindowTitle(tr("Advanced Decryption Options"));
+
     auto* vl = new QVBoxLayout(this);
-    vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(0);
-
-    m_toggle = new QPushButton(tr("▶ Advanced decryption options"), this);
-    m_toggle->setObjectName("decryptAdvancedToggle");
-    m_toggle->setCheckable(true);
-    m_toggle->setChecked(false);
-    vl->addWidget(m_toggle);
-
-    m_section = new QWidget(this);
-    m_section->setObjectName("decryptAdvancedSection");
-    m_section->setVisible(false);
-    auto* fl = new QFormLayout(m_section);
-    fl->setContentsMargins(0, 0, 0, 0);
+    auto* fl = new QFormLayout;
+    vl->addLayout(fl);
 
     // Overwrite
-    m_overwriteCheck = new QCheckBox(tr("Overwrite existing output"), m_section);
+    m_overwriteCheck = new QCheckBox(tr("Overwrite existing output"), this);
     m_overwriteCheck->setObjectName("overwriteCheck");
     m_overwriteCheck->setChecked(false);
     m_overwriteCheck->setToolTip(
         tr("Allow decryption to write into a non-empty output directory.\n"
            "Existing files may be replaced without warning.\n"
            "You will be asked to confirm before proceeding."));
+    fl->addRow(tr("Overwrite:"), m_overwriteCheck);
+
     auto* overwriteWarn = new QLabel(
-        tr("⚠️  Overwrite may replace existing files in the output directory."),
-        m_section);
+        tr("⚠️  Overwrite may replace existing files in the output directory."), this);
     overwriteWarn->setWordWrap(true);
     overwriteWarn->setStyleSheet("color:#7a0000;");
-    fl->addRow(tr("Overwrite:"), m_overwriteCheck);
     fl->addRow(QString(), overwriteWarn);
 
     // KDF resource policy
-    m_kdfMemEdit = new QLineEdit(m_section);
+    m_kdfMemEdit = new QLineEdit(this);
     m_kdfMemEdit->setObjectName("kdfMemEdit");
     m_kdfMemEdit->setPlaceholderText(tr("2G"));
     m_kdfMemEdit->setToolTip(tr("Maximum memory the archive's KDF is allowed to consume.\n"
@@ -61,7 +51,7 @@ DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QWidget(parent) {
                                 "Setting it very high can cause memory exhaustion."));
     fl->addRow(tr("KDF max memory:"), m_kdfMemEdit);
 
-    m_kdfIterEdit = new QLineEdit(m_section);
+    m_kdfIterEdit = new QLineEdit(this);
     m_kdfIterEdit->setObjectName("kdfIterEdit");
     m_kdfIterEdit->setPlaceholderText(tr("4"));
     m_kdfIterEdit->setToolTip(tr("Maximum Argon2id iteration count allowed.\n"
@@ -69,7 +59,7 @@ DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QWidget(parent) {
                                  "with a higher iteration count (e.g. Paranoid preset)."));
     fl->addRow(tr("KDF max iterations:"), m_kdfIterEdit);
 
-    m_kdfParEdit = new QLineEdit(m_section);
+    m_kdfParEdit = new QLineEdit(this);
     m_kdfParEdit->setObjectName("kdfParEdit");
     m_kdfParEdit->setPlaceholderText(tr("8"));
     m_kdfParEdit->setToolTip(tr("Maximum Argon2id parallelism allowed.\n"
@@ -77,16 +67,15 @@ DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QWidget(parent) {
     fl->addRow(tr("KDF max parallelism:"), m_kdfParEdit);
 
     auto* kdfWarn = new QLabel(
-        tr("⚠️  High KDF limits can cause slow decryption or memory exhaustion."),
-        m_section);
+        tr("⚠️  High KDF limits can cause slow decryption or memory exhaustion."), this);
     kdfWarn->setWordWrap(true);
     kdfWarn->setStyleSheet("color:#7a5500;");
     fl->addRow(QString(), kdfWarn);
 
     // Hardened extract mode
-    m_hardenedCombo = new QComboBox(m_section);
+    m_hardenedCombo = new QComboBox(this);
     m_hardenedCombo->setObjectName("hardenedCombo");
-    m_hardenedCombo->addItem(tr("auto (recommended)"), 0); // HardenedExtractMode::Auto
+    m_hardenedCombo->addItem(tr("auto (recommended)"), 0);
     m_hardenedCombo->addItem(tr("on — require hardened"),  1);
     m_hardenedCombo->addItem(tr("off — unsafe"),          2);
     m_hardenedCombo->setCurrentIndex(0);
@@ -101,18 +90,18 @@ DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QWidget(parent) {
     auto* hardenedWarn = new QLabel(
         tr("⚠️  'off' disables TOCTOU protection and is unsafe for untrusted archives. "
            "You will be asked to confirm before proceeding."),
-        m_section);
+        this);
     hardenedWarn->setWordWrap(true);
     hardenedWarn->setStyleSheet("color:#7a0000;");
     fl->addRow(QString(), hardenedWarn);
 
     // Durability
-    m_durabilityCombo = new QComboBox(m_section);
+    m_durabilityCombo = new QComboBox(this);
     m_durabilityCombo->setObjectName("decryptDurabilityCombo");
     m_durabilityCombo->addItem(tr("off"),         0);
     m_durabilityCombo->addItem(tr("best-effort"), 1);
     m_durabilityCombo->addItem(tr("on"),          2);
-    m_durabilityCombo->setCurrentIndex(1); // best-effort default
+    m_durabilityCombo->setCurrentIndex(1);
     m_durabilityCombo->setToolTip(
         tr("Controls fsync/fdatasync on extracted output files.\n"
            "Affects crash/power-loss durability — not authentication.\n"
@@ -123,18 +112,40 @@ DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QWidget(parent) {
 
     auto* durabilityWarn = new QLabel(
         tr("Durability affects crash/power-loss behaviour — not authentication or integrity."),
-        m_section);
+        this);
     durabilityWarn->setWordWrap(true);
     durabilityWarn->setStyleSheet("color:#555;");
     fl->addRow(QString(), durabilityWarn);
 
-    vl->addWidget(m_section);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    vl->addWidget(buttons);
 
-    connect(m_toggle, &QPushButton::toggled, [this](bool checked) {
-        m_section->setVisible(checked);
-        m_toggle->setText(checked ? tr("▼ Advanced decryption options")
-                                  : tr("▶ Advanced decryption options"));
-    });
+    connect(this, &QDialog::rejected, this, &DecryptOptionsWidget::restoreState);
+}
+
+int DecryptOptionsWidget::exec() {
+    saveState();
+    return QDialog::exec();
+}
+
+void DecryptOptionsWidget::saveState() {
+    m_savedOverwrite  = m_overwriteCheck->isChecked();
+    m_savedKdfMem     = m_kdfMemEdit->text();
+    m_savedKdfIter    = m_kdfIterEdit->text();
+    m_savedKdfPar     = m_kdfParEdit->text();
+    m_savedHardened   = m_hardenedCombo->currentIndex();
+    m_savedDurability = m_durabilityCombo->currentIndex();
+}
+
+void DecryptOptionsWidget::restoreState() {
+    m_overwriteCheck->setChecked(m_savedOverwrite);
+    m_kdfMemEdit->setText(m_savedKdfMem);
+    m_kdfIterEdit->setText(m_savedKdfIter);
+    m_kdfParEdit->setText(m_savedKdfPar);
+    m_hardenedCombo->setCurrentIndex(m_savedHardened);
+    m_durabilityCombo->setCurrentIndex(m_savedDurability);
 }
 
 void DecryptOptionsWidget::apply(GuiDecryptOptions& o) const {

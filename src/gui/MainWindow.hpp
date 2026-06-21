@@ -117,14 +117,15 @@ private:
     QLineEdit*             m_inputPath{};
     QLineEdit*             m_outputPath{};
     SecurePassphraseField* m_passphrase{};
-    QWidget*               m_confirmRow{};
+    QLabel*                m_confirmLabel{};
     SecurePassphraseField* m_confirmPassphrase{};
     QListWidget*           m_keyfileList{};
     QPushButton*           m_runBtn{};
+    QPushButton*           m_advancedOptsBtn{};
     QCheckBox*             m_lockMemory{};
     QCheckBox*             m_requireLockMemory{};
     QLabel*                m_securityNotice{};
-    // Focused option panels (own their widgets and option parsing).
+    // Advanced option dialogs (not embedded; opened on demand).
     EncryptOptionsWidget*  m_encryptOpts{};
     DecryptOptionsWidget*  m_decryptOpts{};
     // Preview section

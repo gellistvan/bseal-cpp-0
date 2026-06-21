@@ -278,30 +278,19 @@ void test_decrypt_durability_best_effort_default() {
 // Advanced section visibility
 // ---------------------------------------------------------------------------
 
-void test_decrypt_advanced_section_visible_only_in_decrypt_mode() {
+void test_advanced_options_button_always_visible() {
+    // With the dialog-based design there is one "Advanced options" button
+    // that is always visible and its label adapts to the current mode.
     bseal::gui::MainWindow w;
     w.show();
 
-    auto* toggle = w.findChild<QPushButton*>("decryptAdvancedToggle");
-    ASSERT_TRUE(toggle != nullptr);
-    ASSERT_TRUE(!toggle->isVisible()); // hidden in encrypt mode (default)
+    auto* btn = w.findChild<QPushButton*>("advancedOptionsBtn");
+    ASSERT_TRUE(btn != nullptr);
+    ASSERT_TRUE(btn->isVisible()); // visible in encrypt mode
 
     set_decrypt_mode(w);
-    ASSERT_TRUE(toggle->isVisible()); // visible in decrypt mode
-
-    auto radios = w.findChildren<QRadioButton*>();
-    radios[0]->setChecked(true); // back to encrypt mode
-    ASSERT_TRUE(!toggle->isVisible());
-}
-
-void test_decrypt_advanced_section_collapsed_by_default() {
-    bseal::gui::MainWindow w;
-    w.show();
-    set_decrypt_mode(w);
-
-    auto* section = w.findChild<QWidget*>("decryptAdvancedSection");
-    ASSERT_TRUE(section != nullptr);
-    ASSERT_TRUE(!section->isVisible()); // collapsed by default
+    ASSERT_TRUE(btn->isVisible()); // still visible in decrypt mode
+    ASSERT_TRUE(btn->text().contains("ecrypt", Qt::CaseInsensitive));
 }
 
 // ---------------------------------------------------------------------------
@@ -523,8 +512,7 @@ int main(int argc, char* argv[]) {
     run_test("DecryptDurabilityOff",                test_decrypt_durability_off);
     run_test("DecryptDurabilityOn",                 test_decrypt_durability_on);
     run_test("DecryptDurabilityBestEffortDefault",  test_decrypt_durability_best_effort_default);
-    run_test("DecryptAdvancedSectionVisibility",    test_decrypt_advanced_section_visible_only_in_decrypt_mode);
-    run_test("DecryptAdvancedSectionCollapsed",     test_decrypt_advanced_section_collapsed_by_default);
+    run_test("AdvancedOptionsButtonAlwaysVisible",  test_advanced_options_button_always_visible);
     run_test("OverwriteConfirmAcceptedStarts",      test_overwrite_confirmation_accepted_starts_operation);
     run_test("OverwriteConfirmRejectedAborts",      test_overwrite_confirmation_rejected_aborts_operation);
     run_test("HardenedOffConfirmAcceptedStarts",    test_hardened_off_confirmation_accepted_starts_operation);
