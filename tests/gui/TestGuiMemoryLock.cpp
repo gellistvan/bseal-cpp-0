@@ -107,12 +107,13 @@ bool process_events_until(std::function<bool()> pred, int timeout_ms = 30000) {
     return done;
 }
 
-// Common setup: window with real src/enc dirs and a passphrase typed in.
+// Common setup: window with real src/enc dirs and passphrase fields available.
 struct Fixture {
     TempDir src;
     TempDir enc;
     bseal::gui::MainWindow w;
     bseal::gui::SecurePassphraseField* pf{};
+    bseal::gui::SecurePassphraseField* cf{};  // confirm passphrase (encrypt mode)
     QLineEdit* inEdit{};
     QLineEdit* outEdit{};
 
@@ -130,8 +131,9 @@ struct Fixture {
         inEdit->setText(QString::fromStdString(src.sub("data").string()));
         outEdit->setText(QString::fromStdString(enc.path().string()));
 
-        pf = w.findChild<bseal::gui::SecurePassphraseField*>();
-        if (!pf) throw std::runtime_error("SecurePassphraseField not found");
+        pf = w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase");
+        cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+        if (!pf || !cf) throw std::runtime_error("passphrase fields not found");
     }
 };
 
@@ -143,6 +145,7 @@ using PLR = bseal::platform::ProcessMemoryLockResult;
 void test_lock_disabled_fn_not_called() {
     Fixture f("ml1");
     f.pf->setText("pass1");
+    f.cf->setText("pass1");
 
     bool fn_called = false;
     f.w.setMemoryLockFnForTests([&] {
@@ -169,6 +172,7 @@ void test_lock_disabled_fn_not_called() {
 void test_lock_enabled_success_proceeds() {
     Fixture f("ml2");
     f.pf->setText("pass2");
+    f.cf->setText("pass2");
 
     bool fn_called = false;
     f.w.setMemoryLockFnForTests([&] {
@@ -195,6 +199,7 @@ void test_lock_enabled_success_proceeds() {
 void test_lock_failed_warn_only_proceeds() {
     Fixture f("ml3");
     f.pf->setText("pass3");
+    f.cf->setText("pass3");
 
     bool fn_called = false;
     f.w.setMemoryLockFnForTests([&] {

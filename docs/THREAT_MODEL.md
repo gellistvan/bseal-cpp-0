@@ -370,6 +370,21 @@ Neither control protects against root/admin attackers, kernel compromise, DMA,
 live hibernation, screenshots, keyloggers, input-method copies, or crash dumps
 already configured by the OS.
 
+### Passphrase confirmation and typo prevention
+
+Encryption in the GUI requires entering the passphrase twice.  A mismatch is
+rejected before `core_encrypt` is called — no archive is created.  Both
+`SecureBuffer` objects are zeroed by their destructors immediately after the
+comparison, regardless of match outcome.
+
+The comparison uses `std::memcmp` after an early length check.  A timing side
+channel here has no practical threat model: both buffers originate from the
+same user's keystrokes in the same UI session, with no adversary able to
+measure the comparison time.
+
+The confirmation field is hidden (and cleared) in decrypt mode to avoid
+confusing users into thinking a second passphrase is required for decryption.
+
 ### Background operations and window lifecycle
 
 Encryption and decryption run in a background thread owned by the window

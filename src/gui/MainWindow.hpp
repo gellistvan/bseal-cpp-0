@@ -75,6 +75,8 @@ private:
     QLineEdit*             m_inputPath{};
     QLineEdit*             m_outputPath{};
     SecurePassphraseField* m_passphrase{};
+    QWidget*               m_confirmRow{};
+    SecurePassphraseField* m_confirmPassphrase{};
     QListWidget*           m_keyfileList{};
     QPushButton*           m_runBtn{};
     QCheckBox*             m_lockMemory{};

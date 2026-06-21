@@ -107,8 +107,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         hl->setContentsMargins(0, 0, 0, 0);
         hl->addWidget(new QLabel(tr("Passphrase:"), row));
         m_passphrase = new SecurePassphraseField(row);
+        m_passphrase->setObjectName("primaryPassphrase");
         hl->addWidget(m_passphrase, 1);
         vl->addWidget(row);
+    }
+
+    // --- Confirm passphrase (encrypt mode only) ---
+    {
+        m_confirmRow = new QWidget(central);
+        auto* hl = new QHBoxLayout(m_confirmRow);
+        hl->setContentsMargins(0, 0, 0, 0);
+        hl->addWidget(new QLabel(tr("Confirm:"), m_confirmRow));
+        m_confirmPassphrase = new SecurePassphraseField(m_confirmRow);
+        m_confirmPassphrase->setObjectName("confirmPassphrase");
+        hl->addWidget(m_confirmPassphrase, 1);
+        vl->addWidget(m_confirmRow);
+        // Visibility is controlled by the mode-switch lambda below.
     }
 
     // --- Keyfiles ---
@@ -166,12 +180,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::onRun);
     vl->addWidget(m_runBtn);
 
-    // Keep button label in sync with mode selection.
-    auto update_btn_label = [this]() {
-        m_runBtn->setText(m_encryptRadio->isChecked() ? tr("Encrypt") : tr("Decrypt"));
+    // Keep button label and confirm-field visibility in sync with mode selection.
+    auto update_mode_ui = [this]() {
+        const bool enc = m_encryptRadio->isChecked();
+        m_runBtn->setText(enc ? tr("Encrypt") : tr("Decrypt"));
+        m_confirmRow->setVisible(enc);
+        if (!enc)
+            m_confirmPassphrase->clear();
     };
-    connect(m_encryptRadio, &QRadioButton::toggled, this, update_btn_label);
-    connect(m_decryptRadio, &QRadioButton::toggled, this, update_btn_label);
+    connect(m_encryptRadio, &QRadioButton::toggled, this, update_mode_ui);
+    connect(m_decryptRadio, &QRadioButton::toggled, this, update_mode_ui);
 
     connect(this, &MainWindow::operationDone, this, &MainWindow::onOperationFinished);
 
@@ -241,13 +259,43 @@ void MainWindow::onRun() {
         }
     }
 
+    const bool encrypt = m_encryptRadio->isChecked();
+
     crypto::SecureBuffer passphrase;
-    try {
-        passphrase = m_passphrase->extractPassphrase();
-        // extractPassphrase() clears the field; passphrase is now in SecureBuffer only.
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Passphrase error"), QString::fromUtf8(e.what()));
-        return;
+    if (encrypt) {
+        // Extract primary passphrase.
+        crypto::SecureBuffer pass1;
+        try {
+            pass1 = m_passphrase->extractPassphrase();
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Passphrase error"), QString::fromUtf8(e.what()));
+            return;
+        }
+        // Extract confirmation passphrase. ~SecureBuffer wipes pass1 on early return.
+        crypto::SecureBuffer pass2;
+        try {
+            pass2 = m_confirmPassphrase->extractPassphrase();
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Passphrase error"), QString::fromUtf8(e.what()));
+            return;
+        }
+        // ponytail: std::memcmp is sufficient — UI comparison has no timing-oracle threat
+        const bool match = (pass1.size() == pass2.size()) &&
+                           (std::memcmp(pass1.data(), pass2.data(), pass1.size()) == 0);
+        if (!match) {
+            // pass1 and pass2 zeroed by ~SecureBuffer.  Use status bar (non-modal)
+            // so the test suite can run headless without waiting for a dialog click.
+            statusBar()->showMessage(tr("Passphrases do not match — please try again."), 0);
+            return;
+        }
+        passphrase = std::move(pass1);
+    } else {
+        try {
+            passphrase = m_passphrase->extractPassphrase();
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Passphrase error"), QString::fromUtf8(e.what()));
+            return;
+        }
     }
 
     // Build keyfile path list in display order — never reordered or sorted.
@@ -258,8 +306,6 @@ void MainWindow::onRun() {
 
     setControlsEnabled(false);
     m_operationRunning = true;
-
-    const bool encrypt = m_encryptRadio->isChecked();
     // QPointer so the callback is safe even if the window is force-deleted
     // (e.g. by tests). Normal close is blocked while m_operationRunning is true,
     // so in the expected lifecycle qApp and this are both alive when the callback fires.
@@ -349,6 +395,7 @@ void MainWindow::setControlsEnabled(bool enabled) {
     m_inputPath->setEnabled(enabled);
     m_outputPath->setEnabled(enabled);
     m_passphrase->setEnabled(enabled);
+    m_confirmPassphrase->setEnabled(enabled);
     m_keyfileList->setEnabled(enabled);
     m_runBtn->setEnabled(enabled);
     m_lockMemory->setEnabled(enabled);
