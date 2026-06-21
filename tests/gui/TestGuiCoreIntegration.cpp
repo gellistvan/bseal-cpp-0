@@ -16,6 +16,7 @@
 #include <QCloseEvent>
 #include <QEventLoop>
 #include <QLineEdit>
+#include <QRadioButton>
 #include <QStatusBar>
 #include <QTimer>
 
@@ -278,11 +279,9 @@ void test_wrong_keyfile_fails() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7: Passphrase field is cleared synchronously after onRun extracts it.
-//
-// We inject inputs via findChild, call onRun, and immediately check the field —
-// extractPassphrase() clears it on the UI thread before the worker thread starts.
-// We do NOT wait for the operation to finish to keep this test fast.
+// Test 7: Both passphrase fields are cleared synchronously after onRun extracts
+// them (encrypt mode). extractPassphrase() clears fields on the UI thread before
+// the worker thread starts.
 // ---------------------------------------------------------------------------
 void test_passphrase_field_cleared_after_start() {
     TempDir src("t7_src"), enc("t7_enc");
@@ -297,15 +296,18 @@ void test_passphrase_field_cleared_after_start() {
     inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
     inputs[1]->setText(QString::fromStdString(enc.path().string()));
 
-    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>();
-    ASSERT_TRUE(pf != nullptr);
+    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase");
+    auto* cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+    ASSERT_TRUE(pf != nullptr && cf != nullptr);
     pf->setText("my-passphrase");
+    cf->setText("my-passphrase");
     ASSERT_TRUE(!pf->text().isEmpty());
 
-    // onRun calls extractPassphrase() which clears the field before launching the thread.
+    // onRun calls extractPassphrase() on both fields, clearing them before the thread.
     QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
 
     ASSERT_TRUE(pf->text().isEmpty());
+    ASSERT_TRUE(cf->text().isEmpty());
 
     // Let the background thread finish cleanly so TempDir cleanup doesn't race.
     bool done = false;
@@ -318,8 +320,8 @@ void test_passphrase_field_cleared_after_start() {
 // ---------------------------------------------------------------------------
 // Test 8: No passphrase is persisted in the UI after operation completes.
 //
-// Uses findChild to inject state, calls onRun, and verifies the passphrase
-// field remains empty after the operation finishes.
+// Uses findChild to inject state, calls onRun, and verifies both passphrase
+// fields remain empty after the operation finishes.
 // ---------------------------------------------------------------------------
 void test_no_sensitive_state_after_operation() {
     TempDir src("t8_src"), enc("t8_enc"), kf("t8_kf");
@@ -335,9 +337,11 @@ void test_no_sensitive_state_after_operation() {
     inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
     inputs[1]->setText(QString::fromStdString(enc.path().string()));
 
-    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>();
-    ASSERT_TRUE(pf != nullptr);
+    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase");
+    auto* cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+    ASSERT_TRUE(pf != nullptr && cf != nullptr);
     pf->setText("persist-test");
+    cf->setText("persist-test");
     w.addKeyfilePath(QString::fromStdString(kf.sub("k.key").string()));
 
     bool done = false;
@@ -347,14 +351,16 @@ void test_no_sensitive_state_after_operation() {
 
     QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
 
-    // Cleared synchronously before the worker thread starts.
+    // Both fields cleared synchronously before the worker thread starts.
     ASSERT_TRUE(pf->text().isEmpty());
+    ASSERT_TRUE(cf->text().isEmpty());
 
     process_events_until([&] { return done; }, 120000);
     ASSERT_TRUE(done);
 
-    // After completion, passphrase field is still empty.
+    // After completion, passphrase fields are still empty.
     ASSERT_TRUE(pf->text().isEmpty());
+    ASSERT_TRUE(cf->text().isEmpty());
 
     // Keyfile list entries remain (non-sensitive display state; not written to QSettings).
     ASSERT_TRUE(w.keyfilePaths().size() == 1);
@@ -379,9 +385,11 @@ struct SimpleFixture {
             throw std::runtime_error("expected ≥2 QLineEdit children");
         inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
         inputs[1]->setText(QString::fromStdString(enc.path().string()));
-        auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>();
-        if (!pf) throw std::runtime_error("SecurePassphraseField not found");
+        auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase");
+        auto* cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+        if (!pf || !cf) throw std::runtime_error("passphrase fields not found");
         pf->setText("lifecycle-pass");
+        cf->setText("lifecycle-pass");
     }
 };
 
@@ -540,6 +548,218 @@ void test_worker_joined_on_window_destruction() {
     // Reaching here without crash is the pass condition.
 }
 
+// ---------------------------------------------------------------------------
+// Test 14: encrypt with matching passphrases proceeds to the worker.
+//   Uses a fake op to avoid expensive Argon2id; tests only the confirmation
+//   logic, not the crypto correctness (covered by tests 1–6).
+// ---------------------------------------------------------------------------
+void test_encrypt_matching_passphrases_proceeds() {
+    SimpleFixture fix("t14");
+    bseal::gui::MainWindow w;
+    fix.setup(w); // sets both fields to "lifecycle-pass"
+
+    bool op_ran = false;
+    w.setOperationFnForTests([&] { op_ran = true; });
+
+    bool done = false;
+    bool ok   = false;
+    QObject::connect(&w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool o, const QString&) { done = true; ok = o; });
+
+    QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
+    process_events_until([&] { return done; }, 5000);
+
+    ASSERT_TRUE(done);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(op_ran);
+}
+
+// ---------------------------------------------------------------------------
+// Test 15: encrypt with mismatching passphrases does not start the operation.
+// ---------------------------------------------------------------------------
+void test_encrypt_mismatch_does_not_start() {
+    TempDir src("t15_src"), enc("t15_enc");
+    write_file(src.sub("data/x.txt"), "x");
+
+    bseal::gui::MainWindow w;
+    w.setKdfPresetForTests(bseal::crypto::KdfPreset::Fast);
+    w.show();
+
+    auto inputs = w.findChildren<QLineEdit*>();
+    ASSERT_TRUE(inputs.size() >= 2);
+    inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
+    inputs[1]->setText(QString::fromStdString(enc.path().string()));
+
+    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase");
+    auto* cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+    ASSERT_TRUE(pf != nullptr && cf != nullptr);
+    pf->setText("alpha");
+    cf->setText("beta");
+
+    bool done = false;
+    QObject::connect(&w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+
+    QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
+
+    // Operation must not have started — operationDone must not fire.
+    process_events_until([&] { return done; }, 300);
+    ASSERT_TRUE(!done);
+    ASSERT_TRUE(!w.isOperationRunning());
+}
+
+// ---------------------------------------------------------------------------
+// Test 16: mismatch clears both passphrase fields.
+// ---------------------------------------------------------------------------
+void test_mismatch_clears_both_fields() {
+    TempDir src("t16_src"), enc("t16_enc");
+    write_file(src.sub("data/x.txt"), "x");
+
+    bseal::gui::MainWindow w;
+    w.setKdfPresetForTests(bseal::crypto::KdfPreset::Fast);
+    w.show();
+
+    auto inputs = w.findChildren<QLineEdit*>();
+    ASSERT_TRUE(inputs.size() >= 2);
+    inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
+    inputs[1]->setText(QString::fromStdString(enc.path().string()));
+
+    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase");
+    auto* cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+    ASSERT_TRUE(pf != nullptr && cf != nullptr);
+    pf->setText("one-thing");
+    cf->setText("another-thing");
+
+    QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
+
+    // extractPassphrase() clears the fields regardless of match.
+    ASSERT_TRUE(pf->text().isEmpty());
+    ASSERT_TRUE(cf->text().isEmpty());
+}
+
+// ---------------------------------------------------------------------------
+// Test 17: mismatch error message does not contain either passphrase.
+//   We can't easily inspect the QMessageBox text in offscreen mode, so we
+//   verify indirectly: the operation did not start (no callback to check),
+//   and both fields were cleared (confirmed above). We additionally assert
+//   that operationDone was NOT emitted — the error is shown before the op.
+// ---------------------------------------------------------------------------
+void test_mismatch_error_excludes_passphrase_values() {
+    TempDir src("t17_src"), enc("t17_enc");
+    write_file(src.sub("data/x.txt"), "x");
+
+    bseal::gui::MainWindow w;
+    w.setKdfPresetForTests(bseal::crypto::KdfPreset::Fast);
+    w.show();
+
+    auto inputs = w.findChildren<QLineEdit*>();
+    ASSERT_TRUE(inputs.size() >= 2);
+    inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
+    inputs[1]->setText(QString::fromStdString(enc.path().string()));
+
+    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase");
+    auto* cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+    ASSERT_TRUE(pf != nullptr && cf != nullptr);
+
+    const QString secret1 = "ultra-secret-alpha-7f3a";
+    const QString secret2 = "ultra-secret-beta-8c2b";
+    pf->setText(secret1);
+    cf->setText(secret2);
+
+    bool done = false;
+    QObject::connect(&w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+
+    QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
+
+    // Mismatch → operationDone never fires.
+    process_events_until([&] { return done; }, 300);
+    ASSERT_TRUE(!done);
+    // Fields cleared — passphrase values are gone from the UI.
+    ASSERT_TRUE(pf->text().isEmpty());
+    ASSERT_TRUE(cf->text().isEmpty());
+    // Status bar shows an error but must not contain either passphrase.
+    const QString status = w.statusBar()->currentMessage();
+    ASSERT_TRUE(!status.isEmpty());  // mismatch message was shown
+    ASSERT_TRUE(!status.contains(secret1));
+    ASSERT_TRUE(!status.contains(secret2));
+}
+
+// ---------------------------------------------------------------------------
+// Test 18: decrypt mode does not require the confirmation field.
+//   Uses a fake op — this tests the passphrase-extraction path, not crypto.
+// ---------------------------------------------------------------------------
+void test_decrypt_does_not_require_confirmation() {
+    TempDir src("t18_src"), enc("t18_enc");
+    write_file(src.sub("data/d.txt"), "d");
+
+    bseal::gui::MainWindow w;
+    w.show();
+
+    // Switch to decrypt mode.
+    auto radios = w.findChildren<QRadioButton*>();
+    ASSERT_TRUE(radios.size() >= 2);
+    radios[1]->setChecked(true); // decrypt
+
+    auto inputs = w.findChildren<QLineEdit*>();
+    ASSERT_TRUE(inputs.size() >= 2);
+    inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
+    inputs[1]->setText(QString::fromStdString(enc.path().string()));
+
+    // Confirm field must be hidden in decrypt mode.
+    auto* cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+    ASSERT_TRUE(cf != nullptr && !cf->isVisible());
+
+    // Set only primary passphrase.
+    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase");
+    ASSERT_TRUE(pf != nullptr);
+    pf->setText("decrypt-only-pass");
+
+    bool op_ran = false;
+    w.setOperationFnForTests([&] { op_ran = true; });
+
+    bool done = false;
+    QObject::connect(&w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+
+    QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
+    process_events_until([&] { return done; }, 5000);
+
+    // Operation proceeded without requiring the confirm field.
+    ASSERT_TRUE(done);
+    ASSERT_TRUE(op_ran);
+}
+
+// ---------------------------------------------------------------------------
+// Test 19: switching from encrypt to decrypt clears the confirmation field.
+// ---------------------------------------------------------------------------
+void test_mode_switch_clears_confirmation_field() {
+    bseal::gui::MainWindow w;
+    w.show();
+
+    // Start in encrypt mode (default).
+    auto* cf = w.findChild<bseal::gui::SecurePassphraseField*>("confirmPassphrase");
+    ASSERT_TRUE(cf != nullptr);
+    ASSERT_TRUE(cf->isVisible());
+
+    cf->setText("some-confirm-text");
+    ASSERT_TRUE(!cf->text().isEmpty());
+
+    // Switch to decrypt mode.
+    auto radios = w.findChildren<QRadioButton*>();
+    ASSERT_TRUE(radios.size() >= 2);
+    radios[1]->setChecked(true); // decrypt
+
+    // Confirm field must be hidden and cleared.
+    ASSERT_TRUE(!cf->isVisible());
+    ASSERT_TRUE(cf->text().isEmpty());
+
+    // Switch back to encrypt — field should be visible but still empty.
+    radios[0]->setChecked(true); // encrypt
+    ASSERT_TRUE(cf->isVisible());
+    ASSERT_TRUE(cf->text().isEmpty());
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -561,7 +781,13 @@ int main(int argc, char* argv[]) {
     run_test("OperationDoneEmittedOnce",        test_operation_done_emitted_exactly_once);
     run_test("CloseAcceptedWhenIdle",           test_close_accepted_when_idle);
     run_test("CloseBlockedDuringOperation",     test_close_blocked_during_operation);
-    run_test("WorkerJoinedOnWindowDestruction", test_worker_joined_on_window_destruction);
+    run_test("WorkerJoinedOnWindowDestruction",     test_worker_joined_on_window_destruction);
+    run_test("EncryptMatchingPassphrasesProceeds",  test_encrypt_matching_passphrases_proceeds);
+    run_test("EncryptMismatchDoesNotStart",         test_encrypt_mismatch_does_not_start);
+    run_test("MismatchClearsBothFields",            test_mismatch_clears_both_fields);
+    run_test("MismatchErrorExcludesPassphrase",     test_mismatch_error_excludes_passphrase_values);
+    run_test("DecryptDoesNotRequireConfirmation",   test_decrypt_does_not_require_confirmation);
+    run_test("ModeSwitchClearsConfirmationField",   test_mode_switch_clears_confirmation_field);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;

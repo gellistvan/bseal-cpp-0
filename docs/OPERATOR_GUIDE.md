@@ -286,6 +286,19 @@ for the full threat analysis.
 | Copying the passphrase to the clipboard | Clipboard managers may retain it indefinitely |
 | Using keyfiles that are likely to be modified (e.g. photos with growing EXIF data) | Byte changes change the derived key |
 
+### Passphrase confirmation for encryption
+
+The GUI requires the passphrase to be entered twice when encrypting.  The
+"Confirm:" field appears only in encrypt mode and is hidden when decrypting.
+
+- Both fields must be non-empty and must match exactly.  A mismatch is
+  rejected before encryption starts — no archive is written.
+- On mismatch, both fields are cleared and a warning is shown.  The warning
+  message does not contain either passphrase value or length.
+- The confirm field is automatically cleared when switching to decrypt mode.
+- **A lost passphrase makes the archive permanently unrecoverable.**  Write the
+  passphrase down and store it securely before encrypting.
+
 ### Operation lifecycle and close behaviour
 
 Encryption and decryption run in a background thread.  The GUI controls are
