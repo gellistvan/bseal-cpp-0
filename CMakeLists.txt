@@ -29,6 +29,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/external_libraries/argon2.cmake)
 
 add_library(bseal_core
     src/app/BsealApp.cpp
+    src/app/CoreApi.cpp
     src/app/SelfTest.cpp
     src/cli/Args.cpp
     src/crypto/AesGcmBackend.cpp
