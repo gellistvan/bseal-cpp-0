@@ -211,25 +211,23 @@ void test_validation_fixed_padding_zero() {
     ASSERT_TRUE(!errors.empty());
 }
 
-void test_advanced_section_hidden_in_decrypt_mode() {
+void test_advanced_options_button_label_follows_mode() {
     bseal::gui::MainWindow w;
     w.show();
 
-    auto* toggle = w.findChild<QPushButton*>("advancedToggle");
-    ASSERT_TRUE(toggle != nullptr);
-    ASSERT_TRUE(toggle->isVisible()); // encrypt mode by default → toggle visible
+    auto* btn = w.findChild<QPushButton*>("advancedOptionsBtn");
+    ASSERT_TRUE(btn != nullptr);
+    ASSERT_TRUE(btn->isVisible());
+    // In encrypt mode the button label mentions encryption.
+    ASSERT_TRUE(btn->text().contains("ncrypt", Qt::CaseInsensitive));
 
-    auto* section = w.findChild<QWidget*>("advancedSection");
-    ASSERT_TRUE(section != nullptr);
-    ASSERT_TRUE(!section->isVisible()); // collapsed by default
-
-    // Switch to decrypt mode
+    // Switch to decrypt mode — button stays visible, label updates.
     auto radios = w.findChildren<QRadioButton*>();
     ASSERT_TRUE(radios.size() >= 2);
-    radios[1]->setChecked(true); // decrypt radio
+    radios[1]->setChecked(true);
 
-    ASSERT_TRUE(!section->isVisible());
-    ASSERT_TRUE(!toggle->isVisible()); // toggle hidden in decrypt mode
+    ASSERT_TRUE(btn->isVisible());
+    ASSERT_TRUE(btn->text().contains("ecrypt", Qt::CaseInsensitive));
 }
 
 void test_seam_setKdfPresetForTests_still_works() {
@@ -295,7 +293,7 @@ int main(int argc, char* argv[]) {
     run_test("test_validation_bad_chunk_size",           test_validation_bad_chunk_size);
     run_test("test_validation_bad_shard_size",           test_validation_bad_shard_size);
     run_test("test_validation_fixed_padding_zero",       test_validation_fixed_padding_zero);
-    run_test("test_advanced_section_hidden_in_decrypt",  test_advanced_section_hidden_in_decrypt_mode);
+    run_test("test_advanced_options_button_label_follows_mode", test_advanced_options_button_label_follows_mode);
     run_test("test_seam_setKdfPresetForTests_works",     test_seam_setKdfPresetForTests_still_works);
     run_test("test_roundtrip_params_via_seam",           test_roundtrip_params_via_operation_seam);
 

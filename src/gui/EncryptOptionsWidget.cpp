@@ -5,33 +5,22 @@
 #include "common/SizeParser.hpp"
 #include "platform/DurableFile.hpp"
 
-#include <QCheckBox>
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLineEdit>
-#include <QPushButton>
 #include <QVBoxLayout>
 
 namespace bseal::gui {
 
-EncryptOptionsWidget::EncryptOptionsWidget(QWidget* parent) : QWidget(parent) {
+EncryptOptionsWidget::EncryptOptionsWidget(QWidget* parent) : QDialog(parent) {
+    setWindowTitle(tr("Advanced Encryption Options"));
+
     auto* vl = new QVBoxLayout(this);
-    vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(0);
+    auto* fl = new QFormLayout;
+    vl->addLayout(fl);
 
-    m_toggle = new QPushButton(tr("▶ Advanced encryption options"), this);
-    m_toggle->setObjectName("advancedToggle");
-    m_toggle->setCheckable(true);
-    m_toggle->setChecked(false);
-    vl->addWidget(m_toggle);
-
-    m_section = new QWidget(this);
-    m_section->setObjectName("advancedSection");
-    m_section->setVisible(false);
-    auto* fl = new QFormLayout(m_section);
-    fl->setContentsMargins(0, 0, 0, 0);
-
-    m_suiteCombo = new QComboBox(m_section);
+    m_suiteCombo = new QComboBox(this);
     m_suiteCombo->setObjectName("suiteCombo");
     m_suiteCombo->addItem(tr("XChaCha20-Poly1305"));
     m_suiteCombo->addItem(tr("AES-256-GCM"));
@@ -40,33 +29,33 @@ EncryptOptionsWidget::EncryptOptionsWidget(QWidget* parent) : QWidget(parent) {
                                 "There is NO automatic fallback — you must choose the right suite."));
     fl->addRow(tr("Cipher suite:"), m_suiteCombo);
 
-    m_kdfCombo = new QComboBox(m_section);
+    m_kdfCombo = new QComboBox(this);
     m_kdfCombo->setObjectName("kdfCombo");
     m_kdfCombo->addItem(tr("Fast"));
     m_kdfCombo->addItem(tr("Strong"));
     m_kdfCombo->addItem(tr("Paranoid"));
-    m_kdfCombo->setCurrentIndex(1); // Strong default
+    m_kdfCombo->setCurrentIndex(1);
     m_kdfCombo->setItemData(0, tr("For low-value data or testing ONLY. "
                                    "Use Strong or Paranoid for secrets."), Qt::ToolTipRole);
     fl->addRow(tr("KDF preset:"), m_kdfCombo);
 
-    m_chunkSizeEdit = new QLineEdit(m_section);
+    m_chunkSizeEdit = new QLineEdit(this);
     m_chunkSizeEdit->setObjectName("chunkSizeEdit");
     m_chunkSizeEdit->setPlaceholderText(tr("16M"));
     fl->addRow(tr("Chunk size:"), m_chunkSizeEdit);
 
-    m_shardSizeEdit = new QLineEdit(m_section);
+    m_shardSizeEdit = new QLineEdit(this);
     m_shardSizeEdit->setObjectName("shardSizeEdit");
     m_shardSizeEdit->setPlaceholderText(tr("4G"));
     fl->addRow(tr("Shard size:"), m_shardSizeEdit);
 
-    m_paddingCombo = new QComboBox(m_section);
+    m_paddingCombo = new QComboBox(this);
     m_paddingCombo->setObjectName("paddingCombo");
     m_paddingCombo->addItem(tr("none"),       0);
     m_paddingCombo->addItem(tr("chunk"),      1);
     m_paddingCombo->addItem(tr("power2"),     2);
     m_paddingCombo->addItem(tr("fixed-size"), 3);
-    m_paddingCombo->setCurrentIndex(2); // power2 default
+    m_paddingCombo->setCurrentIndex(2);
     m_paddingCombo->setItemData(0, tr("No padding applied."), Qt::ToolTipRole);
     m_paddingCombo->setItemData(1, tr("Pad each chunk to a full chunk size."), Qt::ToolTipRole);
     m_paddingCombo->setItemData(2, tr("Pad to next power of two. "
@@ -75,18 +64,18 @@ EncryptOptionsWidget::EncryptOptionsWidget(QWidget* parent) : QWidget(parent) {
                                 Qt::ToolTipRole);
     fl->addRow(tr("Padding:"), m_paddingCombo);
 
-    m_fixedPaddingEdit = new QLineEdit(m_section);
+    m_fixedPaddingEdit = new QLineEdit(this);
     m_fixedPaddingEdit->setObjectName("fixedPaddingEdit");
     m_fixedPaddingEdit->setPlaceholderText(tr("e.g. 64K"));
-    m_fixedPaddingEdit->setEnabled(false); // only active when padding == fixed-size
+    m_fixedPaddingEdit->setEnabled(false);
     fl->addRow(tr("Fixed padding size:"), m_fixedPaddingEdit);
 
-    m_durabilityCombo = new QComboBox(m_section);
+    m_durabilityCombo = new QComboBox(this);
     m_durabilityCombo->setObjectName("durabilityCombo");
     m_durabilityCombo->addItem(tr("off"),         0);
     m_durabilityCombo->addItem(tr("best-effort"), 1);
     m_durabilityCombo->addItem(tr("on"),          2);
-    m_durabilityCombo->setCurrentIndex(1); // best-effort default
+    m_durabilityCombo->setCurrentIndex(1);
     m_durabilityCombo->setToolTip(
         tr("Controls fsync/fdatasync calls after write.\n"
            "off: no sync (fastest, least durable).\n"
@@ -94,16 +83,40 @@ EncryptOptionsWidget::EncryptOptionsWidget(QWidget* parent) : QWidget(parent) {
            "on: sync after every chunk write (slowest, most durable)."));
     fl->addRow(tr("Durability:"), m_durabilityCombo);
 
-    vl->addWidget(m_section);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    vl->addWidget(buttons);
 
     connect(m_paddingCombo, &QComboBox::currentIndexChanged, [this](int idx) {
         m_fixedPaddingEdit->setEnabled(idx == 3);
     });
-    connect(m_toggle, &QPushButton::toggled, [this](bool checked) {
-        m_section->setVisible(checked);
-        m_toggle->setText(checked ? tr("▼ Advanced encryption options")
-                                  : tr("▶ Advanced encryption options"));
-    });
+    connect(this, &QDialog::rejected, this, &EncryptOptionsWidget::restoreState);
+}
+
+int EncryptOptionsWidget::exec() {
+    saveState();
+    return QDialog::exec();
+}
+
+void EncryptOptionsWidget::saveState() {
+    m_savedSuite      = m_suiteCombo->currentIndex();
+    m_savedKdf        = m_kdfCombo->currentIndex();
+    m_savedChunk      = m_chunkSizeEdit->text();
+    m_savedShard      = m_shardSizeEdit->text();
+    m_savedPadding    = m_paddingCombo->currentIndex();
+    m_savedFixed      = m_fixedPaddingEdit->text();
+    m_savedDurability = m_durabilityCombo->currentIndex();
+}
+
+void EncryptOptionsWidget::restoreState() {
+    m_suiteCombo->setCurrentIndex(m_savedSuite);
+    m_kdfCombo->setCurrentIndex(m_savedKdf);
+    m_chunkSizeEdit->setText(m_savedChunk);
+    m_shardSizeEdit->setText(m_savedShard);
+    m_paddingCombo->setCurrentIndex(m_savedPadding);
+    m_fixedPaddingEdit->setText(m_savedFixed);
+    m_durabilityCombo->setCurrentIndex(m_savedDurability);
 }
 
 void EncryptOptionsWidget::apply(GuiEncryptOptions& o) const {

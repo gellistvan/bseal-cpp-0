@@ -19,6 +19,8 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QFileDialog>
+#include <QDialog>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -40,12 +42,11 @@ namespace bseal::gui {
 
 namespace {
 
-QWidget* path_row(QLineEdit*& out_edit, const QString& label, QWidget* parent,
-                  std::function<void()> on_browse) {
+// Returns [QLineEdit + Browse button] widget for use as a QFormLayout field.
+QWidget* path_field(QLineEdit*& out_edit, QWidget* parent, std::function<void()> on_browse) {
     auto* w  = new QWidget(parent);
     auto* hl = new QHBoxLayout(w);
     hl->setContentsMargins(0, 0, 0, 0);
-    hl->addWidget(new QLabel(label, w));
     out_edit = new QLineEdit(w);
     hl->addWidget(out_edit, 1);
     auto* btn = new QPushButton(QObject::tr("Browse…"), w);
@@ -58,7 +59,7 @@ QWidget* path_row(QLineEdit*& out_edit, const QString& label, QWidget* parent,
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("BSEAL");
-    setMinimumSize(660, 560);
+    setMinimumSize(660, 650);
 
     auto* central = new QWidget(this);
     auto* vl      = new QVBoxLayout(central);
@@ -100,33 +101,27 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     }
 
 
-    // --- Input / Output paths ---
-    vl->addWidget(path_row(m_inputPath,  tr("Input: "),  central, [this]{ onBrowseInput(); }));
-    vl->addWidget(path_row(m_outputPath, tr("Output:"), central, [this]{ onBrowseOutput(); }));
-
-    // --- Passphrase ---
+    // --- Input / Output / Passphrase / Confirm — aligned via QFormLayout ---
     {
-        auto* row = new QWidget(central);
-        auto* hl  = new QHBoxLayout(row);
-        hl->setContentsMargins(0, 0, 0, 0);
-        hl->addWidget(new QLabel(tr("Passphrase:"), row));
-        m_passphrase = new SecurePassphraseField(row);
+        auto* form = new QFormLayout;
+        form->setContentsMargins(0, 0, 0, 0);
+
+        form->addRow(tr("Input:"),
+                     path_field(m_inputPath,  central, [this]{ onBrowseInput(); }));
+        form->addRow(tr("Output:"),
+                     path_field(m_outputPath, central, [this]{ onBrowseOutput(); }));
+
+        m_passphrase = new SecurePassphraseField(central);
         m_passphrase->setObjectName("primaryPassphrase");
-        hl->addWidget(m_passphrase, 1);
-        vl->addWidget(row);
-    }
+        form->addRow(tr("Passphrase:"), m_passphrase);
 
-    // --- Confirm passphrase (encrypt mode only) ---
-    {
-        m_confirmRow = new QWidget(central);
-        auto* hl = new QHBoxLayout(m_confirmRow);
-        hl->setContentsMargins(0, 0, 0, 0);
-        hl->addWidget(new QLabel(tr("Confirm:"), m_confirmRow));
-        m_confirmPassphrase = new SecurePassphraseField(m_confirmRow);
+        m_confirmPassphrase = new SecurePassphraseField(central);
         m_confirmPassphrase->setObjectName("confirmPassphrase");
-        hl->addWidget(m_confirmPassphrase, 1);
-        vl->addWidget(m_confirmRow);
-        // Visibility is controlled by the mode-switch lambda below.
+        m_confirmLabel = new QLabel(tr("Confirm:"), central);
+        form->addRow(m_confirmLabel, m_confirmPassphrase);
+        // Confirm row visibility is controlled by the mode-switch lambda below.
+
+        vl->addLayout(form);
     }
 
     // --- Keyfiles ---
@@ -179,50 +174,54 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         connect(m_lockMemory, &QCheckBox::toggled, m_requireLockMemory, &QCheckBox::setEnabled);
     }
 
-    // --- Advanced option panels (each owns its own UI and option parsing) ---
-    m_encryptOpts = new EncryptOptionsWidget(central);
-    vl->addWidget(m_encryptOpts);
+    // --- Advanced option dialogs (created once; opened on demand) ---
+    m_encryptOpts = new EncryptOptionsWidget(this);
+    m_decryptOpts = new DecryptOptionsWidget(this);
 
-    m_decryptOpts = new DecryptOptionsWidget(central);
-    m_decryptOpts->setVisible(false); // hidden in encrypt mode (default)
-    vl->addWidget(m_decryptOpts);
+    m_advancedOptsBtn = new QPushButton(tr("Advanced encryption options…"), central);
+    m_advancedOptsBtn->setObjectName("advancedOptionsBtn");
+    connect(m_advancedOptsBtn, &QPushButton::clicked, [this]() {
+        if (m_encryptRadio->isChecked())
+            m_encryptOpts->exec();
+        else
+            m_decryptOpts->exec();
+    });
+    vl->addWidget(m_advancedOptsBtn);
 
     // --- Run ---
     m_runBtn = new QPushButton(tr("Encrypt"), central);
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::onRun);
     vl->addWidget(m_runBtn);
 
-    // --- Preview (lazy, generated on demand, cached in memory) ---
+    // --- Preview button (lazy, generated on demand, cached in memory) ---
     {
-        m_previewToggle = new QPushButton(tr("▶ Preview"), central);
+        m_previewToggle = new QPushButton(tr("Preview…"), central);
         m_previewToggle->setObjectName("previewToggle");
-        m_previewToggle->setCheckable(true);
-        m_previewToggle->setChecked(false);
         vl->addWidget(m_previewToggle);
 
-        m_previewPanel = new QWidget(central);
-        m_previewPanel->setObjectName("previewPanel");
-        m_previewPanel->setVisible(false);
-        auto* pl = new QVBoxLayout(m_previewPanel);
-        pl->setContentsMargins(0, 4, 0, 0);
+        // Non-modal informational dialog — opened on demand, never embedded.
+        auto* dlg = new QDialog(this);
+        dlg->setObjectName("previewPanel");
+        dlg->setWindowTitle(tr("Preview — BSEAL"));
+        dlg->setMinimumWidth(540);
+        auto* pl = new QVBoxLayout(dlg);
 
-        m_previewText = new QPlainTextEdit(m_previewPanel);
+        m_previewText = new QPlainTextEdit(dlg);
         m_previewText->setObjectName("previewText");
         m_previewText->setReadOnly(true);
         m_previewText->setPlaceholderText(tr("Preview is generated on demand and cached only in memory.\n"
                                              "No keys are derived and no keyfile contents are read."));
-        m_previewText->setMaximumHeight(200);
+        m_previewText->setMinimumHeight(160);
         pl->addWidget(m_previewText);
 
-        pl->addWidget(new QLabel(tr("Equivalent CLI options (no secrets, keyfile paths redacted):"),
-                                 m_previewPanel));
-        m_cmdSummaryText = new QPlainTextEdit(m_previewPanel);
+        pl->addWidget(new QLabel(tr("Equivalent CLI options (no secrets, keyfile paths redacted):"), dlg));
+        m_cmdSummaryText = new QPlainTextEdit(dlg);
         m_cmdSummaryText->setObjectName("cmdSummaryText");
         m_cmdSummaryText->setReadOnly(true);
-        m_cmdSummaryText->setMaximumHeight(120);
+        m_cmdSummaryText->setMinimumHeight(100);
         pl->addWidget(m_cmdSummaryText);
 
-        m_copySummaryBtn = new QPushButton(tr("Copy equivalent options summary"), m_previewPanel);
+        m_copySummaryBtn = new QPushButton(tr("Copy equivalent options summary"), dlg);
         m_copySummaryBtn->setObjectName("copySummaryBtn");
         m_copySummaryBtn->setToolTip(tr("Copies the CLI-flag summary above to clipboard.\n"
                                         "Clipboard managers may retain this text.\n"
@@ -231,24 +230,27 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QApplication::clipboard()->setText(m_cmdSummaryText->toPlainText());
         });
         pl->addWidget(m_copySummaryBtn);
-        vl->addWidget(m_previewPanel);
 
-        // Expand panel and trigger lazy preview generation on first open.
-        connect(m_previewToggle, &QPushButton::toggled, [this](bool checked) {
-            m_previewPanel->setVisible(checked);
-            m_previewToggle->setText(checked ? tr("▼ Preview") : tr("▶ Preview"));
-            if (checked && m_previewText->toPlainText().isEmpty())
+        m_previewPanel = dlg;
+
+        // Open dialog and trigger lazy generation on first click.
+        connect(m_previewToggle, &QPushButton::clicked, [this]() {
+            m_previewPanel->show();
+            m_previewPanel->raise();
+            m_previewPanel->activateWindow();
+            if (m_previewText->toPlainText().isEmpty())
                 onPreview();
         });
     }
 
-    // Keep button label and confirm-field visibility in sync with mode selection.
+    // Keep button labels and confirm-field visibility in sync with mode selection.
     auto update_mode_ui = [this]() {
         const bool enc = m_encryptRadio->isChecked();
         m_runBtn->setText(enc ? tr("Encrypt") : tr("Decrypt"));
-        m_confirmRow->setVisible(enc);
-        m_encryptOpts->setVisible(enc);
-        m_decryptOpts->setVisible(!enc);
+        m_advancedOptsBtn->setText(enc ? tr("Advanced encryption options…")
+                                       : tr("Advanced decryption options…"));
+        m_confirmLabel->setVisible(enc);
+        m_confirmPassphrase->setVisible(enc);
         if (!enc)
             m_confirmPassphrase->clear();
         // Clear stale preview text on mode switch; user can click Preview to regenerate.
@@ -503,10 +505,9 @@ void MainWindow::setControlsEnabled(bool enabled) {
     m_confirmPassphrase->setEnabled(enabled);
     m_keyfileList->setEnabled(enabled);
     m_runBtn->setEnabled(enabled);
+    m_advancedOptsBtn->setEnabled(enabled);
     m_lockMemory->setEnabled(enabled);
     m_requireLockMemory->setEnabled(enabled && m_lockMemory->isChecked());
-    m_encryptOpts->setEnabled(enabled);
-    m_decryptOpts->setEnabled(enabled);
     m_previewToggle->setEnabled(enabled && !m_previewRunning);
 }
 
