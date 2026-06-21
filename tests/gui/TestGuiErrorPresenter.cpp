@@ -223,6 +223,61 @@ void test_memory_lock_abort_excludes_passphrase() {
     ASSERT_TRUE(!pf->text().isEmpty());
 }
 
+// ---------------------------------------------------------------------------
+// Test 7: regression — former leak path: open failure shows only basename
+// Before fix, hash_keyfiles_blake3 threw InvalidArgument("failed to open keyfile: /full/path")
+// and GuiErrorPresenter displayed it verbatim. After fix it throws KeyfileAccessError.
+// ---------------------------------------------------------------------------
+void test_keyfile_open_failure_shows_basename_only() {
+    const fs::path kf("/home/user/.private/secrets/my-key.bin");
+    const auto err = sanitize_for_gui(
+        make_ep<bseal::KeyfileAccessError>("failed to open keyfile", kf),
+        "Encryption");
+
+    ASSERT_EQ(err.category, GuiErrorCategory::KeyfileAccess);
+    const QString text = err.message;
+
+    ASSERT_TRUE(text.contains("my-key.bin"));
+    ASSERT_TRUE(!text.contains("/home/user/.private/secrets/my-key.bin"));
+    ASSERT_TRUE(!text.contains(".private"));
+    ASSERT_TRUE(!text.contains("secrets"));
+}
+
+// ---------------------------------------------------------------------------
+// Test 8: regression — former leak path: file_size failure shows only basename
+// ---------------------------------------------------------------------------
+void test_keyfile_size_failure_shows_basename_only() {
+    const fs::path kf("/run/user/1000/confidential/archive.key");
+    const auto err = sanitize_for_gui(
+        make_ep<bseal::KeyfileAccessError>("failed to read keyfile size", kf),
+        "Decryption");
+
+    ASSERT_EQ(err.category, GuiErrorCategory::KeyfileAccess);
+    const QString text = err.message;
+
+    ASSERT_TRUE(text.contains("archive.key"));
+    ASSERT_TRUE(!text.contains("/run/user/1000/confidential/archive.key"));
+    ASSERT_TRUE(!text.contains("confidential"));
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: regression — former leak path: read failure shows only basename
+// ---------------------------------------------------------------------------
+void test_keyfile_read_failure_shows_basename_only() {
+    const fs::path kf("/mnt/vault/private/backup.key");
+    const auto err = sanitize_for_gui(
+        make_ep<bseal::KeyfileAccessError>("failed while reading keyfile", kf),
+        "Decryption");
+
+    ASSERT_EQ(err.category, GuiErrorCategory::KeyfileAccess);
+    const QString text = err.message;
+
+    ASSERT_TRUE(text.contains("backup.key"));
+    ASSERT_TRUE(!text.contains("/mnt/vault/private/backup.key"));
+    ASSERT_TRUE(!text.contains("vault"));
+    ASSERT_TRUE(!text.contains("private"));
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -238,6 +293,9 @@ int main(int argc, char* argv[]) {
     run_test("MissingKeyfileShowsBasenameOnly",    test_missing_keyfile_shows_basename_only);
     run_test("OutputNotWritableGenericMessage",    test_output_not_writable_generic_message);
     run_test("MemoryLockAbortExcludesPassphrase",  test_memory_lock_abort_excludes_passphrase);
+    run_test("KeyfileOpenFailureShowsBasenameOnly",  test_keyfile_open_failure_shows_basename_only);
+    run_test("KeyfileSizeFailureShowsBasenameOnly",  test_keyfile_size_failure_shows_basename_only);
+    run_test("KeyfileReadFailureShowsBasenameOnly",  test_keyfile_read_failure_shows_basename_only);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;
