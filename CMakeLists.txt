@@ -238,8 +238,12 @@ if (BSEAL_ENABLE_QT_GUI)
             ${BSEAL_GUI_SOURCES}
             tests/gui/TestGuiOptionsWidgets.cpp
         )
+        add_executable(bseal_gui_validation_order_gtests
+            ${BSEAL_GUI_SOURCES}
+            tests/gui/TestGuiValidationOrder.cpp
+        )
 
-        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests bseal_gui_advanced_encrypt_gtests bseal_gui_advanced_decrypt_gtests bseal_gui_preview_gtests bseal_gui_options_widgets_gtests)
+        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests bseal_gui_advanced_encrypt_gtests bseal_gui_advanced_decrypt_gtests bseal_gui_preview_gtests bseal_gui_options_widgets_gtests bseal_gui_validation_order_gtests)
             set_target_properties(${_t} PROPERTIES AUTOMOC ON)
             target_link_libraries(${_t} PRIVATE bseal::core Qt6::Widgets)
             target_include_directories(${_t} PRIVATE
@@ -298,6 +302,11 @@ if (BSEAL_ENABLE_QT_GUI)
         set_tests_properties(gui.OptionsWidgets PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 10
+        )
+        add_test(NAME gui.ValidationOrder COMMAND bseal_gui_validation_order_gtests)
+        set_tests_properties(gui.ValidationOrder PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 30
         )
     endif()
 

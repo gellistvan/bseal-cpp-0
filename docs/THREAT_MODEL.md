@@ -356,6 +356,38 @@ the same inputs, and is decryptable by either.
 - The order of keyfiles shown in the GUI list is the KDF input order. Reordering
   the list produces a different derived key and will fail authentication.
 
+### Validation-before-secret-extraction ordering
+
+`MainWindow::onRun` enforces a strict ordering designed to minimise the time
+secrets exist outside their Qt widget:
+
+1. **Gather non-secret options** — paths, sizes, cipher/KDF settings, flags.
+2. **Validate options** — input/output paths present, chunk/shard sizes valid,
+   padding policy consistent, KDF resource policy within bounds.  Any error
+   aborts here; the passphrase fields are never touched.
+3. **Risky-option confirmations** — overwrite and hardened-extract=off dialogs.
+   If the user rejects, abort here; passphrase fields are never touched.
+4. **Memory lock** — attempt `mlockall` if requested (see below).  If
+   "Require memory lock" is set and locking fails, abort here; passphrase
+   fields are never touched.
+5. **Extract passphrase(s)** — `extractPassphrase()` moves the widget text
+   into a `SecureBuffer` and **clears the widget immediately**.  After this
+   point the passphrase exists only in the `SecureBuffer` and in
+   Qt-internal allocations that BSEAL cannot control.
+6. **Start operation** — `SecureBuffer` is moved into the worker thread;
+   the main thread no longer holds the passphrase.
+
+**Invariants enforced by this ordering:**
+
+- A validation or confirmation failure never causes `extractPassphrase()` to
+  run — the passphrase widget is left intact so the user can correct options
+  and retry without retyping.
+- A memory-lock-required failure never causes `extractPassphrase()` to run.
+- Once the operation starts, both passphrase fields are empty.
+- On passphrase mismatch (encrypt mode), both fields are empty — they were
+  both extracted and then the comparison found them unequal; both
+  `SecureBuffer` objects are wiped by their destructors.
+
 ### Memory lock controls
 
 The GUI exposes two optional controls before passphrase extraction:
