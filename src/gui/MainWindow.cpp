@@ -416,9 +416,32 @@ void MainWindow::onRun() {
         return;
     }
 
+    // Marshal a progress phase label to the status bar on the main thread.
+    // ponytail: phase-only (max 5 events) — no throttle needed
+    QPointer<MainWindow> selfForProgress(this);
+    auto make_progress_fn = [selfForProgress](QString label) -> app::ProgressFn {
+        return [selfForProgress, label = std::move(label)](const app::ProgressEvent& ev) {
+            const char* text = "";
+            switch (ev.phase) {
+                case app::ProgressPhase::Validating:  text = "Validating inputs…";          break;
+                case app::ProgressPhase::Kdf:         text = "Deriving key (may take seconds)…"; break;
+                case app::ProgressPhase::Planning:    text = "Planning archive…";           break;
+                case app::ProgressPhase::Encrypting:  text = "Encrypting…";                break;
+                case app::ProgressPhase::Decrypting:  text = "Decrypting…";                break;
+                case app::ProgressPhase::Done:        return; // onOperationFinished handles final status
+            }
+            const QString msg = QString::fromUtf8(text);
+            QMetaObject::invokeMethod(qApp, [selfForProgress, msg]() {
+                if (selfForProgress)
+                    selfForProgress->statusBar()->showMessage(msg, 0);
+            }, Qt::QueuedConnection);
+        };
+    };
+
     if (encrypt) {
         auto params = gui::to_core_params(collect_encrypt_options());
-        params.passphrase = std::move(passphrase);
+        params.passphrase  = std::move(passphrase);
+        params.on_progress = make_progress_fn(tr("Encrypting…"));
 
         m_worker = std::jthread([p = std::move(params), pd = std::move(post_done)]() mutable {
             bool    ok  = true;
@@ -433,7 +456,8 @@ void MainWindow::onRun() {
         });
     } else {
         auto params = gui::to_core_params(collect_decrypt_options());
-        params.passphrase = std::move(passphrase);
+        params.passphrase  = std::move(passphrase);
+        params.on_progress = make_progress_fn(tr("Decrypting…"));
 
         m_worker = std::jthread([p = std::move(params), pd = std::move(post_done)]() mutable {
             bool    ok  = true;

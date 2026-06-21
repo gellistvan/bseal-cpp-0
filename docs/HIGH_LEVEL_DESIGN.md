@@ -924,10 +924,38 @@ state, GuiOptions owns the CoreApi interface.
   handled in `MainWindow::onRun` after validation but before any secret is
   extracted, so an abort never leaves a partially-extracted `SecureBuffer`.
 
-### 18.4 Testing approach
+### 18.4 Progress reporting
+
+`CoreEncryptParams` and `CoreDecryptParams` each carry an optional `ProgressFn on_progress`
+callback.  `core_encrypt` and `core_decrypt` invoke it at phase boundaries from the worker
+thread — callers must marshal to the UI thread if needed.
+
+**Phase sequence:**
+
+| Phase | When fired |
+|-------|-----------|
+| `Validating` | Before path and keyfile checks |
+| `Kdf` | Immediately before Argon2id runs |
+| `Planning` | After KDF; before archive plan and shard layout *(encrypt only)* |
+| `Encrypting` | Before `EncryptPipeline::run()` |
+| `Decrypting` | Before `DecryptPipeline::run()` *(decrypt only)* |
+| `Done` | After the pipeline completes successfully |
+
+`ProgressEvent` carries only numeric fields (`phase`, `total_bytes`, `total_shards`).
+
+**What `ProgressEvent` never contains:** passphrase, key material, nonces, salts, archive
+filenames, keyfile paths, or any secret-derived value.
+
+The GUI (`MainWindow`) sets `on_progress` before spawning the worker thread.  The callback
+posts a `QMetaObject::invokeMethod` to the main thread, which updates the status bar with a
+human-readable phase label.  Phase-only events (at most five per operation) need no
+throttling.
+
+### 18.5 Testing approach
 
 Widget tests use Qt's `findChild<T>(objectName)` to locate widgets by their
 `setObjectName` identifiers, which are stable across refactors. `EncryptOptionsWidget`
 and `DecryptOptionsWidget` each have a dedicated test binary that instantiates
 the widget directly and calls `apply()`, separate from the `MainWindow`-level
 tests that verify end-to-end behavior.
+

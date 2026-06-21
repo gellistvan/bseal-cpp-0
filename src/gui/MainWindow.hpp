@@ -88,6 +88,7 @@ public:
 
 Q_SIGNALS:
     void operationDone(bool ok, const QString& msg);
+    void progressPhase(const QString& label); // emitted on main thread with a phase status string
     void previewDone(const QString& text); // emitted on main thread when preview is ready
 
 protected:
