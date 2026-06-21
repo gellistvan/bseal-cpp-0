@@ -236,3 +236,72 @@ and confirms the archive is complete and undamaged.
 If a passphrase or keyfile may have been compromised, re-encrypt the archive
 with a new passphrase and new keyfile rather than attempting to update the
 existing archive in place.  BSEAL does not support in-place re-keying.
+
+---
+
+## Qt GUI mode
+
+BSEAL includes an optional Qt 6 Widgets graphical interface.  This section
+describes how to build it and how to use it safely.
+
+### Building the GUI
+
+The GUI is **disabled by default**.  Enable it with:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBSEAL_ENABLE_QT_GUI=ON
+cmake --build build -j
+```
+
+Qt 6 (`Qt6::Widgets`) must be available on the build machine.
+
+### Security summary
+
+The Qt GUI is **less secure than CLI hardened mode** (`--passphrase-prompt`).
+It is a convenience interface intended for trusted, isolated workstations.  It
+is not appropriate for shared desktops, remote-desktop sessions, machines under
+monitoring, or machines with active malware.
+
+See `docs/THREAT_MODEL.md` — [Qt GUI Security Model](#qt-gui-security-model)
+for the full threat analysis.
+
+**For maximum assurance, use the CLI with `--passphrase-prompt`.**
+
+### Recommended GUI usage
+
+| Do | Why |
+|----|-----|
+| Use on a single-user, locally owned machine | Reduces desktop-environment exposure |
+| Close the GUI immediately after the operation | Limits the window where passphrases could be extracted |
+| Enable "Try to lock process memory" | Reduces swap risk (but does not eliminate all exposure) |
+| Keep the screen locked or the window hidden while typing a passphrase | Prevents shoulder surfing and screenshot capture |
+| Store keyfiles outside the directory being encrypted | Prevents accidental inclusion in the archive |
+| Record keyfile names and the BLAKE3 hash of each keyfile | Detects accidental modification; use `b3sum` or `sha256sum` as a proxy |
+| Keep independent backups of keyfiles and the passphrase | Loss of either makes the archive permanently unrecoverable |
+
+| Avoid | Why |
+|-------|-----|
+| Shared or multi-user desktops | Other users or processes may capture the passphrase field |
+| Remote-desktop or VNC sessions | The remote-capture pipeline may log screen contents |
+| Copying the passphrase to the clipboard | Clipboard managers may retain it indefinitely |
+| Using keyfiles that are likely to be modified (e.g. photos with growing EXIF data) | Byte changes change the derived key |
+
+### Keyfile behavior
+
+The GUI applies the same keyfile semantics as the CLI:
+
+- Only **file bytes** matter; renaming or re-permissioning a keyfile changes nothing.
+- Any modification of bytes — including embedded metadata (EXIF in JPEG, ID3 in MP3,
+  PDF document properties) — **changes the derived key** and makes existing archives
+  unrecoverable without the original bytes.
+- Order is significant: the keyfile list order in the GUI is the KDF input order.
+
+Keep a record of the keyfile order used for each archive.  If in doubt, record
+a cryptographic hash of each keyfile immediately after creation:
+
+```bash
+b3sum my-archive.key          # BLAKE3 (preferred; matches BSEAL internal hash)
+sha256sum my-archive.key      # SHA-256 (widely available alternative)
+```
+
+Store the recorded hash alongside the archive metadata, separately from the keyfile.
