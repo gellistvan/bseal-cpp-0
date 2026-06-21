@@ -274,6 +274,114 @@ before selecting a cipher suite.
 
 ---
 
+## Qt GUI Security Model
+
+BSEAL includes an **optional** Qt 6 Widgets graphical interface (`bseal-gui`).
+This section describes its security properties and limitations.
+
+### Build and default status
+
+The GUI is **disabled at build time by default**. It is compiled only when
+`-DBSEAL_ENABLE_QT_GUI=ON` is passed to CMake. The CLI (`bseal`) is always
+available and is the recommended path for hardened use.
+
+### Intended scope
+
+The Qt GUI is intended for **convenience on trusted, isolated workstations**
+where a graphical file-picker and simple encrypt/decrypt controls are preferable
+to a terminal. It is **not** a hardened secure-input path.
+
+**For maximum assurance, use CLI mode (`bseal`) with `--passphrase-prompt`.**
+
+The GUI is not appropriate for:
+
+- shared or multi-user desktops,
+- remote-desktop or VNC sessions,
+- machines under monitoring by a third party,
+- machines with active keyloggers or malware,
+- high-assurance archival of sensitive secrets.
+
+### Why GUI mode is considered less secure than hardened CLI mode
+
+1. **Qt widget internals** — `QLineEdit` and Qt's input-method stack may copy
+   passphrase bytes into Qt-managed buffers, QVariant temporaries, or undo/redo
+   history. BSEAL wipes its own `SecureBuffer` copy after extraction, but
+   Qt-internal allocations are beyond BSEAL's control.
+
+2. **Desktop environment exposure** — screenshots, accessibility APIs (AT-SPI),
+   window capture by other applications, screen recorders, and input methods can
+   expose the content of password-mode input fields.
+
+3. **Clipboard and drag-and-drop** — passphrase text accidentally copied to the
+   clipboard may be retained by clipboard managers and accessible to other processes.
+
+4. **File-picker history** — the Qt file-picker may add selected keyfile and
+   directory paths to the desktop environment's recent-files list.
+
+5. **Keyloggers** — any active keylogger captures passphrase keystrokes before
+   they reach the application.
+
+6. **Crash dumps** — if the GUI process crashes, the OS may write a core dump
+   containing in-memory key material before BSEAL's wipe runs. Disable core
+   dumps (`ulimit -c 0`) for sensitive use.
+
+7. **Memory-lock limits** — even with the "Try to lock process memory" option,
+   a root/admin attacker, kernel compromise, live hibernation, or DMA can read
+   process memory. Memory locking reduces swap risk only; it is not a complete
+   defence. See the memory-lock controls below.
+
+### Cryptographic behavior in GUI mode
+
+The GUI calls the same `core_encrypt` / `core_decrypt` API as the CLI:
+
+- Same BSEAL-F1 archive format and wire bytes.
+- Same Argon2id KDF with the same preset parameters.
+- Same per-keyfile BLAKE3-256 hash and order-sensitive mixing.
+- Same HKDF-SHA-256 key schedule with domain separation.
+- Same AEAD cipher (XChaCha20-Poly1305 default, AES-256-GCM optional).
+- Same public-header keyed MAC verification before any chunk decryption begins.
+- No passphrase or keyfile content is persisted to disk by the GUI.
+
+An archive produced by the GUI is byte-identical to one produced by the CLI with
+the same inputs, and is decryptable by either.
+
+### Keyfile behavior in GUI mode
+
+- Only the **file's byte content** affects key derivation. Renaming, moving,
+  changing permissions, or modifying timestamps of a keyfile does **not** change
+  the derived key.
+- Any change to a file's bytes — including embedded metadata such as EXIF tags
+  in JPEG files, ID3 tags in MP3 files, or PDF document properties — **does**
+  change the derived key.
+- The order of keyfiles shown in the GUI list is the KDF input order. Reordering
+  the list produces a different derived key and will fail authentication.
+
+### Memory lock controls
+
+The GUI exposes two optional controls before passphrase extraction:
+
+- **Try to lock process memory** — attempts `mlockall(MCL_CURRENT | MCL_FUTURE)`
+  to keep current and future allocations out of swap. Failure is non-fatal unless
+  "Require memory lock success" is also set.
+- **Require memory lock success** — aborts the operation before the passphrase
+  is extracted from the UI if locking fails.
+
+Neither control protects against root/admin attackers, kernel compromise, DMA,
+live hibernation, screenshots, keyloggers, input-method copies, or crash dumps
+already configured by the OS.
+
+### Error messages and information disclosure
+
+The GUI uses a sanitized error layer (`GuiErrorPresenter`) that:
+
+- Never exposes passphrase text or length in any error message.
+- Never exposes full keyfile paths in error messages; only the filename is shown.
+- Reports authentication failures with a single generic message that does not
+  distinguish wrong passphrase from wrong keyfile (avoiding an oracle).
+- Does not log any secret material via Qt's debug-logging facilities.
+
+---
+
 ## Production-readiness status
 
 BSEAL is **experimental**. The following must be resolved before production use:
