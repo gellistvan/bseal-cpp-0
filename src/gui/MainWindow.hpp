@@ -2,6 +2,7 @@
 #pragma once
 
 #include "crypto/Kdf.hpp"
+#include "gui/GuiOptions.hpp"
 #include "platform/ProcessMemoryLock.hpp"
 
 #include <QMainWindow>
@@ -69,6 +70,8 @@ private slots:
 
 private:
     void setControlsEnabled(bool enabled);
+    [[nodiscard]] GuiEncryptOptions collect_encrypt_options() const;
+    [[nodiscard]] GuiDecryptOptions collect_decrypt_options() const;
 
     QRadioButton*          m_encryptRadio{};
     QRadioButton*          m_decryptRadio{};
