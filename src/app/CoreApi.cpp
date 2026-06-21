@@ -112,12 +112,11 @@ void require_directory(const std::filesystem::path& path, std::string_view descr
 }
 
 void require_keyfiles_exist(const std::vector<std::filesystem::path>& keyfiles) {
-    for (const auto& keyfile : keyfiles) {
-        require_path_exists(keyfile, "keyfile");
-        if (!std::filesystem::is_regular_file(keyfile)) {
-            throw bseal::InvalidArgument(
-                "keyfile is not a regular file: " + keyfile.string());
-        }
+    for (const auto& kf : keyfiles) {
+        if (!std::filesystem::exists(kf))
+            throw bseal::KeyfileAccessError("keyfile does not exist", kf);
+        if (!std::filesystem::is_regular_file(kf))
+            throw bseal::KeyfileAccessError("keyfile is not a regular file", kf);
     }
 }
 

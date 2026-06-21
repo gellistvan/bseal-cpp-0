@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+// NEVER log via qDebug/qWarning/qCritical in this file:
+//   passphrase text or length, keyfile paths/contents, derived key material,
+//   nonces or salts used as secrets, raw decrypted plaintext.
 #include "gui/MainWindow.hpp"
 
 #include "app/CoreApi.hpp"
 #include "common/Errors.hpp"
+#include "gui/GuiErrorPresenter.hpp"
 #include "gui/SecurePassphraseField.hpp"
 #include "platform/ProcessMemoryLock.hpp"
 
@@ -269,12 +273,9 @@ void MainWindow::onRun() {
             QString msg = tr("Encrypted successfully.");
             try {
                 app::core_encrypt(std::move(p));
-            } catch (const AuthenticationFailed&) {
+            } catch (...) {
                 ok  = false;
-                msg = tr("Authentication failed. Wrong passphrase or keyfile?");
-            } catch (const std::exception& e) {
-                ok  = false;
-                msg = tr("Encryption failed: %1").arg(QString::fromUtf8(e.what()));
+                msg = gui::sanitize_for_gui(std::current_exception(), tr("Encryption")).message;
             }
             QMetaObject::invokeMethod(qApp, [self, ok, msg]() {
                 if (self)
@@ -293,12 +294,9 @@ void MainWindow::onRun() {
             QString msg = tr("Decrypted successfully.");
             try {
                 app::core_decrypt(std::move(p));
-            } catch (const AuthenticationFailed&) {
+            } catch (...) {
                 ok  = false;
-                msg = tr("Authentication failed. Wrong passphrase or keyfile?");
-            } catch (const std::exception& e) {
-                ok  = false;
-                msg = tr("Decryption failed: %1").arg(QString::fromUtf8(e.what()));
+                msg = gui::sanitize_for_gui(std::current_exception(), tr("Decryption")).message;
             }
             QMetaObject::invokeMethod(qApp, [self, ok, msg]() {
                 if (self)

@@ -127,6 +127,7 @@ if (BSEAL_ENABLE_QT_GUI)
     set(CMAKE_AUTOMOC ON)
     qt_add_executable(bseal-gui
         src/gui/main.cpp
+        src/gui/GuiErrorPresenter.cpp
         src/gui/MainWindow.cpp
         src/gui/SecurePassphraseField.cpp
     )
@@ -161,22 +162,31 @@ if (BSEAL_ENABLE_QT_GUI)
         )
         add_executable(bseal_gui_keyfile_gtests
             src/gui/SecurePassphraseField.cpp
+            src/gui/GuiErrorPresenter.cpp
             src/gui/MainWindow.cpp
             tests/gui/TestMainWindowKeyfiles.cpp
         )
         add_executable(bseal_gui_integration_gtests
             src/gui/SecurePassphraseField.cpp
+            src/gui/GuiErrorPresenter.cpp
             src/gui/MainWindow.cpp
             tests/gui/TestGuiCoreIntegration.cpp
         )
         add_executable(bseal_gui_memlock_gtests
             src/gui/SecurePassphraseField.cpp
+            src/gui/GuiErrorPresenter.cpp
             src/gui/MainWindow.cpp
             tests/gui/TestGuiMemoryLock.cpp
         )
+        add_executable(bseal_gui_error_presenter_gtests
+            src/gui/SecurePassphraseField.cpp
+            src/gui/GuiErrorPresenter.cpp
+            src/gui/MainWindow.cpp
+            tests/gui/TestGuiErrorPresenter.cpp
+        )
         set(CMAKE_AUTOMOC OFF)
 
-        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests)
+        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests)
             target_link_libraries(${_t} PRIVATE bseal::core Qt6::Widgets)
             target_include_directories(${_t} PRIVATE
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -204,6 +214,11 @@ if (BSEAL_ENABLE_QT_GUI)
         set_tests_properties(gui.MemoryLock PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 120
+        )
+        add_test(NAME gui.ErrorPresenter COMMAND bseal_gui_error_presenter_gtests)
+        set_tests_properties(gui.ErrorPresenter PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 60
         )
     endif()
 
