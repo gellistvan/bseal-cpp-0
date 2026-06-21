@@ -128,6 +128,7 @@ if (BSEAL_ENABLE_QT_GUI)
     qt_add_executable(bseal-gui
         src/gui/main.cpp
         src/gui/MainWindow.cpp
+        src/gui/SecurePassphraseField.cpp
     )
     set(CMAKE_AUTOMOC OFF)  # don't propagate to fuzz targets below
 
@@ -149,6 +150,24 @@ if (BSEAL_ENABLE_QT_GUI)
         enable_testing()
         add_test(NAME gui.SmokeRun COMMAND bseal-gui --selftest)
         set_tests_properties(gui.SmokeRun PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 10
+        )
+
+        set(CMAKE_AUTOMOC ON)
+        add_executable(bseal_gui_gtests
+            src/gui/SecurePassphraseField.cpp
+            tests/gui/TestSecurePassphraseField.cpp
+        )
+        set(CMAKE_AUTOMOC OFF)
+        target_link_libraries(bseal_gui_gtests PRIVATE bseal::core Qt6::Widgets)
+        target_include_directories(bseal_gui_gtests PRIVATE
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        )
+        bseal_set_project_warnings(bseal_gui_gtests)
+        bseal_enable_sanitizers_if_requested(bseal_gui_gtests)
+        add_test(NAME gui.SecurePassphraseField COMMAND bseal_gui_gtests)
+        set_tests_properties(gui.SecurePassphraseField PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 10
         )
