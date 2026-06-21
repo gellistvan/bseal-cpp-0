@@ -20,6 +20,7 @@ class QListWidget;
 class QPushButton;
 class QRadioButton;
 class QWidget;
+class QFormLayout;
 
 namespace bseal::gui {
 
@@ -47,6 +48,10 @@ public:
     // For tests only — reads widget state directly.
     [[nodiscard]] GuiEncryptOptions collectEncryptOptionsForTests() const;
 
+    // Returns the decrypt options that would be collected on the next onRun call.
+    // For tests only — reads widget state directly.
+    [[nodiscard]] GuiDecryptOptions collectDecryptOptionsForTests() const;
+
     // Set both memory-lock checkboxes from tests.
     void setMemoryLockForTests(bool lock, bool require);
 
@@ -55,6 +60,10 @@ public:
 
     // Replace the core operation with a fake fn (runs in the worker thread).
     void setOperationFnForTests(std::function<void()> fn);
+
+    // Replace QMessageBox::question used for overwrite/hardened-off confirmations.
+    // fn(title, message) returns true if the user accepted.
+    void setConfirmationFnForTests(std::function<bool(const QString&, const QString&)> fn);
 
     // Returns the text of the persistent security notice label.
     [[nodiscard]] QString securityNoticeText() const;
@@ -78,6 +87,7 @@ private:
     void setControlsEnabled(bool enabled);
     [[nodiscard]] GuiEncryptOptions collect_encrypt_options() const;
     [[nodiscard]] GuiDecryptOptions collect_decrypt_options() const;
+    [[nodiscard]] bool confirm(const QString& title, const QString& msg);
 
     QRadioButton*          m_encryptRadio{};
     QRadioButton*          m_decryptRadio{};
@@ -101,8 +111,18 @@ private:
     QComboBox*             m_paddingCombo{};
     QLineEdit*             m_fixedPaddingEdit{};
     QComboBox*             m_durabilityCombo{};
+    // Advanced decryption options section
+    QPushButton*           m_decryptAdvancedToggle{};
+    QWidget*               m_decryptAdvancedSection{};
+    QCheckBox*             m_overwriteCheck{};
+    QLineEdit*             m_kdfMemEdit{};
+    QLineEdit*             m_kdfIterEdit{};
+    QLineEdit*             m_kdfParEdit{};
+    QComboBox*             m_hardenedCombo{};
+    QComboBox*             m_decryptDurabilityCombo{};
     std::function<platform::ProcessMemoryLockResult()> m_lockFn{platform::try_lock_process_memory};
     std::function<void()>  m_operationFnForTests{};
+    std::function<bool(const QString&, const QString&)> m_confirmFn{};
     bool                   m_operationRunning{false};
     // Declared last so ~jthread() (which joins) runs before any widget is destroyed.
     std::jthread           m_worker{};

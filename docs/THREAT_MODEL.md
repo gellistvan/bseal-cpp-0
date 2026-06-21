@@ -415,6 +415,46 @@ The GUI uses a sanitized error layer (`GuiErrorPresenter`) that:
   distinguish wrong passphrase from wrong keyfile (avoiding an oracle).
 - Does not log any secret material via Qt's debug-logging facilities.
 
+### Advanced decryption options — GUI security properties
+
+The GUI exposes all CoreApi decryption parameters via an **Advanced decryption options**
+section (collapsed by default).  The following security properties apply:
+
+**Overwrite**
+
+- `overwrite` is `false` by default.  Enabling it causes `core_decrypt` to extract into
+  a non-empty output directory, potentially replacing existing files.
+- The GUI requires explicit confirmation before proceeding when overwrite is enabled.
+- No files are moved, deleted, or replaced until after full AEAD authentication succeeds.
+  The overwrite flag does not weaken authentication.
+
+**Hardened extraction**
+
+- The default is `auto`: the hardened POSIX backend (`openat`/`mkdirat`/`renameat` with
+  directory file descriptors) is used when available; the portable backend is used as a
+  fallback.
+- Setting `on` requires the hardened backend and fails immediately if unavailable.
+- Setting `off` forces the portable backend, which is vulnerable to TOCTOU attacks.
+  The GUI requires explicit confirmation before proceeding with `off`.
+- `off` is provided only for diagnostics and controlled environments where TOCTOU risk
+  is understood and accepted.  Symlink extraction is not exposed in the GUI and remains
+  disabled regardless of this setting.
+
+**KDF resource policy**
+
+- The default bounds (2 GiB memory / 4 iterations / 8 threads) cover all built-in presets
+  including `paranoid`. Decryption fails if the archive's KDF parameters exceed the policy.
+- The policy protects against a malicious archive header inducing excessive resource use.
+  Lowering the limits below the archive's actual KDF parameters causes decryption to fail,
+  not silently proceed with reduced cost.
+- Setting limits very high can cause memory exhaustion; this is a local DoS risk only.
+
+**Durability**
+
+- Controls `fsync` on extracted output files.  Default: `best-effort`.
+- Has no effect on authentication or confidentiality.  AEAD tags are verified before any
+  plaintext is written to disk, regardless of the durability setting.
+
 ---
 
 ## Production-readiness status
