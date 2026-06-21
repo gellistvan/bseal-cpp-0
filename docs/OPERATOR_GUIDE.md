@@ -360,3 +360,43 @@ decrypt mode and collapsed by default in encrypt mode.
 - Archives encrypted with non-default settings require the same settings at
   decrypt time only for the cipher suite — the KDF preset, chunk size, shard
   size, padding, and durability mode are stored in the archive header.
+
+### Advanced decryption options
+
+Click **▶ Advanced decryption options** to expand the section.  It is hidden in
+encrypt mode and collapsed by default in decrypt mode.  Default settings are
+safe for all trusted archives.
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| Overwrite existing output | off | Allow decryption into a non-empty output directory. Existing files may be replaced. A confirmation dialog is shown before proceeding. **Leave off** unless you explicitly need to overwrite. |
+| KDF max memory | 2G | Maximum memory the archive's KDF (Argon2id) is permitted to consume. Accepts size suffixes: `K`, `M`, `G`. Setting this too low causes decryption to fail for archives encrypted with higher KDF settings. Setting it very high can exhaust system memory. |
+| KDF max iterations | 4 | Maximum Argon2id iteration count allowed. Lower values reject archives encrypted with higher iteration counts. |
+| KDF max parallelism | 8 | Maximum Argon2id parallelism allowed. Lower values reject high-parallelism archives. |
+| Hardened extract | auto (recommended) | Controls TOCTOU protection. `auto`: use hardened POSIX backend when available, fall back otherwise. `on`: require hardened backend, fail if unavailable. `off`: always use portable backend (unsafe for untrusted archives — see below). |
+| Durability | best-effort | Controls fsync on extracted output files. `off`: no sync. `best-effort`: sync on close (default). `on`: sync after every write (slowest, most durable). Does **not** affect authentication. |
+
+**Safe defaults**: overwrite=off, hardened extract=auto, durability=best-effort.  The KDF policy defaults
+(2G memory / 4 iterations / 8 threads) cover all built-in presets including Paranoid.  You only need
+to adjust KDF limits if you are decrypting archives produced outside BSEAL with unusual KDF parameters.
+
+**Overwrite risk**: enabling overwrite allows extraction to replace any file in the output directory
+whose name matches an archive entry.  Pre-existing files not covered by the archive are left in place.
+A confirmation is required before proceeding.  Do not enable overwrite unless you have independently
+verified the contents of the archive.
+
+**Hardened extract off — danger**: setting hardened extract to `off` disables the POSIX hardened
+extraction backend.  This makes extraction vulnerable to TOCTOU (time-of-check-to-time-of-use) attacks
+where a malicious archive or a race condition could cause files to be extracted to unexpected locations.
+Only use `off` if:
+
+- You have audited the archive and trust it completely.
+- Your platform does not support `openat`/`O_NOFOLLOW` (in which case `auto` already falls back safely).
+- You are doing controlled testing.
+
+A confirmation dialog is required before decryption proceeds with `off`.
+
+**Durability vs authentication**: the durability setting has no effect on authentication.  AEAD
+authentication is always performed before any plaintext is committed to disk, regardless of this
+setting.  Durability controls only whether extracted files are fsynced to storage, which affects
+data integrity after a crash or power loss.

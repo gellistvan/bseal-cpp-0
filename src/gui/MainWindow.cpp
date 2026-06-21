@@ -268,6 +268,125 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         });
     }
 
+    // --- Advanced decryption options (decrypt mode only) ---
+    {
+        m_decryptAdvancedToggle = new QPushButton(tr("▶ Advanced decryption options"), central);
+        m_decryptAdvancedToggle->setObjectName("decryptAdvancedToggle");
+        m_decryptAdvancedToggle->setCheckable(true);
+        m_decryptAdvancedToggle->setChecked(false);
+        m_decryptAdvancedToggle->setVisible(false); // hidden in encrypt mode (default)
+        vl->addWidget(m_decryptAdvancedToggle);
+
+        m_decryptAdvancedSection = new QWidget(central);
+        m_decryptAdvancedSection->setObjectName("decryptAdvancedSection");
+        m_decryptAdvancedSection->setVisible(false);
+        auto* fl = new QFormLayout(m_decryptAdvancedSection);
+        fl->setContentsMargins(0, 0, 0, 0);
+
+        // Overwrite
+        m_overwriteCheck = new QCheckBox(tr("Overwrite existing output"), m_decryptAdvancedSection);
+        m_overwriteCheck->setObjectName("overwriteCheck");
+        m_overwriteCheck->setChecked(false);
+        m_overwriteCheck->setToolTip(
+            tr("Allow decryption to write into a non-empty output directory.\n"
+               "Existing files may be replaced without warning.\n"
+               "You will be asked to confirm before proceeding."));
+        auto* overwriteWarn = new QLabel(
+            tr("⚠️  Overwrite may replace existing files in the output directory."),
+            m_decryptAdvancedSection);
+        overwriteWarn->setWordWrap(true);
+        overwriteWarn->setStyleSheet("color:#7a0000;");
+        fl->addRow(tr("Overwrite:"), m_overwriteCheck);
+        fl->addRow(QString(), overwriteWarn);
+
+        // KDF resource policy
+        m_kdfMemEdit = new QLineEdit(m_decryptAdvancedSection);
+        m_kdfMemEdit->setObjectName("kdfMemEdit");
+        m_kdfMemEdit->setPlaceholderText(tr("2G"));
+        m_kdfMemEdit->setToolTip(tr("Maximum memory the archive's KDF is allowed to consume.\n"
+                                    "Accepts size suffixes: K, M, G (e.g. 512M, 2G).\n"
+                                    "Default: 2 GiB. Setting this too low causes decryption to fail\n"
+                                    "for archives encrypted with higher KDF settings.\n"
+                                    "Setting it very high can cause memory exhaustion."));
+        fl->addRow(tr("KDF max memory:"), m_kdfMemEdit);
+
+        m_kdfIterEdit = new QLineEdit(m_decryptAdvancedSection);
+        m_kdfIterEdit->setObjectName("kdfIterEdit");
+        m_kdfIterEdit->setPlaceholderText(tr("4"));
+        m_kdfIterEdit->setToolTip(tr("Maximum Argon2id iteration count allowed.\n"
+                                     "Default: 4. Lower values may reject archives encrypted\n"
+                                     "with a higher iteration count (e.g. Paranoid preset)."));
+        fl->addRow(tr("KDF max iterations:"), m_kdfIterEdit);
+
+        m_kdfParEdit = new QLineEdit(m_decryptAdvancedSection);
+        m_kdfParEdit->setObjectName("kdfParEdit");
+        m_kdfParEdit->setPlaceholderText(tr("8"));
+        m_kdfParEdit->setToolTip(tr("Maximum Argon2id parallelism allowed.\n"
+                                    "Default: 8. Lower values may reject high-parallelism archives."));
+        fl->addRow(tr("KDF max parallelism:"), m_kdfParEdit);
+
+        auto* kdfWarn = new QLabel(
+            tr("⚠️  High KDF limits can cause slow decryption or memory exhaustion."),
+            m_decryptAdvancedSection);
+        kdfWarn->setWordWrap(true);
+        kdfWarn->setStyleSheet("color:#7a5500;");
+        fl->addRow(QString(), kdfWarn);
+
+        // Hardened extract mode
+        m_hardenedCombo = new QComboBox(m_decryptAdvancedSection);
+        m_hardenedCombo->setObjectName("hardenedCombo");
+        m_hardenedCombo->addItem(tr("auto (recommended)"), 0); // HardenedExtractMode::Auto
+        m_hardenedCombo->addItem(tr("on — require hardened"),  1); // HardenedExtractMode::On
+        m_hardenedCombo->addItem(tr("off — unsafe"),          2); // HardenedExtractMode::Off
+        m_hardenedCombo->setCurrentIndex(0);
+        m_hardenedCombo->setItemData(0, tr("Use hardened POSIX extraction when available; "
+                                           "fall back to portable otherwise."), Qt::ToolTipRole);
+        m_hardenedCombo->setItemData(1, tr("Require POSIX hardened extraction; "
+                                           "fail immediately if unavailable."), Qt::ToolTipRole);
+        m_hardenedCombo->setItemData(2, tr("Always use the portable (non-hardened) backend. "
+                                           "Not TOCTOU-safe. Unsafe for untrusted archives."), Qt::ToolTipRole);
+        fl->addRow(tr("Hardened extract:"), m_hardenedCombo);
+
+        auto* hardenedWarn = new QLabel(
+            tr("⚠️  'off' disables TOCTOU protection and is unsafe for untrusted archives. "
+               "You will be asked to confirm before proceeding."),
+            m_decryptAdvancedSection);
+        hardenedWarn->setWordWrap(true);
+        hardenedWarn->setStyleSheet("color:#7a0000;");
+        fl->addRow(QString(), hardenedWarn);
+
+        // Durability (decrypt writes output files)
+        m_decryptDurabilityCombo = new QComboBox(m_decryptAdvancedSection);
+        m_decryptDurabilityCombo->setObjectName("decryptDurabilityCombo");
+        m_decryptDurabilityCombo->addItem(tr("off"),         0);
+        m_decryptDurabilityCombo->addItem(tr("best-effort"), 1);
+        m_decryptDurabilityCombo->addItem(tr("on"),          2);
+        m_decryptDurabilityCombo->setCurrentIndex(1); // best-effort default
+        m_decryptDurabilityCombo->setToolTip(
+            tr("Controls fsync/fdatasync on extracted output files.\n"
+               "Affects crash/power-loss durability — not authentication.\n"
+               "off: no sync (fastest, least durable).\n"
+               "best-effort: sync on close (default).\n"
+               "on: sync after every write (slowest, most durable)."));
+        fl->addRow(tr("Durability:"), m_decryptDurabilityCombo);
+
+        auto* durabilityWarn = new QLabel(
+            tr("Durability affects crash/power-loss behaviour — not authentication or integrity."),
+            m_decryptAdvancedSection);
+        durabilityWarn->setWordWrap(true);
+        durabilityWarn->setStyleSheet("color:#555;");
+        fl->addRow(QString(), durabilityWarn);
+
+        vl->addWidget(m_decryptAdvancedSection);
+
+        connect(m_decryptAdvancedToggle, &QPushButton::toggled, [this](bool checked) {
+            m_decryptAdvancedSection->setVisible(checked);
+            m_decryptAdvancedToggle->setText(checked
+                ? tr("▼ Advanced decryption options")
+                : tr("▶ Advanced decryption options"));
+        });
+    }
+
     // --- Run ---
     m_runBtn = new QPushButton(tr("Encrypt"), central);
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::onRun);
@@ -280,6 +399,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_confirmRow->setVisible(enc);
         m_advancedToggle->setVisible(enc);
         m_advancedSection->setVisible(enc && m_advancedToggle->isChecked());
+        m_decryptAdvancedToggle->setVisible(!enc);
+        m_decryptAdvancedSection->setVisible(!enc && m_decryptAdvancedToggle->isChecked());
         if (!enc)
             m_confirmPassphrase->clear();
     };
@@ -347,6 +468,26 @@ void MainWindow::onRun() {
         }
         QMessageBox::warning(this, tr("Invalid options"), msg);
         return;
+    }
+
+    // Decrypt-specific confirmations (before touching secrets).
+    if (!encrypt) {
+        const auto dec_opts = collect_decrypt_options();
+        if (dec_opts.overwrite) {
+            if (!confirm(tr("Overwrite existing files?"),
+                         tr("Overwrite is enabled. Existing files in the output directory "
+                            "may be replaced without further warning.\n\n"
+                            "Proceed with overwrite?")))
+                return;
+        }
+        if (dec_opts.hardened_extract == cli::HardenedExtractMode::Off) {
+            if (!confirm(tr("Disable hardened extraction?"),
+                         tr("Hardened extraction is set to 'off'. This disables TOCTOU "
+                            "protection and is unsafe for untrusted archives.\n\n"
+                            "Only proceed if you trust the archive source and understand the risk.\n\n"
+                            "Proceed without hardened extraction?")))
+                return;
+        }
     }
 
     // Enforce memory lock policy before touching the passphrase.
@@ -497,6 +638,13 @@ void MainWindow::setControlsEnabled(bool enabled) {
     m_paddingCombo->setEnabled(enabled);
     m_fixedPaddingEdit->setEnabled(enabled && m_paddingCombo->currentIndex() == 3);
     m_durabilityCombo->setEnabled(enabled);
+    m_decryptAdvancedToggle->setEnabled(enabled);
+    m_overwriteCheck->setEnabled(enabled);
+    m_kdfMemEdit->setEnabled(enabled);
+    m_kdfIterEdit->setEnabled(enabled);
+    m_kdfParEdit->setEnabled(enabled);
+    m_hardenedCombo->setEnabled(enabled);
+    m_decryptDurabilityCombo->setEnabled(enabled);
 }
 
 // ---------------------------------------------------------------------------
@@ -576,6 +724,52 @@ GuiDecryptOptions MainWindow::collect_decrypt_options() const {
         o.keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
     o.lock_memory = m_lockMemory->isChecked();
     o.require_lock_memory = m_requireLockMemory->isChecked();
+
+    o.overwrite = m_overwriteCheck->isChecked();
+
+    // KDF resource policy — empty text keeps model defaults.
+    {
+        const auto mem = m_kdfMemEdit->text().trimmed().toStdString();
+        if (!mem.empty()) {
+            try {
+                const auto bytes = bseal::parse_size_bytes(mem);
+                o.kdf_policy.max_memory_kib = static_cast<std::uint32_t>(bytes / 1024u);
+            } catch (...) {
+                o.kdf_policy.max_memory_kib = 0; // caught by validate()
+            }
+        }
+        const auto iter = m_kdfIterEdit->text().trimmed().toStdString();
+        if (!iter.empty()) {
+            try {
+                o.kdf_policy.max_iterations = static_cast<std::uint32_t>(std::stoul(iter));
+            } catch (...) {
+                o.kdf_policy.max_iterations = 0;
+            }
+        }
+        const auto par = m_kdfParEdit->text().trimmed().toStdString();
+        if (!par.empty()) {
+            try {
+                o.kdf_policy.max_parallelism = static_cast<std::uint32_t>(std::stoul(par));
+            } catch (...) {
+                o.kdf_policy.max_parallelism = 0;
+            }
+        }
+    }
+
+    // Hardened extract mode
+    switch (m_hardenedCombo->currentIndex()) {
+        case 1:  o.hardened_extract = cli::HardenedExtractMode::On;  break;
+        case 2:  o.hardened_extract = cli::HardenedExtractMode::Off; break;
+        default: o.hardened_extract = cli::HardenedExtractMode::Auto; break;
+    }
+
+    // Durability
+    switch (m_decryptDurabilityCombo->currentIndex()) {
+        case 0:  o.durability_mode = platform::DurabilityMode::Off;        break;
+        case 2:  o.durability_mode = platform::DurabilityMode::On;         break;
+        default: o.durability_mode = platform::DurabilityMode::BestEffort; break;
+    }
+
     return o;
 }
 
@@ -615,6 +809,10 @@ GuiEncryptOptions MainWindow::collectEncryptOptionsForTests() const {
     return collect_encrypt_options();
 }
 
+GuiDecryptOptions MainWindow::collectDecryptOptionsForTests() const {
+    return collect_decrypt_options();
+}
+
 void MainWindow::setMemoryLockForTests(bool lock, bool require) {
     m_lockMemory->setChecked(lock);       // toggled signal enables m_requireLockMemory
     m_requireLockMemory->setChecked(require);
@@ -626,6 +824,17 @@ void MainWindow::setMemoryLockFnForTests(std::function<platform::ProcessMemoryLo
 
 void MainWindow::setOperationFnForTests(std::function<void()> fn) {
     m_operationFnForTests = std::move(fn);
+}
+
+void MainWindow::setConfirmationFnForTests(std::function<bool(const QString&, const QString&)> fn) {
+    m_confirmFn = std::move(fn);
+}
+
+bool MainWindow::confirm(const QString& title, const QString& msg) {
+    if (m_confirmFn) return m_confirmFn(title, msg);
+    return QMessageBox::question(this, title, msg,
+                                 QMessageBox::Yes | QMessageBox::No,
+                                 QMessageBox::No) == QMessageBox::Yes;
 }
 
 QString MainWindow::securityNoticeText() const {

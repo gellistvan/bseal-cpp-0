@@ -760,6 +760,63 @@ void test_mode_switch_clears_confirmation_field() {
     ASSERT_TRUE(cf->text().isEmpty());
 }
 
+// ---------------------------------------------------------------------------
+// Test 20: decrypt into an existing non-empty directory with overwrite enabled.
+// ---------------------------------------------------------------------------
+void test_decrypt_into_nonempty_dir_with_overwrite() {
+    TempDir src("t20_src"), enc("t20_enc"), dec("t20_dec");
+    write_file(src.sub("data/content.txt"), "overwrite me");
+
+    // Pre-populate the output directory.
+    write_file(dec.sub("stale.txt"), "this is a stale file");
+
+    bseal::app::CoreEncryptParams ep;
+    ep.input      = src.sub("data");
+    ep.output     = enc.path();
+    ep.passphrase = make_passphrase("ow-pass");
+    ep.kdf_preset = bseal::crypto::KdfPreset::Fast;
+    bseal::app::core_encrypt(std::move(ep));
+
+    // Decrypt with overwrite=true into the pre-populated directory.
+    bseal::app::CoreDecryptParams dp;
+    dp.input      = enc.path();
+    dp.output     = dec.path();
+    dp.passphrase = make_passphrase("ow-pass");
+    dp.overwrite  = true;
+    bseal::app::core_decrypt(std::move(dp));
+
+    ASSERT_EQ(read_file(dec.sub("content.txt")), "overwrite me");
+}
+
+// ---------------------------------------------------------------------------
+// Test 21: decrypt into a non-empty directory without overwrite fails.
+// ---------------------------------------------------------------------------
+void test_decrypt_into_nonempty_dir_without_overwrite_fails() {
+    TempDir src("t21_src"), enc("t21_enc"), dec("t21_dec");
+    write_file(src.sub("data/x.txt"), "x");
+    write_file(dec.sub("existing.txt"), "already here");
+
+    bseal::app::CoreEncryptParams ep;
+    ep.input      = src.sub("data");
+    ep.output     = enc.path();
+    ep.passphrase = make_passphrase("no-ow-pass");
+    ep.kdf_preset = bseal::crypto::KdfPreset::Fast;
+    bseal::app::core_encrypt(std::move(ep));
+
+    bseal::app::CoreDecryptParams dp;
+    dp.input      = enc.path();
+    dp.output     = dec.path();
+    dp.passphrase = make_passphrase("no-ow-pass");
+    dp.overwrite  = false;
+    bool threw = false;
+    try {
+        bseal::app::core_decrypt(std::move(dp));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    ASSERT_TRUE(threw);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -769,6 +826,8 @@ void test_mode_switch_clears_confirmation_field() {
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
+    run_test("DecryptIntoNonEmptyWithOverwrite", test_decrypt_into_nonempty_dir_with_overwrite);
+    run_test("DecryptIntoNonEmptyNoOverwriteFails", test_decrypt_into_nonempty_dir_without_overwrite_fails);
     run_test("GuiEncryptCoreDecryptRoundtrip",  test_gui_encrypt_core_decrypt_roundtrip);
     run_test("CoreEncryptGuiDecryptRoundtrip",  test_core_encrypt_gui_decrypt_roundtrip);
     run_test("PassphraseOnlyRoundtrip",         test_passphrase_only_roundtrip);
