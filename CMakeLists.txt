@@ -113,6 +113,52 @@ if (BSEAL_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# ---------------------------------------------------------------------------
+# Optional Qt 6 Widgets GUI (default OFF — no Qt dependency when disabled)
+# ---------------------------------------------------------------------------
+
+option(BSEAL_ENABLE_QT_GUI "Build the bseal-gui Qt Widgets application" OFF)
+
+if (BSEAL_ENABLE_QT_GUI)
+    find_package(Qt6 REQUIRED COMPONENTS Widgets)
+
+    # Qt 6.4 does not auto-enable AUTOMOC on qt_add_executable; set it explicitly
+    # before target creation so CMake wires up the autogen step.
+    set(CMAKE_AUTOMOC ON)
+    qt_add_executable(bseal-gui
+        src/gui/main.cpp
+        src/gui/MainWindow.cpp
+    )
+    set(CMAKE_AUTOMOC OFF)  # don't propagate to fuzz targets below
+
+    target_link_libraries(bseal-gui PRIVATE
+        bseal::core
+        Qt6::Widgets
+    )
+
+    target_include_directories(bseal-gui PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    )
+
+    bseal_set_project_warnings(bseal-gui)
+    bseal_enable_sanitizers_if_requested(bseal-gui)
+    bseal_enable_tsan_if_requested(bseal-gui)
+    bseal_enable_coverage_if_requested(bseal-gui)
+
+    if (BSEAL_BUILD_TESTS)
+        enable_testing()
+        add_test(NAME gui.SmokeRun COMMAND bseal-gui --selftest)
+        set_tests_properties(gui.SmokeRun PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 10
+        )
+    endif()
+
+    if (BSEAL_ENABLE_INSTALL)
+        install(TARGETS bseal-gui RUNTIME DESTINATION bin)
+    endif()
+endif()
+
 if (BSEAL_BUILD_FUZZERS)
     enable_testing()
     add_subdirectory(tests/fuzz)
