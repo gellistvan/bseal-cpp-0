@@ -335,3 +335,28 @@ sha256sum my-archive.key      # SHA-256 (widely available alternative)
 ```
 
 Store the recorded hash alongside the archive metadata, separately from the keyfile.
+
+### Advanced encryption options
+
+Click **▶ Advanced encryption options** to expand the section.  It is hidden in
+decrypt mode and collapsed by default in encrypt mode.
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| Cipher suite | XChaCha20-Poly1305 | AES-256-GCM requires hardware AES support (AES-NI on x86). There is **no** automatic fallback — choose the right suite for your hardware. |
+| KDF preset | Strong | Controls Argon2id memory/time cost. **Fast** is for low-value data or testing only. **Paranoid** uses very high memory cost and is slow. |
+| Chunk size | 16M | Size of each individually authenticated ciphertext chunk. Must be `> 0` and `≤ shard size`. Accepts suffixes: `K`, `M`, `G`, `T`. |
+| Shard size | 4G | Maximum size of each output `*.bin` shard file. Accepts suffixes: `K`, `M`, `G`, `T`. |
+| Padding | power2 | `none`: no padding. `chunk`: pad to full chunk size. `power2`: pad to next power of two (hides sizes with low overhead). `fixed-size`: pad to an exact byte count (requires the Fixed padding size field). |
+| Fixed padding size | — | Active only when padding is `fixed-size`. Accepts size suffixes. Must be `> 0`. |
+| Durability | best-effort | `off`: skip all fsync (fastest, least durable). `best-effort`: fsync on close. `on`: fsync after every chunk write (slowest, most durable). |
+
+**Security notes for advanced options:**
+
+- Switching from XChaCha20-Poly1305 to AES-256-GCM on a machine without hardware AES
+  will be significantly slower and is not recommended.
+- **Fast KDF** reduces passphrase brute-force resistance.  Do not use it for
+  sensitive data.
+- Archives encrypted with non-default settings require the same settings at
+  decrypt time only for the cipher suite — the KDF preset, chunk size, shard
+  size, padding, and durability mode are stored in the archive header.

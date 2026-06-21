@@ -208,8 +208,15 @@ if (BSEAL_ENABLE_QT_GUI)
             src/gui/MainWindow.cpp
             tests/gui/TestGuiNonPersistence.cpp
         )
+        add_executable(bseal_gui_advanced_encrypt_gtests
+            src/gui/SecurePassphraseField.cpp
+            src/gui/GuiErrorPresenter.cpp
+            src/gui/GuiOptions.cpp
+            src/gui/MainWindow.cpp
+            tests/gui/TestGuiAdvancedEncrypt.cpp
+        )
 
-        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests)
+        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests bseal_gui_advanced_encrypt_gtests)
             set_target_properties(${_t} PROPERTIES AUTOMOC ON)
             target_link_libraries(${_t} PRIVATE bseal::core Qt6::Widgets)
             target_include_directories(${_t} PRIVATE
@@ -246,6 +253,11 @@ if (BSEAL_ENABLE_QT_GUI)
         )
         add_test(NAME gui.NonPersistence COMMAND bseal_gui_nonpersistence_gtests)
         set_tests_properties(gui.NonPersistence PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 10
+        )
+        add_test(NAME gui.AdvancedEncrypt COMMAND bseal_gui_advanced_encrypt_gtests)
+        set_tests_properties(gui.AdvancedEncrypt PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 10
         )

@@ -13,11 +13,13 @@
 
 class QCheckBox;
 class QCloseEvent;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QRadioButton;
+class QWidget;
 
 namespace bseal::gui {
 
@@ -40,6 +42,10 @@ public:
     [[nodiscard]] bool isOperationRunning() const { return m_operationRunning; }
 
     void setKdfPresetForTests(crypto::KdfPreset preset);
+
+    // Returns the encrypt options that would be collected on the next onRun call.
+    // For tests only — reads widget state directly.
+    [[nodiscard]] GuiEncryptOptions collectEncryptOptionsForTests() const;
 
     // Set both memory-lock checkboxes from tests.
     void setMemoryLockForTests(bool lock, bool require);
@@ -85,7 +91,16 @@ private:
     QCheckBox*             m_lockMemory{};
     QCheckBox*             m_requireLockMemory{};
     QLabel*                m_securityNotice{};
-    crypto::KdfPreset      m_kdfPreset{crypto::KdfPreset::Strong};
+    // Advanced encryption options section
+    QPushButton*           m_advancedToggle{};
+    QWidget*               m_advancedSection{};
+    QComboBox*             m_suiteCombo{};
+    QComboBox*             m_kdfCombo{};
+    QLineEdit*             m_chunkSizeEdit{};
+    QLineEdit*             m_shardSizeEdit{};
+    QComboBox*             m_paddingCombo{};
+    QLineEdit*             m_fixedPaddingEdit{};
+    QComboBox*             m_durabilityCombo{};
     std::function<platform::ProcessMemoryLockResult()> m_lockFn{platform::try_lock_process_memory};
     std::function<void()>  m_operationFnForTests{};
     bool                   m_operationRunning{false};
