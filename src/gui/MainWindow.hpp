@@ -8,8 +8,10 @@
 #include <QStringList>
 
 #include <functional>
+#include <thread>
 
 class QCheckBox;
+class QCloseEvent;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -34,6 +36,7 @@ public:
     [[nodiscard]] bool isEncryptMode() const;
     [[nodiscard]] QString inputPath()  const;
     [[nodiscard]] QString outputPath() const;
+    [[nodiscard]] bool isOperationRunning() const { return m_operationRunning; }
 
     void setKdfPresetForTests(crypto::KdfPreset preset);
 
@@ -43,11 +46,17 @@ public:
     // Replace the lock function used by onRun (default: try_lock_process_memory).
     void setMemoryLockFnForTests(std::function<platform::ProcessMemoryLockResult()> fn);
 
+    // Replace the core operation with a fake fn (runs in the worker thread).
+    void setOperationFnForTests(std::function<void()> fn);
+
     // Returns the text of the persistent security notice label.
     [[nodiscard]] QString securityNoticeText() const;
 
 Q_SIGNALS:
     void operationDone(bool ok, const QString& msg);
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void onBrowseInput();
@@ -73,6 +82,10 @@ private:
     QLabel*                m_securityNotice{};
     crypto::KdfPreset      m_kdfPreset{crypto::KdfPreset::Strong};
     std::function<platform::ProcessMemoryLockResult()> m_lockFn{platform::try_lock_process_memory};
+    std::function<void()>  m_operationFnForTests{};
+    bool                   m_operationRunning{false};
+    // Declared last so ~jthread() (which joins) runs before any widget is destroyed.
+    std::jthread           m_worker{};
 };
 
 } // namespace bseal::gui

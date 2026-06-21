@@ -286,6 +286,23 @@ for the full threat analysis.
 | Copying the passphrase to the clipboard | Clipboard managers may retain it indefinitely |
 | Using keyfiles that are likely to be modified (e.g. photos with growing EXIF data) | Byte changes change the derived key |
 
+### Operation lifecycle and close behaviour
+
+Encryption and decryption run in a background thread.  The GUI controls are
+disabled for the duration and re-enabled on completion.
+
+- **No cancellation**: once started, an operation cannot be cancelled.  Wait
+  for it to finish before closing the window, removing a keyfile device, or
+  cutting power to the machine.  Interrupting mid-operation may leave the
+  output directory in a partially written state.
+- **Close guard**: the window refuses to close while an operation is in
+  progress.  A message in the status bar explains the block.  Once the
+  operation finishes (success or error), the window can be closed normally.
+- **Error display**: errors are shown in a dialog box (modal) or in the status
+  bar (success).  Keyfile access errors show only the filename, not the full
+  path.  Authentication failures use a generic message that does not reveal
+  whether the passphrase or keyfile was wrong.
+
 ### Keyfile behavior
 
 The GUI applies the same keyfile semantics as the CLI:

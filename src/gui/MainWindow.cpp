@@ -13,6 +13,7 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -256,10 +257,30 @@ void MainWindow::onRun() {
         keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
 
     setControlsEnabled(false);
+    m_operationRunning = true;
 
     const bool encrypt = m_encryptRadio->isChecked();
-    // QPointer so the callback can check if the window is still alive.
+    // QPointer so the callback is safe even if the window is force-deleted
+    // (e.g. by tests). Normal close is blocked while m_operationRunning is true,
+    // so in the expected lifecycle qApp and this are both alive when the callback fires.
     QPointer<MainWindow> self(this);
+    auto post_done = [self](bool ok, QString msg) {
+        QMetaObject::invokeMethod(qApp, [self, ok, msg = std::move(msg)]() {
+            if (self)
+                emit self->operationDone(ok, msg);
+        }, Qt::QueuedConnection);
+    };
+
+    // Test seam: replace real core ops with an injected function.
+    if (m_operationFnForTests) {
+        m_worker = std::jthread([fn = m_operationFnForTests, pd = std::move(post_done)]() mutable {
+            bool ok = true;
+            QString msg = "Test operation complete.";
+            try { fn(); } catch (...) { ok = false; msg = "Test operation failed."; }
+            pd(ok, std::move(msg));
+        });
+        return;
+    }
 
     if (encrypt) {
         app::CoreEncryptParams params;
@@ -269,7 +290,7 @@ void MainWindow::onRun() {
         params.keyfiles   = std::move(keyfiles);
         params.kdf_preset = m_kdfPreset;
 
-        std::thread([p = std::move(params), self]() mutable {
+        m_worker = std::jthread([p = std::move(params), pd = std::move(post_done)]() mutable {
             bool    ok  = true;
             QString msg = tr("Encrypted successfully.");
             try {
@@ -278,11 +299,8 @@ void MainWindow::onRun() {
                 ok  = false;
                 msg = gui::sanitize_for_gui(std::current_exception(), tr("Encryption")).message;
             }
-            QMetaObject::invokeMethod(qApp, [self, ok, msg]() {
-                if (self)
-                    emit self->operationDone(ok, msg);
-            }, Qt::QueuedConnection);
-        }).detach();
+            pd(ok, std::move(msg));
+        });
     } else {
         app::CoreDecryptParams params;
         params.input      = in.toStdString();
@@ -290,7 +308,7 @@ void MainWindow::onRun() {
         params.passphrase = std::move(passphrase);
         params.keyfiles   = std::move(keyfiles);
 
-        std::thread([p = std::move(params), self]() mutable {
+        m_worker = std::jthread([p = std::move(params), pd = std::move(post_done)]() mutable {
             bool    ok  = true;
             QString msg = tr("Decrypted successfully.");
             try {
@@ -299,15 +317,13 @@ void MainWindow::onRun() {
                 ok  = false;
                 msg = gui::sanitize_for_gui(std::current_exception(), tr("Decryption")).message;
             }
-            QMetaObject::invokeMethod(qApp, [self, ok, msg]() {
-                if (self)
-                    emit self->operationDone(ok, msg);
-            }, Qt::QueuedConnection);
-        }).detach();
+            pd(ok, std::move(msg));
+        });
     }
 }
 
 void MainWindow::onOperationFinished(bool ok, const QString& msg) {
+    m_operationRunning = false;
     setControlsEnabled(true);
     if (ok) {
         // Non-blocking: status bar message so headless tests don't stall on exec().
@@ -315,6 +331,16 @@ void MainWindow::onOperationFinished(bool ok, const QString& msg) {
     } else {
         QMessageBox::critical(this, tr("Error"), msg);
     }
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (m_operationRunning) {
+        statusBar()->showMessage(
+            tr("Operation in progress — please wait for completion before closing."), 0);
+        event->ignore();
+        return;
+    }
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::setControlsEnabled(bool enabled) {
@@ -363,6 +389,10 @@ void MainWindow::setMemoryLockForTests(bool lock, bool require) {
 
 void MainWindow::setMemoryLockFnForTests(std::function<platform::ProcessMemoryLockResult()> fn) {
     m_lockFn = std::move(fn);
+}
+
+void MainWindow::setOperationFnForTests(std::function<void()> fn) {
+    m_operationFnForTests = std::move(fn);
 }
 
 QString MainWindow::securityNoticeText() const {

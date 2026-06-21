@@ -370,6 +370,26 @@ Neither control protects against root/admin attackers, kernel compromise, DMA,
 live hibernation, screenshots, keyloggers, input-method copies, or crash dumps
 already configured by the OS.
 
+### Background operations and window lifecycle
+
+Encryption and decryption run in a background thread owned by the window
+(`std::jthread` member, joined on destruction). GUI controls are disabled for
+the duration of the operation and re-enabled on completion.
+
+- **No cancellation**: once started, an operation cannot be cancelled. The user
+  must wait for it to complete. Do not remove media, shut down, or cut power
+  while an operation is running — the archive may be left in an incomplete state.
+- **Close guard**: closing the window while an operation is in progress is
+  blocked. A status-bar message explains the block. The window can be closed
+  normally after the operation finishes.
+- **No background-thread UI access**: all GUI mutations happen on the Qt main
+  thread via queued signals. The worker thread only calls `core_encrypt` /
+  `core_decrypt` and then posts a completion signal.
+- **Force-deletion safety**: if the window is destroyed while a worker is
+  running (e.g. in tests), `~jthread()` joins the thread before any member is
+  freed. Completion callbacks use `QPointer` to detect the deleted window and
+  become no-ops.
+
 ### Error messages and information disclosure
 
 The GUI uses a sanitized error layer (`GuiErrorPresenter`) that:

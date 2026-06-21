@@ -13,16 +13,22 @@
 #include "gui/SecurePassphraseField.hpp"
 
 #include <QApplication>
+#include <QCloseEvent>
 #include <QEventLoop>
 #include <QLineEdit>
+#include <QStatusBar>
 #include <QTimer>
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -354,6 +360,186 @@ void test_no_sensitive_state_after_operation() {
     ASSERT_TRUE(w.keyfilePaths().size() == 1);
 }
 
+// ---------------------------------------------------------------------------
+// Helper: set up window with valid src/enc dirs, passphrase typed, no keyfiles.
+// ---------------------------------------------------------------------------
+struct SimpleFixture {
+    TempDir src;
+    TempDir enc;
+
+    explicit SimpleFixture(std::string tag) : src(tag + "_src"), enc(tag + "_enc") {
+        write_file(src.sub("data/f.txt"), "x");
+    }
+
+    void setup(bseal::gui::MainWindow& w) const {
+        w.setKdfPresetForTests(bseal::crypto::KdfPreset::Fast);
+        w.show();
+        auto inputs = w.findChildren<QLineEdit*>();
+        if (inputs.size() < 2)
+            throw std::runtime_error("expected ≥2 QLineEdit children");
+        inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
+        inputs[1]->setText(QString::fromStdString(enc.path().string()));
+        auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>();
+        if (!pf) throw std::runtime_error("SecurePassphraseField not found");
+        pf->setText("lifecycle-pass");
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Test 9: controls are disabled while operation is running, re-enabled after.
+// ---------------------------------------------------------------------------
+void test_controls_disabled_during_operation() {
+    SimpleFixture fix("t9");
+    bseal::gui::MainWindow w;
+    fix.setup(w);
+
+    std::mutex mu;
+    std::condition_variable cv;
+    bool proceed = false;
+
+    w.setOperationFnForTests([&] {
+        std::unique_lock lk(mu);
+        cv.wait(lk, [&] { return proceed; });
+    });
+
+    bool done = false;
+    QObject::connect(&w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+    QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
+
+    // Controls must be disabled immediately after onRun returns.
+    ASSERT_TRUE(w.isOperationRunning());
+
+    // Unblock worker.
+    { std::lock_guard lk(mu); proceed = true; }
+    cv.notify_one();
+
+    process_events_until([&] { return done; }, 10000);
+    ASSERT_TRUE(done);
+    ASSERT_TRUE(!w.isOperationRunning());
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: operationDone is emitted exactly once per operation.
+// ---------------------------------------------------------------------------
+void test_operation_done_emitted_exactly_once() {
+    TempDir src("t10_src"), enc("t10_enc");
+    write_file(src.sub("data/h.txt"), "hello");
+
+    bseal::gui::MainWindow w;
+    w.setKdfPresetForTests(bseal::crypto::KdfPreset::Fast);
+    w.show();
+    auto inputs = w.findChildren<QLineEdit*>();
+    ASSERT_TRUE(inputs.size() >= 2);
+    inputs[0]->setText(QString::fromStdString(src.sub("data").string()));
+    inputs[1]->setText(QString::fromStdString(enc.path().string()));
+    auto* pf = w.findChild<bseal::gui::SecurePassphraseField*>();
+    ASSERT_TRUE(pf != nullptr);
+    pf->setText("once-pass");
+
+    int count = 0;
+    QObject::connect(&w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { ++count; });
+
+    QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
+    process_events_until([&] { return count > 0; }, 120000);
+
+    // Spin a bit more to catch any spurious second emission.
+    QEventLoop loop;
+    QTimer::singleShot(200, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    ASSERT_EQ(count, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Test 11: close is accepted when no operation is running.
+// ---------------------------------------------------------------------------
+void test_close_accepted_when_idle() {
+    bseal::gui::MainWindow w;
+    w.show();
+
+    ASSERT_TRUE(!w.isOperationRunning());
+    const bool closed = w.close(); // sends QCloseEvent; accepted → hides window
+    ASSERT_TRUE(closed);
+    ASSERT_TRUE(!w.isVisible());
+}
+
+// ---------------------------------------------------------------------------
+// Test 12: close is blocked (ignored) while an operation is running.
+// ---------------------------------------------------------------------------
+void test_close_blocked_during_operation() {
+    SimpleFixture fix("t12");
+    bseal::gui::MainWindow w;
+    fix.setup(w);
+
+    std::mutex mu;
+    std::condition_variable cv;
+    bool proceed = false;
+
+    w.setOperationFnForTests([&] {
+        std::unique_lock lk(mu);
+        cv.wait(lk, [&] { return proceed; });
+    });
+
+    QMetaObject::invokeMethod(&w, "onRun", Qt::DirectConnection);
+    ASSERT_TRUE(w.isOperationRunning());
+
+    // Attempt to close while running — must be refused.
+    const bool closed = w.close();
+    ASSERT_TRUE(!closed);
+    ASSERT_TRUE(w.isVisible()); // window still open
+    // Status bar should explain why close was blocked.
+    ASSERT_TRUE(w.statusBar()->currentMessage().contains("progress") ||
+                w.statusBar()->currentMessage().contains("wait"));
+
+    // Unblock, wait for completion.
+    { std::lock_guard lk(mu); proceed = true; }
+    cv.notify_one();
+
+    bool done = false;
+    QObject::connect(&w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+    process_events_until([&] { return done; }, 10000);
+    ASSERT_TRUE(done);
+    ASSERT_TRUE(!w.isOperationRunning());
+
+    // Now close must succeed.
+    ASSERT_TRUE(w.close());
+    ASSERT_TRUE(!w.isVisible());
+}
+
+// ---------------------------------------------------------------------------
+// Test 13: destroying MainWindow while a worker is running doesn't crash.
+//   jthread destructor joins the thread; QPointer prevents the queued callback
+//   from touching the deleted object.
+// ---------------------------------------------------------------------------
+void test_worker_joined_on_window_destruction() {
+    SimpleFixture fix("t13");
+
+    std::atomic<bool> op_ran{false};
+
+    auto* w = new bseal::gui::MainWindow;
+    fix.setup(*w);
+
+    w->setOperationFnForTests([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        op_ran = true;
+    });
+
+    QMetaObject::invokeMethod(w, "onRun", Qt::DirectConnection);
+    ASSERT_TRUE(w->isOperationRunning());
+
+    // Delete the window without waiting for operationDone.
+    // ~jthread joins the thread (may block ~5ms).
+    delete w;
+
+    ASSERT_TRUE(op_ran.load()); // thread ran to completion
+    // Process any callbacks queued before thread exited; QPointer prevents UAF.
+    QApplication::processEvents();
+    // Reaching here without crash is the pass condition.
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -371,6 +557,11 @@ int main(int argc, char* argv[]) {
     run_test("WrongKeyfileFails",               test_wrong_keyfile_fails);
     run_test("PassphraseFieldClearedAfterStart", test_passphrase_field_cleared_after_start);
     run_test("NoSensitiveStateAfterOperation",  test_no_sensitive_state_after_operation);
+    run_test("ControlsDisabledDuringOperation", test_controls_disabled_during_operation);
+    run_test("OperationDoneEmittedOnce",        test_operation_done_emitted_exactly_once);
+    run_test("CloseAcceptedWhenIdle",           test_close_accepted_when_idle);
+    run_test("CloseBlockedDuringOperation",     test_close_blocked_during_operation);
+    run_test("WorkerJoinedOnWindowDestruction", test_worker_joined_on_window_destruction);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;
