@@ -159,15 +159,29 @@ if (BSEAL_ENABLE_QT_GUI)
             src/gui/SecurePassphraseField.cpp
             tests/gui/TestSecurePassphraseField.cpp
         )
-        set(CMAKE_AUTOMOC OFF)
-        target_link_libraries(bseal_gui_gtests PRIVATE bseal::core Qt6::Widgets)
-        target_include_directories(bseal_gui_gtests PRIVATE
-            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        add_executable(bseal_gui_keyfile_gtests
+            src/gui/SecurePassphraseField.cpp
+            src/gui/MainWindow.cpp
+            tests/gui/TestMainWindowKeyfiles.cpp
         )
-        bseal_set_project_warnings(bseal_gui_gtests)
-        bseal_enable_sanitizers_if_requested(bseal_gui_gtests)
+        set(CMAKE_AUTOMOC OFF)
+
+        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests)
+            target_link_libraries(${_t} PRIVATE bseal::core Qt6::Widgets)
+            target_include_directories(${_t} PRIVATE
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+            )
+            bseal_set_project_warnings(${_t})
+            bseal_enable_sanitizers_if_requested(${_t})
+        endforeach()
+
         add_test(NAME gui.SecurePassphraseField COMMAND bseal_gui_gtests)
         set_tests_properties(gui.SecurePassphraseField PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 10
+        )
+        add_test(NAME gui.MainWindowKeyfiles COMMAND bseal_gui_keyfile_gtests)
+        set_tests_properties(gui.MainWindowKeyfiles PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 10
         )
