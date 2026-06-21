@@ -5,7 +5,8 @@
 #include "gui/MainWindow.hpp"
 
 #include "app/CoreApi.hpp"
-#include "common/SizeParser.hpp"
+#include "gui/DecryptOptionsWidget.hpp"
+#include "gui/EncryptOptionsWidget.hpp"
 #include "gui/GuiErrorPresenter.hpp"
 #include "gui/GuiOptions.hpp"
 #include "gui/GuiPreview.hpp"
@@ -16,9 +17,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
-#include <QComboBox>
 #include <QFileDialog>
-#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -179,215 +178,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         connect(m_lockMemory, &QCheckBox::toggled, m_requireLockMemory, &QCheckBox::setEnabled);
     }
 
-    // --- Advanced encryption options (encrypt mode only) ---
-    {
-        m_advancedToggle = new QPushButton(tr("▶ Advanced encryption options"), central);
-        m_advancedToggle->setObjectName("advancedToggle");
-        m_advancedToggle->setCheckable(true);
-        m_advancedToggle->setChecked(false);
-        vl->addWidget(m_advancedToggle);
+    // --- Advanced option panels (each owns its own UI and option parsing) ---
+    m_encryptOpts = new EncryptOptionsWidget(central);
+    vl->addWidget(m_encryptOpts);
 
-        m_advancedSection = new QWidget(central);
-        m_advancedSection->setObjectName("advancedSection");
-        m_advancedSection->setVisible(false);
-        auto* fl = new QFormLayout(m_advancedSection);
-        fl->setContentsMargins(0, 0, 0, 0);
-
-        m_suiteCombo = new QComboBox(m_advancedSection);
-        m_suiteCombo->setObjectName("suiteCombo");
-        m_suiteCombo->addItem(tr("XChaCha20-Poly1305"));
-        m_suiteCombo->addItem(tr("AES-256-GCM"));
-        m_suiteCombo->setCurrentIndex(0);
-        m_suiteCombo->setToolTip(tr("AES-256-GCM requires hardware AES support (AES-NI on x86). "
-                                    "There is NO automatic fallback — you must choose the right suite."));
-        fl->addRow(tr("Cipher suite:"), m_suiteCombo);
-
-        m_kdfCombo = new QComboBox(m_advancedSection);
-        m_kdfCombo->setObjectName("kdfCombo");
-        m_kdfCombo->addItem(tr("Fast"));
-        m_kdfCombo->addItem(tr("Strong"));
-        m_kdfCombo->addItem(tr("Paranoid"));
-        m_kdfCombo->setCurrentIndex(1); // Strong default
-        m_kdfCombo->setItemData(0, tr("For low-value data or testing ONLY. "
-                                       "Use Strong or Paranoid for secrets."), Qt::ToolTipRole);
-        fl->addRow(tr("KDF preset:"), m_kdfCombo);
-
-        m_chunkSizeEdit = new QLineEdit(m_advancedSection);
-        m_chunkSizeEdit->setObjectName("chunkSizeEdit");
-        m_chunkSizeEdit->setPlaceholderText(tr("16M"));
-        fl->addRow(tr("Chunk size:"), m_chunkSizeEdit);
-
-        m_shardSizeEdit = new QLineEdit(m_advancedSection);
-        m_shardSizeEdit->setObjectName("shardSizeEdit");
-        m_shardSizeEdit->setPlaceholderText(tr("4G"));
-        fl->addRow(tr("Shard size:"), m_shardSizeEdit);
-
-        m_paddingCombo = new QComboBox(m_advancedSection);
-        m_paddingCombo->setObjectName("paddingCombo");
-        m_paddingCombo->addItem(tr("none"),       0);
-        m_paddingCombo->addItem(tr("chunk"),      1);
-        m_paddingCombo->addItem(tr("power2"),     2);
-        m_paddingCombo->addItem(tr("fixed-size"), 3);
-        m_paddingCombo->setCurrentIndex(2); // power2 default
-        m_paddingCombo->setItemData(0, tr("No padding applied."), Qt::ToolTipRole);
-        m_paddingCombo->setItemData(1, tr("Pad each chunk to a full chunk size."), Qt::ToolTipRole);
-        m_paddingCombo->setItemData(2, tr("Pad to next power of two. "
-                                          "Hides file sizes with reasonable overhead."), Qt::ToolTipRole);
-        m_paddingCombo->setItemData(3, tr("Pad every chunk to an exact fixed size in bytes."),
-                                    Qt::ToolTipRole);
-        fl->addRow(tr("Padding:"), m_paddingCombo);
-
-        m_fixedPaddingEdit = new QLineEdit(m_advancedSection);
-        m_fixedPaddingEdit->setObjectName("fixedPaddingEdit");
-        m_fixedPaddingEdit->setPlaceholderText(tr("e.g. 64K"));
-        m_fixedPaddingEdit->setEnabled(false); // only enabled for fixed-size
-        fl->addRow(tr("Fixed padding size:"), m_fixedPaddingEdit);
-
-        m_durabilityCombo = new QComboBox(m_advancedSection);
-        m_durabilityCombo->setObjectName("durabilityCombo");
-        m_durabilityCombo->addItem(tr("off"),         0);
-        m_durabilityCombo->addItem(tr("best-effort"), 1);
-        m_durabilityCombo->addItem(tr("on"),          2);
-        m_durabilityCombo->setCurrentIndex(1); // best-effort default
-        m_durabilityCombo->setToolTip(
-            tr("Controls fsync/fdatasync calls after write.\n"
-               "off: no sync (fastest, least durable).\n"
-               "best-effort: sync on close (default).\n"
-               "on: sync after every chunk write (slowest, most durable)."));
-        fl->addRow(tr("Durability:"), m_durabilityCombo);
-
-        vl->addWidget(m_advancedSection);
-
-        // Enable fixed-padding field only when fixed-size padding is selected.
-        connect(m_paddingCombo, &QComboBox::currentIndexChanged, [this](int idx) {
-            m_fixedPaddingEdit->setEnabled(idx == 3);
-        });
-        // Toggle section visibility.
-        connect(m_advancedToggle, &QPushButton::toggled, [this](bool checked) {
-            m_advancedSection->setVisible(checked);
-            m_advancedToggle->setText(checked ? tr("▼ Advanced encryption options")
-                                              : tr("▶ Advanced encryption options"));
-        });
-    }
-
-    // --- Advanced decryption options (decrypt mode only) ---
-    {
-        m_decryptAdvancedToggle = new QPushButton(tr("▶ Advanced decryption options"), central);
-        m_decryptAdvancedToggle->setObjectName("decryptAdvancedToggle");
-        m_decryptAdvancedToggle->setCheckable(true);
-        m_decryptAdvancedToggle->setChecked(false);
-        m_decryptAdvancedToggle->setVisible(false); // hidden in encrypt mode (default)
-        vl->addWidget(m_decryptAdvancedToggle);
-
-        m_decryptAdvancedSection = new QWidget(central);
-        m_decryptAdvancedSection->setObjectName("decryptAdvancedSection");
-        m_decryptAdvancedSection->setVisible(false);
-        auto* fl = new QFormLayout(m_decryptAdvancedSection);
-        fl->setContentsMargins(0, 0, 0, 0);
-
-        // Overwrite
-        m_overwriteCheck = new QCheckBox(tr("Overwrite existing output"), m_decryptAdvancedSection);
-        m_overwriteCheck->setObjectName("overwriteCheck");
-        m_overwriteCheck->setChecked(false);
-        m_overwriteCheck->setToolTip(
-            tr("Allow decryption to write into a non-empty output directory.\n"
-               "Existing files may be replaced without warning.\n"
-               "You will be asked to confirm before proceeding."));
-        auto* overwriteWarn = new QLabel(
-            tr("⚠️  Overwrite may replace existing files in the output directory."),
-            m_decryptAdvancedSection);
-        overwriteWarn->setWordWrap(true);
-        overwriteWarn->setStyleSheet("color:#7a0000;");
-        fl->addRow(tr("Overwrite:"), m_overwriteCheck);
-        fl->addRow(QString(), overwriteWarn);
-
-        // KDF resource policy
-        m_kdfMemEdit = new QLineEdit(m_decryptAdvancedSection);
-        m_kdfMemEdit->setObjectName("kdfMemEdit");
-        m_kdfMemEdit->setPlaceholderText(tr("2G"));
-        m_kdfMemEdit->setToolTip(tr("Maximum memory the archive's KDF is allowed to consume.\n"
-                                    "Accepts size suffixes: K, M, G (e.g. 512M, 2G).\n"
-                                    "Default: 2 GiB. Setting this too low causes decryption to fail\n"
-                                    "for archives encrypted with higher KDF settings.\n"
-                                    "Setting it very high can cause memory exhaustion."));
-        fl->addRow(tr("KDF max memory:"), m_kdfMemEdit);
-
-        m_kdfIterEdit = new QLineEdit(m_decryptAdvancedSection);
-        m_kdfIterEdit->setObjectName("kdfIterEdit");
-        m_kdfIterEdit->setPlaceholderText(tr("4"));
-        m_kdfIterEdit->setToolTip(tr("Maximum Argon2id iteration count allowed.\n"
-                                     "Default: 4. Lower values may reject archives encrypted\n"
-                                     "with a higher iteration count (e.g. Paranoid preset)."));
-        fl->addRow(tr("KDF max iterations:"), m_kdfIterEdit);
-
-        m_kdfParEdit = new QLineEdit(m_decryptAdvancedSection);
-        m_kdfParEdit->setObjectName("kdfParEdit");
-        m_kdfParEdit->setPlaceholderText(tr("8"));
-        m_kdfParEdit->setToolTip(tr("Maximum Argon2id parallelism allowed.\n"
-                                    "Default: 8. Lower values may reject high-parallelism archives."));
-        fl->addRow(tr("KDF max parallelism:"), m_kdfParEdit);
-
-        auto* kdfWarn = new QLabel(
-            tr("⚠️  High KDF limits can cause slow decryption or memory exhaustion."),
-            m_decryptAdvancedSection);
-        kdfWarn->setWordWrap(true);
-        kdfWarn->setStyleSheet("color:#7a5500;");
-        fl->addRow(QString(), kdfWarn);
-
-        // Hardened extract mode
-        m_hardenedCombo = new QComboBox(m_decryptAdvancedSection);
-        m_hardenedCombo->setObjectName("hardenedCombo");
-        m_hardenedCombo->addItem(tr("auto (recommended)"), 0); // HardenedExtractMode::Auto
-        m_hardenedCombo->addItem(tr("on — require hardened"),  1); // HardenedExtractMode::On
-        m_hardenedCombo->addItem(tr("off — unsafe"),          2); // HardenedExtractMode::Off
-        m_hardenedCombo->setCurrentIndex(0);
-        m_hardenedCombo->setItemData(0, tr("Use hardened POSIX extraction when available; "
-                                           "fall back to portable otherwise."), Qt::ToolTipRole);
-        m_hardenedCombo->setItemData(1, tr("Require POSIX hardened extraction; "
-                                           "fail immediately if unavailable."), Qt::ToolTipRole);
-        m_hardenedCombo->setItemData(2, tr("Always use the portable (non-hardened) backend. "
-                                           "Not TOCTOU-safe. Unsafe for untrusted archives."), Qt::ToolTipRole);
-        fl->addRow(tr("Hardened extract:"), m_hardenedCombo);
-
-        auto* hardenedWarn = new QLabel(
-            tr("⚠️  'off' disables TOCTOU protection and is unsafe for untrusted archives. "
-               "You will be asked to confirm before proceeding."),
-            m_decryptAdvancedSection);
-        hardenedWarn->setWordWrap(true);
-        hardenedWarn->setStyleSheet("color:#7a0000;");
-        fl->addRow(QString(), hardenedWarn);
-
-        // Durability (decrypt writes output files)
-        m_decryptDurabilityCombo = new QComboBox(m_decryptAdvancedSection);
-        m_decryptDurabilityCombo->setObjectName("decryptDurabilityCombo");
-        m_decryptDurabilityCombo->addItem(tr("off"),         0);
-        m_decryptDurabilityCombo->addItem(tr("best-effort"), 1);
-        m_decryptDurabilityCombo->addItem(tr("on"),          2);
-        m_decryptDurabilityCombo->setCurrentIndex(1); // best-effort default
-        m_decryptDurabilityCombo->setToolTip(
-            tr("Controls fsync/fdatasync on extracted output files.\n"
-               "Affects crash/power-loss durability — not authentication.\n"
-               "off: no sync (fastest, least durable).\n"
-               "best-effort: sync on close (default).\n"
-               "on: sync after every write (slowest, most durable)."));
-        fl->addRow(tr("Durability:"), m_decryptDurabilityCombo);
-
-        auto* durabilityWarn = new QLabel(
-            tr("Durability affects crash/power-loss behaviour — not authentication or integrity."),
-            m_decryptAdvancedSection);
-        durabilityWarn->setWordWrap(true);
-        durabilityWarn->setStyleSheet("color:#555;");
-        fl->addRow(QString(), durabilityWarn);
-
-        vl->addWidget(m_decryptAdvancedSection);
-
-        connect(m_decryptAdvancedToggle, &QPushButton::toggled, [this](bool checked) {
-            m_decryptAdvancedSection->setVisible(checked);
-            m_decryptAdvancedToggle->setText(checked
-                ? tr("▼ Advanced decryption options")
-                : tr("▶ Advanced decryption options"));
-        });
-    }
+    m_decryptOpts = new DecryptOptionsWidget(central);
+    m_decryptOpts->setVisible(false); // hidden in encrypt mode (default)
+    vl->addWidget(m_decryptOpts);
 
     // --- Run ---
     m_runBtn = new QPushButton(tr("Encrypt"), central);
@@ -431,10 +228,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         const bool enc = m_encryptRadio->isChecked();
         m_runBtn->setText(enc ? tr("Encrypt") : tr("Decrypt"));
         m_confirmRow->setVisible(enc);
-        m_advancedToggle->setVisible(enc);
-        m_advancedSection->setVisible(enc && m_advancedToggle->isChecked());
-        m_decryptAdvancedToggle->setVisible(!enc);
-        m_decryptAdvancedSection->setVisible(!enc && m_decryptAdvancedToggle->isChecked());
+        m_encryptOpts->setVisible(enc);
+        m_decryptOpts->setVisible(!enc);
         if (!enc)
             m_confirmPassphrase->clear();
         // Clear stale preview text on mode switch; user can click Preview to regenerate.
@@ -666,21 +461,8 @@ void MainWindow::setControlsEnabled(bool enabled) {
     m_runBtn->setEnabled(enabled);
     m_lockMemory->setEnabled(enabled);
     m_requireLockMemory->setEnabled(enabled && m_lockMemory->isChecked());
-    m_advancedToggle->setEnabled(enabled);
-    m_suiteCombo->setEnabled(enabled);
-    m_kdfCombo->setEnabled(enabled);
-    m_chunkSizeEdit->setEnabled(enabled);
-    m_shardSizeEdit->setEnabled(enabled);
-    m_paddingCombo->setEnabled(enabled);
-    m_fixedPaddingEdit->setEnabled(enabled && m_paddingCombo->currentIndex() == 3);
-    m_durabilityCombo->setEnabled(enabled);
-    m_decryptAdvancedToggle->setEnabled(enabled);
-    m_overwriteCheck->setEnabled(enabled);
-    m_kdfMemEdit->setEnabled(enabled);
-    m_kdfIterEdit->setEnabled(enabled);
-    m_kdfParEdit->setEnabled(enabled);
-    m_hardenedCombo->setEnabled(enabled);
-    m_decryptDurabilityCombo->setEnabled(enabled);
+    m_encryptOpts->setEnabled(enabled);
+    m_decryptOpts->setEnabled(enabled);
     m_previewToggle->setEnabled(enabled && !m_previewRunning);
 }
 
@@ -697,58 +479,7 @@ GuiEncryptOptions MainWindow::collect_encrypt_options() const {
         o.keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
     o.lock_memory = m_lockMemory->isChecked();
     o.require_lock_memory = m_requireLockMemory->isChecked();
-
-    // Cipher suite
-    o.suite = (m_suiteCombo->currentIndex() == 1)
-                  ? crypto::CipherSuite::Aes256Gcm
-                  : crypto::CipherSuite::XChaCha20Poly1305;
-
-    // KDF preset
-    switch (m_kdfCombo->currentIndex()) {
-        case 0:  o.kdf_preset = crypto::KdfPreset::Fast;     break;
-        case 2:  o.kdf_preset = crypto::KdfPreset::Paranoid; break;
-        default: o.kdf_preset = crypto::KdfPreset::Strong;   break;
-    }
-
-    // Chunk / shard sizes — empty text keeps the model default; parse errors → 0 (rejected by validate())
-    {
-        const auto cs = m_chunkSizeEdit->text().trimmed().toStdString();
-        if (!cs.empty()) {
-            try { o.chunk_size = bseal::parse_size_bytes(cs); } catch (...) { o.chunk_size = 0; }
-        }
-        // else: keep GuiEncryptOptions default (16M)
-    }
-    {
-        const auto ss = m_shardSizeEdit->text().trimmed().toStdString();
-        if (!ss.empty()) {
-            try { o.shard_size = bseal::parse_size_bytes(ss); } catch (...) { o.shard_size = 0; }
-        }
-        // else: keep GuiEncryptOptions default (4G)
-    }
-
-    // Padding
-    switch (m_paddingCombo->currentIndex()) {
-        case 0: o.padding = {cli::PaddingPolicyKind::None,   0}; break;
-        case 1: o.padding = {cli::PaddingPolicyKind::Chunk,  0}; break;
-        case 3: {
-            std::uint64_t sz = 0;
-            try {
-                sz = bseal::parse_size_bytes(
-                    m_fixedPaddingEdit->text().trimmed().toStdString());
-            } catch (...) {}
-            o.padding = {cli::PaddingPolicyKind::FixedSize, sz};
-            break;
-        }
-        default: o.padding = {cli::PaddingPolicyKind::Power2, 0}; break;
-    }
-
-    // Durability
-    switch (m_durabilityCombo->currentIndex()) {
-        case 0:  o.durability_mode = platform::DurabilityMode::Off;        break;
-        case 2:  o.durability_mode = platform::DurabilityMode::On;         break;
-        default: o.durability_mode = platform::DurabilityMode::BestEffort; break;
-    }
-
+    m_encryptOpts->apply(o);
     return o;
 }
 
@@ -761,52 +492,7 @@ GuiDecryptOptions MainWindow::collect_decrypt_options() const {
         o.keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
     o.lock_memory = m_lockMemory->isChecked();
     o.require_lock_memory = m_requireLockMemory->isChecked();
-
-    o.overwrite = m_overwriteCheck->isChecked();
-
-    // KDF resource policy — empty text keeps model defaults.
-    {
-        const auto mem = m_kdfMemEdit->text().trimmed().toStdString();
-        if (!mem.empty()) {
-            try {
-                const auto bytes = bseal::parse_size_bytes(mem);
-                o.kdf_policy.max_memory_kib = static_cast<std::uint32_t>(bytes / 1024u);
-            } catch (...) {
-                o.kdf_policy.max_memory_kib = 0; // caught by validate()
-            }
-        }
-        const auto iter = m_kdfIterEdit->text().trimmed().toStdString();
-        if (!iter.empty()) {
-            try {
-                o.kdf_policy.max_iterations = static_cast<std::uint32_t>(std::stoul(iter));
-            } catch (...) {
-                o.kdf_policy.max_iterations = 0;
-            }
-        }
-        const auto par = m_kdfParEdit->text().trimmed().toStdString();
-        if (!par.empty()) {
-            try {
-                o.kdf_policy.max_parallelism = static_cast<std::uint32_t>(std::stoul(par));
-            } catch (...) {
-                o.kdf_policy.max_parallelism = 0;
-            }
-        }
-    }
-
-    // Hardened extract mode
-    switch (m_hardenedCombo->currentIndex()) {
-        case 1:  o.hardened_extract = cli::HardenedExtractMode::On;  break;
-        case 2:  o.hardened_extract = cli::HardenedExtractMode::Off; break;
-        default: o.hardened_extract = cli::HardenedExtractMode::Auto; break;
-    }
-
-    // Durability
-    switch (m_decryptDurabilityCombo->currentIndex()) {
-        case 0:  o.durability_mode = platform::DurabilityMode::Off;        break;
-        case 2:  o.durability_mode = platform::DurabilityMode::On;         break;
-        default: o.durability_mode = platform::DurabilityMode::BestEffort; break;
-    }
-
+    m_decryptOpts->apply(o);
     return o;
 }
 
@@ -834,12 +520,7 @@ QString MainWindow::inputPath()     const { return m_inputPath->text(); }
 QString MainWindow::outputPath()    const { return m_outputPath->text(); }
 
 void MainWindow::setKdfPresetForTests(crypto::KdfPreset preset) {
-    switch (preset) {
-        case crypto::KdfPreset::Fast:     m_kdfCombo->setCurrentIndex(0); break;
-        case crypto::KdfPreset::Strong:   m_kdfCombo->setCurrentIndex(1); break;
-        case crypto::KdfPreset::Paranoid: m_kdfCombo->setCurrentIndex(2); break;
-        case crypto::KdfPreset::Custom:   break; // not exposed in the GUI
-    }
+    m_encryptOpts->setKdfPresetForTests(preset);
 }
 
 GuiEncryptOptions MainWindow::collectEncryptOptionsForTests() const {

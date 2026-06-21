@@ -6,6 +6,12 @@
 #include "gui/GuiPreview.hpp"
 #include "platform/ProcessMemoryLock.hpp"
 
+// Forward declarations for focused option widgets.
+namespace bseal::gui {
+    class DecryptOptionsWidget;
+    class EncryptOptionsWidget;
+}
+
 #include <QMainWindow>
 #include <QStringList>
 
@@ -14,8 +20,6 @@
 
 class QCheckBox;
 class QCloseEvent;
-class QComboBox;
-class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -116,25 +120,9 @@ private:
     QCheckBox*             m_lockMemory{};
     QCheckBox*             m_requireLockMemory{};
     QLabel*                m_securityNotice{};
-    // Advanced encryption options section
-    QPushButton*           m_advancedToggle{};
-    QWidget*               m_advancedSection{};
-    QComboBox*             m_suiteCombo{};
-    QComboBox*             m_kdfCombo{};
-    QLineEdit*             m_chunkSizeEdit{};
-    QLineEdit*             m_shardSizeEdit{};
-    QComboBox*             m_paddingCombo{};
-    QLineEdit*             m_fixedPaddingEdit{};
-    QComboBox*             m_durabilityCombo{};
-    // Advanced decryption options section
-    QPushButton*           m_decryptAdvancedToggle{};
-    QWidget*               m_decryptAdvancedSection{};
-    QCheckBox*             m_overwriteCheck{};
-    QLineEdit*             m_kdfMemEdit{};
-    QLineEdit*             m_kdfIterEdit{};
-    QLineEdit*             m_kdfParEdit{};
-    QComboBox*             m_hardenedCombo{};
-    QComboBox*             m_decryptDurabilityCombo{};
+    // Focused option panels (own their widgets and option parsing).
+    EncryptOptionsWidget*  m_encryptOpts{};
+    DecryptOptionsWidget*  m_decryptOpts{};
     // Preview section
     QPushButton*           m_previewToggle{};
     QWidget*               m_previewPanel{};
