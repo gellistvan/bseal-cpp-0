@@ -875,3 +875,59 @@ The options model contains no passphrase or key material. `GuiEncryptOptions::to
 ### 17.4 stdout output
 
 `CoreEncryptParams::stdout_stream` is a CLI-only feature (piping a single shard to a shell pipeline). It is absent from `GuiEncryptOptions` and is never set by the GUI; the default `nullptr` selects normal file output.
+
+---
+
+## 18. Qt GUI Architecture
+
+The Qt Widgets GUI (`src/gui/`) is built around a thin orchestration layer
+(`MainWindow`) backed by focused, single-purpose classes.
+
+### 18.1 Component map
+
+| Class | File | Purpose |
+|---|---|---|
+| `MainWindow` | `MainWindow.*` | Orchestrates the full GUI lifecycle. Handles passphrase extraction, memory-lock policy, confirmation dialogs, and worker-thread launch. Does not contain option-parsing logic. |
+| `EncryptOptionsWidget` | `EncryptOptionsWidget.*` | Self-contained collapsible panel for advanced encrypt options (cipher suite, KDF preset, chunk/shard sizes, padding, durability). Owns its widgets and `apply(GuiEncryptOptions&)` parsing. |
+| `DecryptOptionsWidget` | `DecryptOptionsWidget.*` | Self-contained collapsible panel for advanced decrypt options (overwrite, KDF resource policy, hardened extraction mode, durability). Owns its widgets and `apply(GuiDecryptOptions&)` parsing. |
+| `SecurePassphraseField` | `SecurePassphraseField.*` | Read-only after extraction (`extractPassphrase()` moves bytes into a `SecureBuffer` and clears the Qt field). |
+| `GuiErrorPresenter` | `GuiErrorPresenter.*` | Sanitizes exception messages for display — strips file paths, keys, and implementation details. Never logs sensitive data. |
+| `GuiOptions` | `GuiOptions.*` | The mapping layer. Holds `GuiEncryptOptions` and `GuiDecryptOptions` structs with defaults, `validate()`, and `to_core_params()`. Passphrase is **not** stored here. |
+| `GuiPreview` / `GuiPreviewCache` | `GuiPreview.*` | Generates a human-readable operation summary on demand. Never reads keyfile contents, derives keys, or includes secrets. Cache is keyed on non-secret fields only. |
+
+### 18.2 Data flow through the option layer
+
+```
+Widget state
+  ↓ (EncryptOptionsWidget::apply / DecryptOptionsWidget::apply)
+GuiEncryptOptions / GuiDecryptOptions     ← validate() here, before touching secrets
+  ↓ (to_core_params())
+CoreEncryptParams / CoreDecryptParams     ← passphrase moved in by MainWindow::onRun
+  ↓ (std::jthread worker)
+app::core_encrypt / app::core_decrypt
+```
+
+The split between UI construction (`EncryptOptionsWidget`) and option mapping
+(`GuiOptions`) means neither layer does the other's job: widgets own widget
+state, GuiOptions owns the CoreApi interface.
+
+### 18.3 Security boundaries
+
+- **Passphrase** is never stored in `GuiOptions` structs. It lives only in
+  `SecurePassphraseField` until `extractPassphrase()` moves it into a
+  `SecureBuffer` immediately before the worker thread starts.
+- **Keyfile paths** are passed to the core as strings. The preview system
+  exposes only basenames in its output, never full paths.
+- **Error sanitization** is centralized in `GuiErrorPresenter`; `MainWindow`
+  never formats error messages itself.
+- **Confirmation dialogs** for risky settings (overwrite, hardened=off) are
+  handled in `MainWindow::onRun` after validation but before any secret is
+  extracted, so an abort never leaves a partially-extracted `SecureBuffer`.
+
+### 18.4 Testing approach
+
+Widget tests use Qt's `findChild<T>(objectName)` to locate widgets by their
+`setObjectName` identifiers, which are stable across refactors. `EncryptOptionsWidget`
+and `DecryptOptionsWidget` each have a dedicated test binary that instantiates
+the widget directly and calls `apply()`, separate from the `MainWindow`-level
+tests that verify end-to-end behavior.

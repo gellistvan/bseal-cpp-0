@@ -127,6 +127,8 @@ if (BSEAL_ENABLE_QT_GUI)
         src/gui/GuiErrorPresenter.cpp
         src/gui/GuiOptions.cpp
         src/gui/GuiPreview.cpp
+        src/gui/EncryptOptionsWidget.cpp
+        src/gui/DecryptOptionsWidget.cpp
         src/gui/MainWindow.cpp
         src/gui/SecurePassphraseField.cpp
     )
@@ -161,6 +163,8 @@ if (BSEAL_ENABLE_QT_GUI)
             src/gui/GuiErrorPresenter.cpp
             src/gui/GuiOptions.cpp
             src/gui/GuiPreview.cpp
+            src/gui/EncryptOptionsWidget.cpp
+            src/gui/DecryptOptionsWidget.cpp
             src/gui/MainWindow.cpp
         )
 
@@ -230,8 +234,12 @@ if (BSEAL_ENABLE_QT_GUI)
             ${BSEAL_GUI_SOURCES}
             tests/gui/TestGuiPreview.cpp
         )
+        add_executable(bseal_gui_options_widgets_gtests
+            ${BSEAL_GUI_SOURCES}
+            tests/gui/TestGuiOptionsWidgets.cpp
+        )
 
-        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests bseal_gui_advanced_encrypt_gtests bseal_gui_advanced_decrypt_gtests bseal_gui_preview_gtests)
+        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests bseal_gui_advanced_encrypt_gtests bseal_gui_advanced_decrypt_gtests bseal_gui_preview_gtests bseal_gui_options_widgets_gtests)
             set_target_properties(${_t} PROPERTIES AUTOMOC ON)
             target_link_libraries(${_t} PRIVATE bseal::core Qt6::Widgets)
             target_include_directories(${_t} PRIVATE
@@ -285,6 +293,11 @@ if (BSEAL_ENABLE_QT_GUI)
         set_tests_properties(gui.Preview PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 30
+        )
+        add_test(NAME gui.OptionsWidgets COMMAND bseal_gui_options_widgets_gtests)
+        set_tests_properties(gui.OptionsWidgets PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 10
         )
     endif()
 
