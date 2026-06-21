@@ -37,8 +37,9 @@ struct PreviewKey {
 };
 
 struct PreviewResult {
-    std::string              text;     // formatted summary (no secrets, no full keyfile paths)
-    std::vector<std::string> warnings; // risky-setting messages, also embedded in text
+    std::string              text;        // human-readable summary (no secrets, no full keyfile paths)
+    std::string              cmd_summary; // CLI-flag-style equivalent options (no secrets, basename-only keyfiles)
+    std::vector<std::string> warnings;   // risky-setting messages, also embedded in text
 };
 
 // Signature for a function that estimates total bytes in an input directory.
@@ -55,6 +56,13 @@ using InputScanFn = std::function<std::optional<std::uint64_t>(const std::string
 [[nodiscard]] PreviewResult generate_preview(const GuiEncryptOptions& opts,
                                              std::optional<std::uint64_t> input_bytes = std::nullopt);
 [[nodiscard]] PreviewResult generate_preview(const GuiDecryptOptions& opts);
+
+// Generate a CLI-flag-style equivalent options summary.
+// Never includes passphrase, passphrase length, keyfile contents, derived keys, nonces, or salts.
+// Keyfile paths are reduced to basenames only.
+// The result is labeled as an equivalent options summary, not a runnable command.
+[[nodiscard]] std::string generate_cmd_summary(const GuiEncryptOptions& opts);
+[[nodiscard]] std::string generate_cmd_summary(const GuiDecryptOptions& opts);
 
 // Bounded recursive scan: sum of regular file sizes under path.
 // Returns nullopt if path is empty, unreachable, or exceeds max_files.

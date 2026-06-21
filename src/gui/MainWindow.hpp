@@ -80,6 +80,9 @@ public:
     // Returns the current preview panel text (for assertions).
     [[nodiscard]] QString previewText() const;
 
+    // Returns the current command summary text (for assertions).
+    [[nodiscard]] QString cmdSummaryText() const;
+
     // Returns the text of the persistent security notice label.
     [[nodiscard]] QString securityNoticeText() const;
 
@@ -99,7 +102,7 @@ private slots:
     void onRun();
     void onOperationFinished(bool ok, const QString& msg);
     void onPreview();
-    void onPreviewFinished(QString text, gui::PreviewKey key);
+    void onPreviewFinished(gui::PreviewResult result, gui::PreviewKey key);
 
 private:
     void setControlsEnabled(bool enabled);
@@ -127,6 +130,8 @@ private:
     QPushButton*           m_previewToggle{};
     QWidget*               m_previewPanel{};
     QPlainTextEdit*        m_previewText{};
+    QPlainTextEdit*        m_cmdSummaryText{};
+    QPushButton*           m_copySummaryBtn{};
     gui::GuiPreviewCache   m_previewCache{};
     gui::PreviewKey        m_pendingPreviewKey{};
     bool                   m_previewRunning{false};

@@ -185,7 +185,8 @@ PreviewResult generate_preview(const GuiEncryptOptions& opts,
             out << "  * " << w << "\n";
     }
 
-    result.text = out.str();
+    result.text        = out.str();
+    result.cmd_summary = generate_cmd_summary(opts);
     return result;
 }
 
@@ -219,8 +220,106 @@ PreviewResult generate_preview(const GuiDecryptOptions& opts) {
             out << "  * " << w << "\n";
     }
 
-    result.text = out.str();
+    result.text        = out.str();
+    result.cmd_summary = generate_cmd_summary(opts);
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// Command summary generator
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// CLI flag representations for each option value.
+const char* suite_flag(crypto::CipherSuite s) {
+    return s == crypto::CipherSuite::Aes256Gcm ? "aes-256-gcm" : "xchacha20-poly1305";
+}
+
+const char* kdf_flag(crypto::KdfPreset p) {
+    switch (p) {
+        case crypto::KdfPreset::Fast:     return "fast";
+        case crypto::KdfPreset::Strong:   return "strong";
+        case crypto::KdfPreset::Paranoid: return "paranoid";
+        default:                          return "strong";
+    }
+}
+
+std::string padding_flag(cli::PaddingPolicyKind k, std::uint64_t fixed) {
+    switch (k) {
+        case cli::PaddingPolicyKind::None:      return "none";
+        case cli::PaddingPolicyKind::Chunk:     return "chunk";
+        case cli::PaddingPolicyKind::Power2:    return "power2";
+        case cli::PaddingPolicyKind::FixedSize: return "fixed-size=" + std::to_string(fixed);
+    }
+    return "power2";
+}
+
+const char* durability_flag(platform::DurabilityMode m) {
+    switch (m) {
+        case platform::DurabilityMode::Off:        return "off";
+        case platform::DurabilityMode::BestEffort: return "best-effort";
+        case platform::DurabilityMode::On:         return "on";
+    }
+    return "best-effort";
+}
+
+const char* hardened_flag(cli::HardenedExtractMode m) {
+    switch (m) {
+        case cli::HardenedExtractMode::Auto: return "auto";
+        case cli::HardenedExtractMode::On:   return "on";
+        case cli::HardenedExtractMode::Off:  return "off";
+    }
+    return "auto";
+}
+
+void append_common_flags(std::ostringstream& out, const GuiCommonOptions& opts) {
+    if (!opts.keyfiles.empty()) {
+        for (const auto& kf : opts.keyfiles)
+            out << "  --keyfile " << std::filesystem::path(kf).filename().string()
+                << "  # path redacted\n";
+    }
+    out << "  --durability " << durability_flag(opts.durability_mode) << " \\\n";
+    out << "  --passphrase-prompt  # enter interactively — never shown here\n";
+}
+
+} // namespace
+
+std::string generate_cmd_summary(const GuiEncryptOptions& opts) {
+    std::ostringstream out;
+    out << "# Equivalent options summary — not a runnable command.\n";
+    out << "# Passphrase and keyfile contents are never shown.\n";
+    out << "# Keyfile paths are replaced by basename.\n";
+    out << "bseal encrypt"
+        << " " << (opts.input.empty()  ? "<input>"  : opts.input)
+        << " " << (opts.output.empty() ? "<output>" : opts.output)
+        << " \\\n";
+    out << "  --suite "       << suite_flag(opts.suite)      << " \\\n";
+    out << "  --kdf-preset "  << kdf_flag(opts.kdf_preset)   << " \\\n";
+    out << "  --chunk-size "  << opts.chunk_size              << " \\\n";
+    out << "  --shard-size "  << opts.shard_size              << " \\\n";
+    out << "  --padding "     << padding_flag(opts.padding.kind, opts.padding.fixed_size_bytes) << " \\\n";
+    append_common_flags(out, opts);
+    return out.str();
+}
+
+std::string generate_cmd_summary(const GuiDecryptOptions& opts) {
+    std::ostringstream out;
+    out << "# Equivalent options summary — not a runnable command.\n";
+    out << "# Passphrase and keyfile contents are never shown.\n";
+    out << "# Keyfile paths are replaced by basename.\n";
+    out << "bseal decrypt"
+        << " " << (opts.input.empty()  ? "<input>"  : opts.input)
+        << " " << (opts.output.empty() ? "<output>" : opts.output)
+        << " \\\n";
+    if (opts.overwrite)
+        out << "  --overwrite \\\n";
+    out << "  --hardened-extract " << hardened_flag(opts.hardened_extract) << " \\\n";
+    out << "  --max-kdf-memory "     << opts.kdf_policy.max_memory_kib      << " \\\n";
+    out << "  --max-kdf-iterations " << opts.kdf_policy.max_iterations       << " \\\n";
+    out << "  --max-kdf-parallelism "<< opts.kdf_policy.max_parallelism      << " \\\n";
+    append_common_flags(out, opts);
+    return out.str();
 }
 
 // ---------------------------------------------------------------------------

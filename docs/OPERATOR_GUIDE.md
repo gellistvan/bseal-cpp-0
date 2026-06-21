@@ -443,3 +443,38 @@ For encrypt mode, the preview optionally scans the input directory to estimate t
 shard count.  The scan is bounded to 10 000 files; if the directory is larger or unreachable,
 the size field shows "(not scanned)".  The scan runs in a background thread and does not block
 the UI.
+
+### Equivalent CLI options summary
+
+Below the human-readable preview, the panel shows an **equivalent options summary** in
+CLI-flag style.  This helps you understand feature parity and reproduce the same operation
+from the command line.
+
+**What the summary shows:**
+
+- `bseal encrypt` or `bseal decrypt` with the current input/output paths.
+- All non-secret options as CLI flags: `--suite`, `--kdf-preset`, `--chunk-size`,
+  `--shard-size`, `--padding`, `--durability`, `--hardened-extract`, KDF resource limits.
+- Keyfile **basenames only** — directory paths are replaced by a `# path redacted` comment.
+- `--passphrase-prompt` as a placeholder flag, with a comment that the passphrase is
+  entered interactively and is never shown.
+
+**What the summary never shows:**
+
+- Passphrase or passphrase length.
+- Keyfile contents, directory paths, or cryptographic digests.
+- Derived key material, nonces, or salts.
+
+The summary header states explicitly that it is an equivalent options summary, **not a
+runnable command**.  Some GUI-only behaviour (memory locking, confirmation dialogs) has no
+CLI equivalent and is omitted.
+
+**Copy button:**
+
+A "Copy equivalent options summary" button copies the summary text to the system clipboard.
+The button is explicit — nothing is copied automatically.
+
+> **Clipboard warning:** clipboard managers and some desktop environments retain clipboard
+> history.  The summary contains your input and output paths.  If those paths are sensitive,
+> be aware that clipboard history tools may retain this text after you copy it.
+> Passphrase and keyfile contents are never copied.

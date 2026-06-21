@@ -14,6 +14,7 @@
 #include "platform/ProcessMemoryLock.hpp"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -212,6 +213,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                                              "No keys are derived and no keyfile contents are read."));
         m_previewText->setMaximumHeight(200);
         pl->addWidget(m_previewText);
+
+        pl->addWidget(new QLabel(tr("Equivalent CLI options (no secrets, keyfile paths redacted):"),
+                                 m_previewPanel));
+        m_cmdSummaryText = new QPlainTextEdit(m_previewPanel);
+        m_cmdSummaryText->setObjectName("cmdSummaryText");
+        m_cmdSummaryText->setReadOnly(true);
+        m_cmdSummaryText->setMaximumHeight(120);
+        pl->addWidget(m_cmdSummaryText);
+
+        m_copySummaryBtn = new QPushButton(tr("Copy equivalent options summary"), m_previewPanel);
+        m_copySummaryBtn->setObjectName("copySummaryBtn");
+        m_copySummaryBtn->setToolTip(tr("Copies the CLI-flag summary above to clipboard.\n"
+                                        "Clipboard managers may retain this text.\n"
+                                        "Passphrase and keyfile contents are never included."));
+        connect(m_copySummaryBtn, &QPushButton::clicked, [this]() {
+            QApplication::clipboard()->setText(m_cmdSummaryText->toPlainText());
+        });
+        pl->addWidget(m_copySummaryBtn);
         vl->addWidget(m_previewPanel);
 
         // Expand panel and trigger lazy preview generation on first open.
@@ -234,6 +253,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             m_confirmPassphrase->clear();
         // Clear stale preview text on mode switch; user can click Preview to regenerate.
         m_previewText->clear();
+        m_cmdSummaryText->clear();
     };
     connect(m_encryptRadio, &QRadioButton::toggled, this, update_mode_ui);
     connect(m_decryptRadio, &QRadioButton::toggled, this, update_mode_ui);
@@ -558,6 +578,10 @@ QString MainWindow::previewText() const {
     return m_previewText ? m_previewText->toPlainText() : QString{};
 }
 
+QString MainWindow::cmdSummaryText() const {
+    return m_cmdSummaryText ? m_cmdSummaryText->toPlainText() : QString{};
+}
+
 bool MainWindow::confirm(const QString& title, const QString& msg) {
     if (m_confirmFn) return m_confirmFn(title, msg);
     return QMessageBox::question(this, title, msg,
@@ -585,6 +609,7 @@ void MainWindow::triggerPreview() {
     // Cache hit: show immediately without starting a worker.
     if (auto cached = m_previewCache.get(key)) {
         m_previewText->setPlainText(QString::fromStdString(cached->text));
+        m_cmdSummaryText->setPlainText(QString::fromStdString(cached->cmd_summary));
         emit previewDone(QString::fromStdString(cached->text));
         return;
     }
@@ -595,12 +620,12 @@ void MainWindow::triggerPreview() {
     m_previewText->setPlainText(tr("Generating preview…"));
 
     QPointer<MainWindow> self(this);
-    auto post_done = [self](QString text, gui::PreviewKey pending_key) {
+    auto post_done = [self](gui::PreviewResult result, gui::PreviewKey pending_key) {
         QMetaObject::invokeMethod(
             qApp,
-            [self, text = std::move(text), pending_key = std::move(pending_key)]() mutable {
+            [self, result = std::move(result), pending_key = std::move(pending_key)]() mutable {
                 if (self)
-                    self->onPreviewFinished(std::move(text), std::move(pending_key));
+                    self->onPreviewFinished(std::move(result), std::move(pending_key));
             },
             Qt::QueuedConnection);
     };
@@ -614,24 +639,25 @@ void MainWindow::triggerPreview() {
                 std::optional<std::uint64_t> bytes;
                 if (scan && !opts.input.empty())
                     bytes = scan(opts.input);
-                auto result = gui::generate_preview(opts, bytes);
-                pd(QString::fromStdString(result.text), std::move(pending_key));
+                pd(gui::generate_preview(opts, bytes), std::move(pending_key));
             });
     } else {
         auto opts = collect_decrypt_options();
         m_previewWorker = std::jthread(
             [opts = std::move(opts), pending_key = key, pd = std::move(post_done)]() mutable {
-                auto result = gui::generate_preview(opts);
-                pd(QString::fromStdString(result.text), std::move(pending_key));
+                pd(gui::generate_preview(opts), std::move(pending_key));
             });
     }
 }
 
-void MainWindow::onPreviewFinished(QString text, gui::PreviewKey key) {
+void MainWindow::onPreviewFinished(gui::PreviewResult result, gui::PreviewKey key) {
     m_previewRunning = false;
     m_previewToggle->setEnabled(!m_operationRunning);
-    m_previewCache.set(key, gui::PreviewResult{text.toStdString(), {}});
+    const QString text = QString::fromStdString(result.text);
+    const QString cmd  = QString::fromStdString(result.cmd_summary);
+    m_previewCache.set(key, std::move(result));
     m_previewText->setPlainText(text);
+    m_cmdSummaryText->setPlainText(cmd);
     emit previewDone(text);
 }
 
