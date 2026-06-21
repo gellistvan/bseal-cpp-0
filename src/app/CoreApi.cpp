@@ -399,6 +399,11 @@ void verify_all_shard_header_macs(
     }
 }
 
+void fire_progress(const ProgressFn& fn, ProgressPhase phase,
+                   std::uint64_t total_bytes = 0, std::uint32_t total_shards = 0) {
+    if (fn) fn(ProgressEvent{phase, total_bytes, total_shards});
+}
+
 } // namespace
 
 void core_encrypt(CoreEncryptParams params) {
@@ -412,6 +417,8 @@ void core_encrypt(CoreEncryptParams params) {
             "This is suitable for low-value data or testing only. "
             "Use --kdf strong or --kdf paranoid for valuable long-term secrets.\n");
     }
+
+    fire_progress(params.on_progress, ProgressPhase::Validating);
 
     const bool stdout_output = (params.stdout_stream != nullptr);
 
@@ -446,8 +453,10 @@ void core_encrypt(CoreEncryptParams params) {
     }
 
     auto backend = make_backend(context.suite);
+    fire_progress(params.on_progress, ProgressPhase::Kdf);
     auto keys    = derive_expanded_keys(context, std::move(params.passphrase), params.keyfiles);
 
+    fire_progress(params.on_progress, ProgressPhase::Planning);
     bseal::archive::ArchiveWriter archive_writer(bseal::archive::ArchiveWriterOptions{
         params.input,
         params.chunk_size,
@@ -567,12 +576,18 @@ void core_encrypt(CoreEncryptParams params) {
         std::move(archive_writer),
         std::move(any_writer));
 
+    fire_progress(params.on_progress, ProgressPhase::Encrypting,
+                  padded_plaintext_size,
+                  static_cast<std::uint32_t>(shard_plans.size()));
     try {
         pipeline.run();
     } catch (...) {
         pipeline.abort_and_remove_created_shards_noexcept();
         throw;
     }
+    fire_progress(params.on_progress, ProgressPhase::Done,
+                  padded_plaintext_size,
+                  static_cast<std::uint32_t>(shard_plans.size()));
 }
 
 void core_decrypt(CoreDecryptParams params) {
@@ -586,6 +601,8 @@ void core_decrypt(CoreDecryptParams params) {
             "The portable backend is not protected against symlink races. "
             "Use the default (auto) or --hardened-extract=on for untrusted archives.\n");
     }
+
+    fire_progress(params.on_progress, ProgressPhase::Validating);
 
     require_directory(params.input, "input path");
     require_keyfiles_exist(params.keyfiles);
@@ -606,6 +623,7 @@ void core_decrypt(CoreDecryptParams params) {
 
         bseal::crypto::check_kdf_params_against_policy(context.kdf_params, params.kdf_policy);
 
+        fire_progress(params.on_progress, ProgressPhase::Kdf);
         auto keys = derive_expanded_keys(context, std::move(params.passphrase), params.keyfiles);
 
         verify_all_shard_header_macs(shards, keys.header_authentication_key.as_span());
@@ -661,7 +679,13 @@ void core_decrypt(CoreDecryptParams params) {
             std::move(shard_reader),
             std::move(archive_reader));
 
+        fire_progress(params.on_progress, ProgressPhase::Decrypting,
+                      context.global_header.padded_plaintext_size,
+                      static_cast<std::uint32_t>(shards.size()));
         pipeline.run();
+        fire_progress(params.on_progress, ProgressPhase::Done,
+                      context.global_header.padded_plaintext_size,
+                      static_cast<std::uint32_t>(shards.size()));
     } catch (...) {
         if (!output_existed_before) {
             std::error_code ec;

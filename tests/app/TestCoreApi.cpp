@@ -296,4 +296,86 @@ TEST(CoreApi, CliEncryptApiDecrypt) {
 }
 #endif // !_WIN32
 
+// ---------------------------------------------------------------------------
+// Progress callback tests
+// ---------------------------------------------------------------------------
+
+TEST(CoreApiProgress, EncryptReceivesExpectedPhases) {
+    TempDir input("prg_enc_in"), output("prg_enc_out");
+    create_test_input(input.path());
+
+    std::vector<bseal::app::ProgressPhase> phases;
+    auto p = make_encrypt_params(input.path(), output.path(), "testpass");
+    p.on_progress = [&](const bseal::app::ProgressEvent& ev) {
+        phases.push_back(ev.phase);
+    };
+    bseal::app::core_encrypt(std::move(p));
+
+    ASSERT_GE(phases.size(), 5u);
+    EXPECT_EQ(phases[0], bseal::app::ProgressPhase::Validating);
+    EXPECT_EQ(phases[1], bseal::app::ProgressPhase::Kdf);
+    EXPECT_EQ(phases[2], bseal::app::ProgressPhase::Planning);
+    EXPECT_EQ(phases[3], bseal::app::ProgressPhase::Encrypting);
+    EXPECT_EQ(phases.back(), bseal::app::ProgressPhase::Done);
+}
+
+TEST(CoreApiProgress, DecryptReceivesExpectedPhases) {
+    TempDir input("prg_dec_in"), sealed("prg_dec_shards"), output("prg_dec_out");
+    create_test_input(input.path());
+    bseal::app::core_encrypt(make_encrypt_params(input.path(), sealed.path(), "testpass2"));
+
+    std::vector<bseal::app::ProgressPhase> phases;
+    auto p = make_decrypt_params(sealed.path(), output.path(), "testpass2");
+    p.on_progress = [&](const bseal::app::ProgressEvent& ev) {
+        phases.push_back(ev.phase);
+    };
+    bseal::app::core_decrypt(std::move(p));
+
+    ASSERT_GE(phases.size(), 4u);
+    EXPECT_EQ(phases[0], bseal::app::ProgressPhase::Validating);
+    EXPECT_EQ(phases[1], bseal::app::ProgressPhase::Kdf);
+    EXPECT_EQ(phases[2], bseal::app::ProgressPhase::Decrypting);
+    EXPECT_EQ(phases.back(), bseal::app::ProgressPhase::Done);
+}
+
+TEST(CoreApiProgress, EncryptProgressEventHasNoSecrets) {
+    // ProgressEvent carries only phase + numeric counts — no strings.
+    // Compile-time check: struct must not have std::string fields.
+    static_assert(!std::is_same_v<decltype(bseal::app::ProgressEvent::phase), std::string>);
+    static_assert(sizeof(bseal::app::ProgressEvent::total_bytes) == sizeof(std::uint64_t));
+
+    // Runtime: fields fired contain no passphrase data (trivially true; event has no string).
+    TempDir input("prg_sec_in"), output("prg_sec_out");
+    create_test_input(input.path());
+
+    bool any_event = false;
+    auto p = make_encrypt_params(input.path(), output.path(), "secretphrase");
+    p.on_progress = [&](const bseal::app::ProgressEvent& /*ev*/) { any_event = true; };
+    bseal::app::core_encrypt(std::move(p));
+
+    EXPECT_TRUE(any_event);
+}
+
+TEST(CoreApiProgress, NoCallbackIsAccepted) {
+    // Verifies on_progress = nullptr (default) does not crash.
+    TempDir input("prg_null_in"), output("prg_null_out");
+    create_test_input(input.path());
+    auto p = make_encrypt_params(input.path(), output.path(), "testpass3");
+    EXPECT_NO_THROW(bseal::app::core_encrypt(std::move(p)));
+}
+
+TEST(CoreApiProgress, EncryptProgressProvidesSizes) {
+    TempDir input("prg_sz_in"), output("prg_sz_out");
+    create_test_input(input.path());
+
+    bool encrypting_has_total = false;
+    auto p = make_encrypt_params(input.path(), output.path(), "testpass4");
+    p.on_progress = [&](const bseal::app::ProgressEvent& ev) {
+        if (ev.phase == bseal::app::ProgressPhase::Encrypting && ev.total_bytes > 0)
+            encrypting_has_total = true;
+    };
+    bseal::app::core_encrypt(std::move(p));
+    EXPECT_TRUE(encrypting_has_total);
+}
+
 } // namespace

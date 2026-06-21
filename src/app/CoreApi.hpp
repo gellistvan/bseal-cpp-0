@@ -18,6 +18,27 @@ namespace bseal::app {
 // nullptr means discard.
 using WarnFn = std::function<void(std::string_view)>;
 
+// Phase-based progress events fired at key boundaries of core_encrypt / core_decrypt.
+// Never contains passphrase, key material, nonces, salts, or archive file paths.
+enum class ProgressPhase {
+    Validating,  // path/keyfile existence checks
+    Kdf,         // Argon2id running — dominant pause for most operations
+    Planning,    // archive plan, padding, shard layout (encrypt only)
+    Encrypting,  // pipeline running (encrypt path)
+    Decrypting,  // pipeline running (decrypt path)
+    Done,        // operation complete (fired before on_progress returns control)
+};
+
+struct ProgressEvent {
+    ProgressPhase phase{ProgressPhase::Validating};
+    std::uint64_t total_bytes{0};   // padded plaintext bytes if known; 0 = indeterminate
+    std::uint32_t total_shards{0};  // shard count if known; 0 = unknown
+};
+
+// Invoked from the worker thread at each phase boundary.
+// Must not throw. nullptr means discard.
+using ProgressFn = std::function<void(const ProgressEvent&)>;
+
 struct CoreEncryptParams {
     std::filesystem::path              input;
     std::filesystem::path              output;
@@ -35,6 +56,7 @@ struct CoreEncryptParams {
     std::ostream*                      stdout_stream{nullptr};
     bool                               allow_large_stdout{false};
     WarnFn                             on_warning{};
+    ProgressFn                         on_progress{};
 };
 
 struct CoreDecryptParams {
@@ -49,6 +71,7 @@ struct CoreDecryptParams {
     bool                               lock_memory{false};
     bool                               require_lock_memory{false};
     WarnFn                             on_warning{};
+    ProgressFn                         on_progress{};
 };
 
 // Encrypt a directory to shards using a pre-obtained passphrase.

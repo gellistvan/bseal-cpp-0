@@ -315,6 +315,12 @@ disabled for the duration and re-enabled on completion.
   bar (success).  Keyfile access errors show only the filename, not the full
   path.  Authentication failures use a generic message that does not reveal
   whether the passphrase or keyfile was wrong.
+- **Progress status**: the status bar shows the current operation phase
+  (Validating → Deriving key → Planning → Encrypting/Decrypting → complete).
+  The "Deriving key" phase is where Argon2id runs and may take several seconds
+  depending on the KDF preset.  Progress status never contains passphrase,
+  key material, filenames from the archive, or any sensitive value — only a
+  phase label.
 
 ### Keyfile behavior
 
