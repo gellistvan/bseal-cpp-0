@@ -8,6 +8,7 @@
 #include "common/SizeParser.hpp"
 #include "gui/GuiErrorPresenter.hpp"
 #include "gui/GuiOptions.hpp"
+#include "gui/GuiPreview.hpp"
 #include "gui/SecurePassphraseField.hpp"
 #include "platform/ProcessMemoryLock.hpp"
 
@@ -24,6 +25,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
@@ -392,6 +394,38 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::onRun);
     vl->addWidget(m_runBtn);
 
+    // --- Preview (lazy, generated on demand, cached in memory) ---
+    {
+        m_previewToggle = new QPushButton(tr("▶ Preview"), central);
+        m_previewToggle->setObjectName("previewToggle");
+        m_previewToggle->setCheckable(true);
+        m_previewToggle->setChecked(false);
+        vl->addWidget(m_previewToggle);
+
+        m_previewPanel = new QWidget(central);
+        m_previewPanel->setObjectName("previewPanel");
+        m_previewPanel->setVisible(false);
+        auto* pl = new QVBoxLayout(m_previewPanel);
+        pl->setContentsMargins(0, 4, 0, 0);
+
+        m_previewText = new QPlainTextEdit(m_previewPanel);
+        m_previewText->setObjectName("previewText");
+        m_previewText->setReadOnly(true);
+        m_previewText->setPlaceholderText(tr("Preview is generated on demand and cached only in memory.\n"
+                                             "No keys are derived and no keyfile contents are read."));
+        m_previewText->setMaximumHeight(200);
+        pl->addWidget(m_previewText);
+        vl->addWidget(m_previewPanel);
+
+        // Expand panel and trigger lazy preview generation on first open.
+        connect(m_previewToggle, &QPushButton::toggled, [this](bool checked) {
+            m_previewPanel->setVisible(checked);
+            m_previewToggle->setText(checked ? tr("▼ Preview") : tr("▶ Preview"));
+            if (checked && m_previewText->toPlainText().isEmpty())
+                onPreview();
+        });
+    }
+
     // Keep button label and confirm-field visibility in sync with mode selection.
     auto update_mode_ui = [this]() {
         const bool enc = m_encryptRadio->isChecked();
@@ -403,6 +437,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_decryptAdvancedSection->setVisible(!enc && m_decryptAdvancedToggle->isChecked());
         if (!enc)
             m_confirmPassphrase->clear();
+        // Clear stale preview text on mode switch; user can click Preview to regenerate.
+        m_previewText->clear();
     };
     connect(m_encryptRadio, &QRadioButton::toggled, this, update_mode_ui);
     connect(m_decryptRadio, &QRadioButton::toggled, this, update_mode_ui);
@@ -645,6 +681,7 @@ void MainWindow::setControlsEnabled(bool enabled) {
     m_kdfParEdit->setEnabled(enabled);
     m_hardenedCombo->setEnabled(enabled);
     m_decryptDurabilityCombo->setEnabled(enabled);
+    m_previewToggle->setEnabled(enabled && !m_previewRunning);
 }
 
 // ---------------------------------------------------------------------------
@@ -830,11 +867,91 @@ void MainWindow::setConfirmationFnForTests(std::function<bool(const QString&, co
     m_confirmFn = std::move(fn);
 }
 
+void MainWindow::setInputScanFnForTests(gui::InputScanFn fn) {
+    m_inputScanFn = std::move(fn);
+}
+
+bool MainWindow::isPreviewRunning() const { return m_previewRunning; }
+
+QString MainWindow::previewText() const {
+    return m_previewText ? m_previewText->toPlainText() : QString{};
+}
+
 bool MainWindow::confirm(const QString& title, const QString& msg) {
     if (m_confirmFn) return m_confirmFn(title, msg);
     return QMessageBox::question(this, title, msg,
                                  QMessageBox::Yes | QMessageBox::No,
                                  QMessageBox::No) == QMessageBox::Yes;
+}
+
+// ---------------------------------------------------------------------------
+// Preview
+// ---------------------------------------------------------------------------
+
+// Public slot — called when the preview toggle is clicked or externally triggered.
+void MainWindow::onPreview() {
+    triggerPreview();
+}
+
+void MainWindow::triggerPreview() {
+    if (m_previewRunning) return;
+
+    const bool encrypt = m_encryptRadio->isChecked();
+
+    gui::PreviewKey key = encrypt ? gui::make_preview_key(collect_encrypt_options())
+                                  : gui::make_preview_key(collect_decrypt_options());
+
+    // Cache hit: show immediately without starting a worker.
+    if (auto cached = m_previewCache.get(key)) {
+        m_previewText->setPlainText(QString::fromStdString(cached->text));
+        emit previewDone(QString::fromStdString(cached->text));
+        return;
+    }
+
+    m_previewRunning      = true;
+    m_pendingPreviewKey   = key;
+    m_previewToggle->setEnabled(false);
+    m_previewText->setPlainText(tr("Generating preview…"));
+
+    QPointer<MainWindow> self(this);
+    auto post_done = [self](QString text, gui::PreviewKey pending_key) {
+        QMetaObject::invokeMethod(
+            qApp,
+            [self, text = std::move(text), pending_key = std::move(pending_key)]() mutable {
+                if (self)
+                    self->onPreviewFinished(std::move(text), std::move(pending_key));
+            },
+            Qt::QueuedConnection);
+    };
+
+    if (encrypt) {
+        auto opts = collect_encrypt_options();
+        auto scan = m_inputScanFn;
+        m_previewWorker = std::jthread(
+            [opts = std::move(opts), scan = std::move(scan),
+             pending_key = key, pd = std::move(post_done)]() mutable {
+                std::optional<std::uint64_t> bytes;
+                if (scan && !opts.input.empty())
+                    bytes = scan(opts.input);
+                auto result = gui::generate_preview(opts, bytes);
+                pd(QString::fromStdString(result.text), std::move(pending_key));
+            });
+    } else {
+        auto opts = collect_decrypt_options();
+        m_previewWorker = std::jthread(
+            [opts = std::move(opts), pending_key = key, pd = std::move(post_done)]() mutable {
+                auto result = gui::generate_preview(opts);
+                pd(QString::fromStdString(result.text), std::move(pending_key));
+            });
+    }
+}
+
+void MainWindow::onPreviewFinished(QString text, gui::PreviewKey key) {
+    m_previewRunning = false;
+    m_previewToggle->setEnabled(!m_operationRunning);
+    m_previewCache.set(key, gui::PreviewResult{text.toStdString(), {}});
+    m_previewText->setPlainText(text);
+    emit previewDone(text);
 }
 
 QString MainWindow::securityNoticeText() const {
