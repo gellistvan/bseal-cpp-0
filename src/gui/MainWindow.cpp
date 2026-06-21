@@ -5,8 +5,8 @@
 #include "gui/MainWindow.hpp"
 
 #include "app/CoreApi.hpp"
-#include "common/Errors.hpp"
 #include "gui/GuiErrorPresenter.hpp"
+#include "gui/GuiOptions.hpp"
 #include "gui/SecurePassphraseField.hpp"
 #include "platform/ProcessMemoryLock.hpp"
 
@@ -28,7 +28,6 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include <filesystem>
 #include <functional>
 #include <thread>
 
@@ -235,11 +234,22 @@ void MainWindow::onClearKeyfiles() {
 }
 
 void MainWindow::onRun() {
-    const QString in  = m_inputPath->text().trimmed();
-    const QString out = m_outputPath->text().trimmed();
+    const bool encrypt = m_encryptRadio->isChecked();
 
-    if (in.isEmpty() || out.isEmpty()) {
-        QMessageBox::warning(this, tr("Missing paths"), tr("Input and output paths are required."));
+    // Collect and validate options before touching secrets.
+    std::vector<std::string> errors;
+    if (encrypt) {
+        errors = gui::validate(collect_encrypt_options());
+    } else {
+        errors = gui::validate(collect_decrypt_options());
+    }
+    if (!errors.empty()) {
+        QString msg;
+        for (const auto& e : errors) {
+            if (!msg.isEmpty()) msg += '\n';
+            msg += QString::fromStdString(e);
+        }
+        QMessageBox::warning(this, tr("Invalid options"), msg);
         return;
     }
 
@@ -259,11 +269,8 @@ void MainWindow::onRun() {
         }
     }
 
-    const bool encrypt = m_encryptRadio->isChecked();
-
     crypto::SecureBuffer passphrase;
     if (encrypt) {
-        // Extract primary passphrase.
         crypto::SecureBuffer pass1;
         try {
             pass1 = m_passphrase->extractPassphrase();
@@ -271,7 +278,6 @@ void MainWindow::onRun() {
             QMessageBox::warning(this, tr("Passphrase error"), QString::fromUtf8(e.what()));
             return;
         }
-        // Extract confirmation passphrase. ~SecureBuffer wipes pass1 on early return.
         crypto::SecureBuffer pass2;
         try {
             pass2 = m_confirmPassphrase->extractPassphrase();
@@ -298,12 +304,6 @@ void MainWindow::onRun() {
         }
     }
 
-    // Build keyfile path list in display order — never reordered or sorted.
-    std::vector<std::filesystem::path> keyfiles;
-    keyfiles.reserve(static_cast<std::size_t>(m_keyfileList->count()));
-    for (int i = 0; i < m_keyfileList->count(); ++i)
-        keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
-
     setControlsEnabled(false);
     m_operationRunning = true;
     // QPointer so the callback is safe even if the window is force-deleted
@@ -329,12 +329,8 @@ void MainWindow::onRun() {
     }
 
     if (encrypt) {
-        app::CoreEncryptParams params;
-        params.input      = in.toStdString();
-        params.output     = out.toStdString();
+        auto params = gui::to_core_params(collect_encrypt_options());
         params.passphrase = std::move(passphrase);
-        params.keyfiles   = std::move(keyfiles);
-        params.kdf_preset = m_kdfPreset;
 
         m_worker = std::jthread([p = std::move(params), pd = std::move(post_done)]() mutable {
             bool    ok  = true;
@@ -348,11 +344,8 @@ void MainWindow::onRun() {
             pd(ok, std::move(msg));
         });
     } else {
-        app::CoreDecryptParams params;
-        params.input      = in.toStdString();
-        params.output     = out.toStdString();
+        auto params = gui::to_core_params(collect_decrypt_options());
         params.passphrase = std::move(passphrase);
-        params.keyfiles   = std::move(keyfiles);
 
         m_worker = std::jthread([p = std::move(params), pd = std::move(post_done)]() mutable {
             bool    ok  = true;
@@ -400,6 +393,35 @@ void MainWindow::setControlsEnabled(bool enabled) {
     m_runBtn->setEnabled(enabled);
     m_lockMemory->setEnabled(enabled);
     m_requireLockMemory->setEnabled(enabled && m_lockMemory->isChecked());
+}
+
+// ---------------------------------------------------------------------------
+// Option collection
+// ---------------------------------------------------------------------------
+
+GuiEncryptOptions MainWindow::collect_encrypt_options() const {
+    GuiEncryptOptions o;
+    o.input = m_inputPath->text().trimmed().toStdString();
+    o.output = m_outputPath->text().trimmed().toStdString();
+    o.keyfiles.reserve(static_cast<std::size_t>(m_keyfileList->count()));
+    for (int i = 0; i < m_keyfileList->count(); ++i)
+        o.keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
+    o.kdf_preset = m_kdfPreset;
+    o.lock_memory = m_lockMemory->isChecked();
+    o.require_lock_memory = m_requireLockMemory->isChecked();
+    return o;
+}
+
+GuiDecryptOptions MainWindow::collect_decrypt_options() const {
+    GuiDecryptOptions o;
+    o.input = m_inputPath->text().trimmed().toStdString();
+    o.output = m_outputPath->text().trimmed().toStdString();
+    o.keyfiles.reserve(static_cast<std::size_t>(m_keyfileList->count()));
+    for (int i = 0; i < m_keyfileList->count(); ++i)
+        o.keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
+    o.lock_memory = m_lockMemory->isChecked();
+    o.require_lock_memory = m_requireLockMemory->isChecked();
+    return o;
 }
 
 // ---------------------------------------------------------------------------

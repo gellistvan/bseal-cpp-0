@@ -846,3 +846,32 @@ randomized .bin shards → AEAD frames → plaintext chunks → archive records 
 ```
 
 The BSEAL-F1 format is frozen. The implementation has meaningful functionality and a complete end-to-end pipeline. The primary remaining work is external cryptographic review, audit of the POSIX-hardened extraction backend, and formal size-leakage analysis for the padding system.
+
+---
+
+## 17. GUI Options Model
+
+The Qt GUI uses a thin options model (`src/gui/GuiOptions.hpp/.cpp`) to decouple widget state from `app::CoreApi` construction.
+
+### 17.1 Structure
+
+Two structs mirror the CoreApi parameter types:
+
+| GUI struct | CoreApi counterpart |
+|---|---|
+| `GuiEncryptOptions` | `CoreEncryptParams` |
+| `GuiDecryptOptions` | `CoreDecryptParams` |
+
+Both share a `GuiCommonOptions` base (input/output paths, keyfile list, memory-lock flags, durability mode). Encrypt-only fields (cipher suite, KDF preset, chunk/shard sizes, padding policy) live in `GuiEncryptOptions`; decrypt-only fields (overwrite, KDF resource policy, hardened-extract mode) live in `GuiDecryptOptions`.
+
+### 17.2 Why passphrases are excluded
+
+The options model contains no passphrase or key material. `GuiEncryptOptions::to_core_params()` returns a `CoreEncryptParams` with an empty passphrase; `MainWindow::onRun` extracts the passphrase from the `SecurePassphraseField` and moves it into the params immediately before starting the worker thread. This keeps the model free of `SecureBuffer` and means validation and option collection can run before any secret is touched.
+
+### 17.3 Validation
+
+`validate(const GuiEncryptOptions&)` and `validate(const GuiDecryptOptions&)` return a `std::vector<std::string>` of user-facing error messages (empty = valid). `MainWindow::onRun` calls validate before the memory-lock check and before extracting the passphrase, so invalid options are caught early and no secret is extracted unnecessarily.
+
+### 17.4 stdout output
+
+`CoreEncryptParams::stdout_stream` is a CLI-only feature (piping a single shard to a shell pipeline). It is absent from `GuiEncryptOptions` and is never set by the GUI; the default `nullptr` selects normal file output.
