@@ -169,9 +169,14 @@ if (BSEAL_ENABLE_QT_GUI)
             src/gui/MainWindow.cpp
             tests/gui/TestGuiCoreIntegration.cpp
         )
+        add_executable(bseal_gui_memlock_gtests
+            src/gui/SecurePassphraseField.cpp
+            src/gui/MainWindow.cpp
+            tests/gui/TestGuiMemoryLock.cpp
+        )
         set(CMAKE_AUTOMOC OFF)
 
-        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests)
+        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests)
             target_link_libraries(${_t} PRIVATE bseal::core Qt6::Widgets)
             target_include_directories(${_t} PRIVATE
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -192,6 +197,11 @@ if (BSEAL_ENABLE_QT_GUI)
         )
         add_test(NAME gui.CoreIntegration COMMAND bseal_gui_integration_gtests)
         set_tests_properties(gui.CoreIntegration PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 120
+        )
+        add_test(NAME gui.MemoryLock COMMAND bseal_gui_memlock_gtests)
+        set_tests_properties(gui.MemoryLock PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 120
         )

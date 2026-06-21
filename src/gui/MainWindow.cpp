@@ -4,20 +4,22 @@
 #include "app/CoreApi.hpp"
 #include "common/Errors.hpp"
 #include "gui/SecurePassphraseField.hpp"
+#include "platform/ProcessMemoryLock.hpp"
 
+#include <QApplication>
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
-#include <QApplication>
 #include <QMetaObject>
-#include <QStatusBar>
 #include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QStatusBar>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -46,11 +48,29 @@ QWidget* path_row(QLineEdit*& out_edit, const QString& label, QWidget* parent,
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("BSEAL");
-    setMinimumSize(660, 520);
+    setMinimumSize(660, 560);
 
     auto* central = new QWidget(this);
     auto* vl      = new QVBoxLayout(central);
     vl->setSpacing(8);
+
+    // --- Security notice ---
+    m_securityNotice = new QLabel(
+        tr("<b>Security notice:</b> GUI mode is more convenient but less secure than "
+           "CLI hardened mode. Qt may copy passphrase text internally. "
+           "Use GUI mode only in a trusted, isolated environment &mdash; "
+           "<b>not</b> on shared, remote-desktop, compromised, or monitored systems. "
+           "For maximum assurance, use CLI mode. "
+           "Memory locking (below) does not protect against root/admin attackers, "
+           "kernel compromise, live hibernation, DMA, screenshots, keyloggers, "
+           "Qt internal copies, or OS-configured crash dumps."),
+        central);
+    m_securityNotice->setObjectName("securityNotice");
+    m_securityNotice->setWordWrap(true);
+    m_securityNotice->setStyleSheet(
+        "color:#7a5500;background:#fffbcc;padding:6px;"
+        "border:1px solid #ccc080;border-radius:3px;");
+    vl->addWidget(m_securityNotice);
 
     // --- Mode ---
     {
@@ -120,6 +140,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     kfWarning->setWordWrap(true);
     vl->addWidget(kfWarning);
 
+    // --- Memory lock ---
+    {
+        auto* row = new QWidget(central);
+        auto* hl  = new QHBoxLayout(row);
+        hl->setContentsMargins(0, 0, 0, 0);
+        m_lockMemory        = new QCheckBox(tr("Try to lock process memory"), row);
+        m_requireLockMemory = new QCheckBox(tr("Require memory lock success"), row);
+        m_requireLockMemory->setEnabled(false);
+        hl->addWidget(m_lockMemory);
+        hl->addWidget(m_requireLockMemory);
+        hl->addStretch();
+        vl->addWidget(row);
+        connect(m_lockMemory, &QCheckBox::toggled, m_requireLockMemory, &QCheckBox::setEnabled);
+    }
+
     // --- Run ---
     m_runBtn = new QPushButton(tr("Encrypt"), central);
     connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::onRun);
@@ -182,6 +217,22 @@ void MainWindow::onRun() {
     if (in.isEmpty() || out.isEmpty()) {
         QMessageBox::warning(this, tr("Missing paths"), tr("Input and output paths are required."));
         return;
+    }
+
+    // Enforce memory lock policy before touching the passphrase.
+    if (m_lockMemory->isChecked()) {
+        const auto result = m_lockFn();
+        if (result != platform::ProcessMemoryLockResult::Success) {
+            const QString reason = QString::fromUtf8(
+                platform::process_memory_lock_result_message(result));
+            if (m_requireLockMemory->isChecked()) {
+                statusBar()->showMessage(
+                    tr("Aborted: memory lock required but failed — %1").arg(reason), 0);
+                return;
+            }
+            statusBar()->showMessage(
+                tr("Warning: memory lock failed — %1. Operation continuing.").arg(reason), 0);
+        }
     }
 
     crypto::SecureBuffer passphrase;
@@ -275,6 +326,8 @@ void MainWindow::setControlsEnabled(bool enabled) {
     m_passphrase->setEnabled(enabled);
     m_keyfileList->setEnabled(enabled);
     m_runBtn->setEnabled(enabled);
+    m_lockMemory->setEnabled(enabled);
+    m_requireLockMemory->setEnabled(enabled && m_lockMemory->isChecked());
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +355,19 @@ QString MainWindow::outputPath()    const { return m_outputPath->text(); }
 
 void MainWindow::setKdfPresetForTests(crypto::KdfPreset preset) {
     m_kdfPreset = preset;
+}
+
+void MainWindow::setMemoryLockForTests(bool lock, bool require) {
+    m_lockMemory->setChecked(lock);       // toggled signal enables m_requireLockMemory
+    m_requireLockMemory->setChecked(require);
+}
+
+void MainWindow::setMemoryLockFnForTests(std::function<platform::ProcessMemoryLockResult()> fn) {
+    m_lockFn = std::move(fn);
+}
+
+QString MainWindow::securityNoticeText() const {
+    return m_securityNotice->text();
 }
 
 } // namespace bseal::gui
