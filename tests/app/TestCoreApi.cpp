@@ -1,0 +1,299 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Integration tests for CoreApi: encrypt/decrypt using the programmatic API.
+// Tests prove that the API produces archives compatible with itself and with
+// the CLI path (which is a thin adapter over the same core_encrypt/core_decrypt).
+
+#include "app/CoreApi.hpp"
+#include "BsealIntegrationConfig.hpp"
+#include "common/Errors.hpp"
+#include "common/Types.hpp"
+#include "crypto/SecureBuffer.hpp"
+
+#include <gtest/gtest.h>
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
+
+#if !defined(_WIN32)
+#    include <sys/wait.h>
+#endif
+
+namespace {
+
+namespace fs = std::filesystem;
+using bseal::Byte;
+using bseal::Bytes;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+class TempDir {
+public:
+    explicit TempDir(std::string prefix) {
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
+        root_ = fs::temp_directory_path() /
+                (prefix + "_" + std::to_string(now) + "_" + std::to_string(tid));
+        fs::create_directories(root_);
+    }
+
+    TempDir(const TempDir&) = delete;
+    TempDir& operator=(const TempDir&) = delete;
+
+    ~TempDir() {
+        std::error_code ec;
+        fs::remove_all(root_, ec);
+    }
+
+    [[nodiscard]] const fs::path& path() const noexcept { return root_; }
+    [[nodiscard]] fs::path sub(std::string_view name) const { return root_ / std::string(name); }
+
+private:
+    fs::path root_;
+};
+
+void write_file(const fs::path& path, std::string_view content) {
+    fs::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    if (!out) throw std::runtime_error("write_file failed: " + path.string());
+    out.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+
+std::string read_file(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("read_file failed: " + path.string());
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+std::map<std::string, std::string> collect_files(const fs::path& root) {
+    std::map<std::string, std::string> out;
+    for (const auto& e : fs::recursive_directory_iterator(root)) {
+        if (e.is_regular_file()) {
+            out[fs::relative(e.path(), root).generic_string()] = read_file(e.path());
+        }
+    }
+    return out;
+}
+
+void create_test_input(const fs::path& root) {
+    write_file(root / "hello.txt",          "hello from CoreApi test\n");
+    write_file(root / "sub" / "data.bin",   std::string(1024, '\xAB'));
+    write_file(root / "sub" / "nested.txt", "nested content\n");
+}
+
+bseal::crypto::SecureBuffer make_passphrase(std::string_view s) {
+    const auto* b = reinterpret_cast<const Byte*>(s.data());
+    return bseal::crypto::SecureBuffer(Bytes(b, b + s.size()));
+}
+
+// Build minimal valid encrypt params (KdfPreset::Fast to keep tests tolerable).
+bseal::app::CoreEncryptParams make_encrypt_params(
+    const fs::path& input,
+    const fs::path& output,
+    std::string_view passphrase,
+    std::vector<fs::path> keyfiles = {})
+{
+    bseal::app::CoreEncryptParams p;
+    p.input      = input;
+    p.output     = output;
+    p.passphrase = make_passphrase(passphrase);
+    p.keyfiles   = std::move(keyfiles);
+    p.kdf_preset = bseal::crypto::KdfPreset::Fast;
+    p.chunk_size = 65536;
+    p.shard_size = 4ull * 1024ull * 1024ull;
+    p.padding    = {bseal::cli::PaddingPolicyKind::None, 0};
+    return p;
+}
+
+bseal::app::CoreDecryptParams make_decrypt_params(
+    const fs::path& input,
+    const fs::path& output,
+    std::string_view passphrase,
+    std::vector<fs::path> keyfiles = {})
+{
+    bseal::app::CoreDecryptParams p;
+    p.input    = input;
+    p.output   = output;
+    p.passphrase = make_passphrase(passphrase);
+    p.keyfiles   = std::move(keyfiles);
+    // Policy must allow Fast preset (256 MiB / 3 iterations).
+    p.kdf_policy.max_memory_kib  = 2u * 1024u * 1024u;
+    p.kdf_policy.max_iterations  = 4u;
+    p.kdf_policy.max_parallelism = 8u;
+    return p;
+}
+
+// ---------------------------------------------------------------------------
+// CLI subprocess helper (cross-path tests)
+// ---------------------------------------------------------------------------
+
+#if !defined(_WIN32)
+
+std::string shell_quote(std::string_view s) {
+    std::string out = "'";
+    for (const char c : s) {
+        if (c == '\'') out += "'\\''";
+        else           out += c;
+    }
+    return out + "'";
+}
+
+int run_bseal_cli(const fs::path& scratch,
+                  const std::vector<std::string>& args,
+                  std::string_view stdin_text = "")
+{
+    fs::create_directories(scratch);
+    const auto stdin_file = scratch / "stdin.txt";
+    write_file(stdin_file, stdin_text);
+
+    std::string cmd = shell_quote(BSEAL_BINARY_PATH);
+    for (const auto& a : args) {
+        cmd += ' ';
+        cmd += shell_quote(a);
+    }
+    cmd += " < " + shell_quote(stdin_file.string());
+    cmd += " > /dev/null 2> /dev/null";
+
+    const int raw = std::system(cmd.c_str());
+    if (WIFEXITED(raw)) return WEXITSTATUS(raw);
+    return -1;
+}
+
+#endif // !_WIN32
+
+// ---------------------------------------------------------------------------
+// Test cases
+// ---------------------------------------------------------------------------
+
+// 1 + 3: API→API roundtrip, passphrase only
+TEST(CoreApi, RoundtripPassphraseOnly) {
+    TempDir td("coreapi_pp_only");
+    const auto input   = td.sub("input");
+    const auto sealed  = td.sub("sealed");
+    const auto output  = td.sub("output");
+
+    create_test_input(input);
+    const auto original = collect_files(input);
+
+    bseal::app::core_encrypt(make_encrypt_params(input, sealed, "correct-horse-battery-staple"));
+    bseal::app::core_decrypt(make_decrypt_params(sealed, output, "correct-horse-battery-staple"));
+
+    EXPECT_EQ(collect_files(output), original);
+}
+
+// 2 + 4: API→API roundtrip, passphrase + keyfile
+TEST(CoreApi, RoundtripWithKeyfile) {
+    TempDir td("coreapi_keyfile");
+    const auto input    = td.sub("input");
+    const auto sealed   = td.sub("sealed");
+    const auto output   = td.sub("output");
+    const auto keyfile  = td.sub("keys") / "key1.bin";
+
+    write_file(keyfile, std::string(32, '\x42'));  // 32-byte keyfile
+    create_test_input(input);
+    const auto original = collect_files(input);
+
+    bseal::app::core_encrypt(make_encrypt_params(input, sealed, "passphrase", {keyfile}));
+    bseal::app::core_decrypt(make_decrypt_params(sealed, output, "passphrase", {keyfile}));
+
+    EXPECT_EQ(collect_files(output), original);
+}
+
+// 5: wrong passphrase → AuthenticationFailed
+TEST(CoreApi, WrongPassphraseFails) {
+    TempDir td("coreapi_wrong_pp");
+    const auto input  = td.sub("input");
+    const auto sealed = td.sub("sealed");
+    const auto output = td.sub("output");
+
+    create_test_input(input);
+    bseal::app::core_encrypt(make_encrypt_params(input, sealed, "correct-passphrase"));
+
+    EXPECT_THROW(
+        bseal::app::core_decrypt(make_decrypt_params(sealed, output, "wrong-passphrase")),
+        bseal::AuthenticationFailed);
+}
+
+// 6: changed keyfile → AuthenticationFailed
+TEST(CoreApi, ChangedKeyfileFails) {
+    TempDir td("coreapi_changed_kf");
+    const auto input        = td.sub("input");
+    const auto sealed       = td.sub("sealed");
+    const auto output       = td.sub("output");
+    const auto keyfile_good = td.sub("keys") / "good.bin";
+    const auto keyfile_bad  = td.sub("keys") / "bad.bin";
+
+    write_file(keyfile_good, std::string(32, '\x11'));
+    write_file(keyfile_bad,  std::string(32, '\xFF'));
+    create_test_input(input);
+
+    bseal::app::core_encrypt(make_encrypt_params(input, sealed, "passphrase", {keyfile_good}));
+
+    EXPECT_THROW(
+        bseal::app::core_decrypt(make_decrypt_params(sealed, output, "passphrase", {keyfile_bad})),
+        bseal::AuthenticationFailed);
+}
+
+// Cross-path: API encrypt → CLI decrypt
+#if !defined(_WIN32)
+TEST(CoreApi, ApiEncryptCliDecrypt) {
+    TempDir td("coreapi_api_enc_cli_dec");
+    const auto input  = td.sub("input");
+    const auto sealed = td.sub("sealed");
+    const auto output = td.sub("output");
+
+    create_test_input(input);
+    const auto original = collect_files(input);
+
+    bseal::app::core_encrypt(make_encrypt_params(input, sealed, "xpathtest"));
+
+    const int rc = run_bseal_cli(td.sub("cli_scratch"),
+        {"decrypt",
+         "--input",  sealed.string(),
+         "--output", output.string()},
+        "xpathtest\n");
+
+    EXPECT_EQ(rc, 0);
+    EXPECT_EQ(collect_files(output), original);
+}
+
+// Cross-path: CLI encrypt → API decrypt
+TEST(CoreApi, CliEncryptApiDecrypt) {
+    TempDir td("coreapi_cli_enc_api_dec");
+    const auto input  = td.sub("input");
+    const auto sealed = td.sub("sealed");
+    const auto output = td.sub("output");
+
+    create_test_input(input);
+    const auto original = collect_files(input);
+    fs::create_directories(sealed);
+
+    const int rc = run_bseal_cli(td.sub("cli_scratch"),
+        {"encrypt",
+         "--input",      input.string(),
+         "--output",     sealed.string(),
+         "--kdf",        "fast",
+         "--chunk-size", "64K",
+         "--padding",    "none"},
+        "xpathtest\n");
+
+    ASSERT_EQ(rc, 0);
+
+    bseal::app::core_decrypt(make_decrypt_params(sealed, output, "xpathtest"));
+    EXPECT_EQ(collect_files(output), original);
+}
+#endif // !_WIN32
+
+} // namespace

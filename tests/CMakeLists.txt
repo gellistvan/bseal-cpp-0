@@ -208,6 +208,33 @@ inline constexpr const char* BSEAL_BINARY_PATH = R\"bseal_path($<TARGET_FILE:bse
 "
 )
 
+add_executable(bseal_app_gtests
+        app/TestCoreApi.cpp
+)
+
+add_dependencies(bseal_app_gtests bseal)
+
+target_include_directories(bseal_app_gtests
+        PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/integration/$<CONFIG>"
+)
+
+target_link_libraries(bseal_app_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
+target_compile_features(bseal_app_gtests PRIVATE cxx_std_20)
+bseal_set_project_warnings(bseal_app_gtests)
+bseal_enable_sanitizers_if_requested(bseal_app_gtests)
+bseal_enable_coverage_if_requested(bseal_app_gtests)
+
+if (GTest_FOUND)
+    include(GoogleTest)
+    gtest_discover_tests(bseal_app_gtests
+            TEST_PREFIX app.
+            DISCOVERY_TIMEOUT 120
+    )
+else()
+    add_test(NAME bseal_app_gtests COMMAND bseal_app_gtests)
+endif()
+
 add_executable(bseal_integration_gtests
         integration/TestBlackBoxCli.cpp
         integration/TestCliRegression.cpp
