@@ -2,6 +2,7 @@ build/
 .claude
 .cache
 build-tsan/
+build-gui/
 build-fuzz/
 build-debug/
 build-coverage/
