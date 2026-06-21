@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/bseal.dir/src/main.cpp.o -o bseal  libbseal_core.a /usr/lib/x86_64-linux-gnu/libsodium.so /usr/lib/x86_64-linux-gnu/libcrypto.so libblake3_static.a libargon2_static.a 
