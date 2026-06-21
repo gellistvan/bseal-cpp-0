@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui/MainWindow.hpp"
 
+#include "app/CoreApi.hpp"
+#include "common/Errors.hpp"
 #include "gui/SecurePassphraseField.hpp"
 
 #include <QButtonGroup>
@@ -10,12 +12,17 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QApplication>
+#include <QMetaObject>
+#include <QStatusBar>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include <filesystem>
+#include <thread>
 
 namespace bseal::gui {
 
@@ -61,6 +68,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         hl->addStretch();
         vl->addWidget(row);
     }
+
 
     // --- Input / Output paths ---
     vl->addWidget(path_row(m_inputPath,  tr("Input: "),  central, this, SLOT(onBrowseInput())));
@@ -113,9 +121,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     vl->addWidget(kfWarning);
 
     // --- Run ---
-    auto* runBtn = new QPushButton(tr("Run"), central);
-    connect(runBtn, &QPushButton::clicked, this, &MainWindow::onRun);
-    vl->addWidget(runBtn);
+    m_runBtn = new QPushButton(tr("Encrypt"), central);
+    connect(m_runBtn, &QPushButton::clicked, this, &MainWindow::onRun);
+    vl->addWidget(m_runBtn);
+
+    // Keep button label in sync with mode selection.
+    auto update_btn_label = [this]() {
+        m_runBtn->setText(m_encryptRadio->isChecked() ? tr("Encrypt") : tr("Decrypt"));
+    };
+    connect(m_encryptRadio, &QRadioButton::toggled, this, update_btn_label);
+    connect(m_decryptRadio, &QRadioButton::toggled, this, update_btn_label);
+
+    connect(this, &MainWindow::operationDone, this, &MainWindow::onOperationFinished);
 
     setCentralWidget(central);
 }
@@ -170,6 +187,7 @@ void MainWindow::onRun() {
     crypto::SecureBuffer passphrase;
     try {
         passphrase = m_passphrase->extractPassphrase();
+        // extractPassphrase() clears the field; passphrase is now in SecureBuffer only.
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Passphrase error"), QString::fromUtf8(e.what()));
         return;
@@ -181,10 +199,82 @@ void MainWindow::onRun() {
     for (int i = 0; i < m_keyfileList->count(); ++i)
         keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
 
-    // TODO: wire up core_encrypt / core_decrypt with progress feedback.
-    QMessageBox::information(this, tr("Not yet implemented"),
-        tr("Core integration is not yet wired. "
-           "Use the bseal CLI for encryption and decryption."));
+    setControlsEnabled(false);
+
+    const bool encrypt = m_encryptRadio->isChecked();
+    // QPointer so the callback can check if the window is still alive.
+    QPointer<MainWindow> self(this);
+
+    if (encrypt) {
+        app::CoreEncryptParams params;
+        params.input      = in.toStdString();
+        params.output     = out.toStdString();
+        params.passphrase = std::move(passphrase);
+        params.keyfiles   = std::move(keyfiles);
+        params.kdf_preset = m_kdfPreset;
+
+        std::thread([p = std::move(params), self]() mutable {
+            bool    ok  = true;
+            QString msg = tr("Encrypted successfully.");
+            try {
+                app::core_encrypt(std::move(p));
+            } catch (const AuthenticationFailed&) {
+                ok  = false;
+                msg = tr("Authentication failed. Wrong passphrase or keyfile?");
+            } catch (const std::exception& e) {
+                ok  = false;
+                msg = tr("Encryption failed: %1").arg(QString::fromUtf8(e.what()));
+            }
+            QMetaObject::invokeMethod(qApp, [self, ok, msg]() {
+                if (self)
+                    emit self->operationDone(ok, msg);
+            }, Qt::QueuedConnection);
+        }).detach();
+    } else {
+        app::CoreDecryptParams params;
+        params.input      = in.toStdString();
+        params.output     = out.toStdString();
+        params.passphrase = std::move(passphrase);
+        params.keyfiles   = std::move(keyfiles);
+
+        std::thread([p = std::move(params), self]() mutable {
+            bool    ok  = true;
+            QString msg = tr("Decrypted successfully.");
+            try {
+                app::core_decrypt(std::move(p));
+            } catch (const AuthenticationFailed&) {
+                ok  = false;
+                msg = tr("Authentication failed. Wrong passphrase or keyfile?");
+            } catch (const std::exception& e) {
+                ok  = false;
+                msg = tr("Decryption failed: %1").arg(QString::fromUtf8(e.what()));
+            }
+            QMetaObject::invokeMethod(qApp, [self, ok, msg]() {
+                if (self)
+                    emit self->operationDone(ok, msg);
+            }, Qt::QueuedConnection);
+        }).detach();
+    }
+}
+
+void MainWindow::onOperationFinished(bool ok, const QString& msg) {
+    setControlsEnabled(true);
+    if (ok) {
+        // Non-blocking: status bar message so headless tests don't stall on exec().
+        statusBar()->showMessage(msg, 10000);
+    } else {
+        QMessageBox::critical(this, tr("Error"), msg);
+    }
+}
+
+void MainWindow::setControlsEnabled(bool enabled) {
+    m_encryptRadio->setEnabled(enabled);
+    m_decryptRadio->setEnabled(enabled);
+    m_inputPath->setEnabled(enabled);
+    m_outputPath->setEnabled(enabled);
+    m_passphrase->setEnabled(enabled);
+    m_keyfileList->setEnabled(enabled);
+    m_runBtn->setEnabled(enabled);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +299,10 @@ void MainWindow::addKeyfilePath(const QString& path) {
 bool   MainWindow::isEncryptMode() const { return m_encryptRadio->isChecked(); }
 QString MainWindow::inputPath()     const { return m_inputPath->text(); }
 QString MainWindow::outputPath()    const { return m_outputPath->text(); }
+
+void MainWindow::setKdfPresetForTests(crypto::KdfPreset preset) {
+    m_kdfPreset = preset;
+}
 
 } // namespace bseal::gui
 
