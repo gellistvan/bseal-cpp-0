@@ -92,7 +92,7 @@ void test_cache_invalidated_on_key_change() {
     bseal::gui::GuiPreviewCache cache;
     bseal::gui::PreviewKey key;
     key.input = "/path/a";
-    cache.set(key, {"text", {}});
+    cache.set(key, {"text", "", {}});
 
     bseal::gui::PreviewKey key2;
     key2.input = "/path/b"; // different input
@@ -103,7 +103,7 @@ void test_cache_clear_removes_entry() {
     bseal::gui::GuiPreviewCache cache;
     bseal::gui::PreviewKey key;
     key.input = "/in";
-    cache.set(key, {"text", {}});
+    cache.set(key, {"text", "", {}});
     ASSERT_TRUE(cache.get(key).has_value());
     cache.clear();
     ASSERT_TRUE(!cache.get(key).has_value());
@@ -114,7 +114,7 @@ void test_cache_chunk_size_change_invalidates() {
     bseal::gui::PreviewKey key;
     key.encrypt_mode = true;
     key.chunk_size   = 16 * 1024 * 1024;
-    cache.set(key, {"text", {}});
+    cache.set(key, {"text", "", {}});
 
     bseal::gui::PreviewKey key2 = key;
     key2.chunk_size = 32 * 1024 * 1024; // different
@@ -126,7 +126,7 @@ void test_cache_padding_change_invalidates() {
     bseal::gui::PreviewKey key;
     key.encrypt_mode  = true;
     key.padding.kind  = bseal::cli::PaddingPolicyKind::Power2;
-    cache.set(key, {"text", {}});
+    cache.set(key, {"text", "", {}});
 
     bseal::gui::PreviewKey key2 = key;
     key2.padding.kind = bseal::cli::PaddingPolicyKind::None; // different
@@ -141,7 +141,7 @@ void test_cache_same_key_hits() {
 
     const auto key1 = bseal::gui::make_preview_key(opts);
     const auto key2 = bseal::gui::make_preview_key(opts); // identical opts
-    cache.set(key1, {"text", {}});
+    cache.set(key1, {"text", "", {}});
     ASSERT_TRUE(cache.get(key2).has_value()); // same key → cache hit
 }
 
@@ -326,6 +326,131 @@ void test_scan_nonexistent_path_returns_nullopt() {
     ASSERT_TRUE(!bseal::gui::scan_input_bytes("/this/does/not/exist/bseal_test").has_value());
 }
 
+// ---------------------------------------------------------------------------
+// generate_cmd_summary: secret exclusion
+// ---------------------------------------------------------------------------
+
+void test_cmd_summary_encrypt_no_passphrase() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input  = "/in"; opts.output = "/out";
+    const auto s = bseal::gui::generate_cmd_summary(opts);
+    // passphrase must never appear as a value, only as the flag comment
+    ASSERT_NOT_CONTAINS(s, "mysecret");
+    ASSERT_NOT_CONTAINS(s, "passphrase=");
+    // the flag itself is present but as a flag, not a value
+    ASSERT_CONTAINS(s, "--passphrase-prompt");
+}
+
+void test_cmd_summary_decrypt_no_passphrase() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/in"; opts.output = "/out";
+    const auto s = bseal::gui::generate_cmd_summary(opts);
+    ASSERT_NOT_CONTAINS(s, "mysecret");
+    ASSERT_CONTAINS(s, "--passphrase-prompt");
+}
+
+void test_cmd_summary_encrypt_keyfile_basename_only() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input   = "/in"; opts.output = "/out";
+    opts.keyfiles = {"/home/user/private/vault.key"};
+    const auto s = bseal::gui::generate_cmd_summary(opts);
+    ASSERT_CONTAINS(s, "vault.key");
+    ASSERT_NOT_CONTAINS(s, "/home/user/private");
+}
+
+void test_cmd_summary_decrypt_keyfile_basename_only() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input   = "/in"; opts.output = "/out";
+    opts.keyfiles = {"/run/secrets/prod.key"};
+    const auto s = bseal::gui::generate_cmd_summary(opts);
+    ASSERT_CONTAINS(s, "prod.key");
+    ASSERT_NOT_CONTAINS(s, "/run/secrets");
+}
+
+// ---------------------------------------------------------------------------
+// generate_cmd_summary: non-secret option inclusion
+// ---------------------------------------------------------------------------
+
+void test_cmd_summary_encrypt_includes_suite() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.suite = bseal::crypto::CipherSuite::Aes256Gcm;
+    ASSERT_CONTAINS(bseal::gui::generate_cmd_summary(opts), "aes-256-gcm");
+
+    opts.suite = bseal::crypto::CipherSuite::XChaCha20Poly1305;
+    ASSERT_CONTAINS(bseal::gui::generate_cmd_summary(opts), "xchacha20-poly1305");
+}
+
+void test_cmd_summary_encrypt_includes_kdf_preset() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.kdf_preset = bseal::crypto::KdfPreset::Paranoid;
+    ASSERT_CONTAINS(bseal::gui::generate_cmd_summary(opts), "paranoid");
+}
+
+void test_cmd_summary_encrypt_includes_chunk_shard_sizes() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input      = "/i"; opts.output = "/o";
+    opts.chunk_size = 8388608u;
+    opts.shard_size = 2147483648u;
+    const auto s = bseal::gui::generate_cmd_summary(opts);
+    ASSERT_CONTAINS(s, "8388608");
+    ASSERT_CONTAINS(s, "2147483648");
+}
+
+void test_cmd_summary_encrypt_includes_padding() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.padding.kind = bseal::cli::PaddingPolicyKind::None;
+    ASSERT_CONTAINS(bseal::gui::generate_cmd_summary(opts), "--padding none");
+
+    opts.padding.kind = bseal::cli::PaddingPolicyKind::FixedSize;
+    opts.padding.fixed_size_bytes = 1024;
+    ASSERT_CONTAINS(bseal::gui::generate_cmd_summary(opts), "fixed-size=1024");
+}
+
+void test_cmd_summary_decrypt_includes_overwrite() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.overwrite = false;
+    ASSERT_NOT_CONTAINS(bseal::gui::generate_cmd_summary(opts), "--overwrite");
+
+    opts.overwrite = true;
+    ASSERT_CONTAINS(bseal::gui::generate_cmd_summary(opts), "--overwrite");
+}
+
+void test_cmd_summary_decrypt_includes_hardened_extract() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Off;
+    ASSERT_CONTAINS(bseal::gui::generate_cmd_summary(opts), "--hardened-extract off");
+}
+
+void test_cmd_summary_includes_header_comment() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    const auto s = bseal::gui::generate_cmd_summary(opts);
+    ASSERT_CONTAINS(s, "Equivalent options summary");
+    ASSERT_CONTAINS(s, "not a runnable command");
+}
+
+// generate_preview fills cmd_summary field
+void test_preview_result_has_cmd_summary_encrypt() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    const auto result = bseal::gui::generate_preview(opts);
+    ASSERT_FALSE(result.cmd_summary.empty());
+    ASSERT_CONTAINS(result.cmd_summary, "bseal encrypt");
+}
+
+void test_preview_result_has_cmd_summary_decrypt() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    const auto result = bseal::gui::generate_preview(opts);
+    ASSERT_FALSE(result.cmd_summary.empty());
+    ASSERT_CONTAINS(result.cmd_summary, "bseal decrypt");
+}
+
 } // namespace
 
 int main() {
@@ -353,6 +478,19 @@ int main() {
     run_test("PreviewDecryptSafeDefaultsNoWarning", test_preview_decrypt_safe_defaults_no_warnings);
     run_test("ScanEmptyPathNullopt",                test_scan_empty_path_returns_nullopt);
     run_test("ScanNonexistentNullopt",              test_scan_nonexistent_path_returns_nullopt);
+    run_test("CmdSummaryEncryptNoPassphrase",       test_cmd_summary_encrypt_no_passphrase);
+    run_test("CmdSummaryDecryptNoPassphrase",       test_cmd_summary_decrypt_no_passphrase);
+    run_test("CmdSummaryEncryptKeyfileBasename",    test_cmd_summary_encrypt_keyfile_basename_only);
+    run_test("CmdSummaryDecryptKeyfileBasename",    test_cmd_summary_decrypt_keyfile_basename_only);
+    run_test("CmdSummaryEncryptSuite",              test_cmd_summary_encrypt_includes_suite);
+    run_test("CmdSummaryEncryptKdfPreset",          test_cmd_summary_encrypt_includes_kdf_preset);
+    run_test("CmdSummaryEncryptChunkShardSizes",    test_cmd_summary_encrypt_includes_chunk_shard_sizes);
+    run_test("CmdSummaryEncryptPadding",            test_cmd_summary_encrypt_includes_padding);
+    run_test("CmdSummaryDecryptOverwrite",          test_cmd_summary_decrypt_includes_overwrite);
+    run_test("CmdSummaryDecryptHardenedExtract",    test_cmd_summary_decrypt_includes_hardened_extract);
+    run_test("CmdSummaryHeaderComment",             test_cmd_summary_includes_header_comment);
+    run_test("PreviewResultHasCmdSummaryEncrypt",   test_preview_result_has_cmd_summary_encrypt);
+    run_test("PreviewResultHasCmdSummaryDecrypt",   test_preview_result_has_cmd_summary_decrypt);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;
