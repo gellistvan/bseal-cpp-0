@@ -294,6 +294,7 @@ if (Python3_FOUND)
     set(BSEAL_CHECKLIST_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_release_checklist.py")
     set(BSEAL_DOCS_LANGUAGE_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_docs_language.py")
     set(BSEAL_GUI_DOCS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_gui_docs.py")
+    set(BSEAL_GUI_PERSISTENCE_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/scan_gui_persistence.py")
     set(BSEAL_LICENSE_HEADERS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_license_headers.py")
     set(BSEAL_SUBMODULE_PINS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_submodule_pins.py")
 
@@ -373,6 +374,16 @@ if (Python3_FOUND)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     set_tests_properties(scan.GuiDocumented PROPERTIES
+        LABELS "scan"
+    )
+
+    add_test(
+        NAME scan.GuiNoPersistence
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_GUI_PERSISTENCE_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.GuiNoPersistence PROPERTIES
         LABELS "scan"
     )
 else()

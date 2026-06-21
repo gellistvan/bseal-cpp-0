@@ -1,0 +1,154 @@
+Start testing: Jun 21 10:53 CEST
+----------------------------------------------------------
+1/644 Testing: gui.SmokeRun
+1/644 Test: gui.SmokeRun
+Command: "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/bseal-gui" "--selftest"
+Directory: /home/igellai/projects/bseal-cpp-skeleton/build-gui-test
+"gui.SmokeRun" start time: Jun 21 10:53 CEST
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"gui.SmokeRun" end time: Jun 21 10:53 CEST
+"gui.SmokeRun" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/644 Testing: gui.SecurePassphraseField
+2/644 Test: gui.SecurePassphraseField
+Command: "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/bseal_gui_gtests"
+Directory: /home/igellai/projects/bseal-cpp-skeleton/build-gui-test
+"gui.SecurePassphraseField" start time: Jun 21 10:53 CEST
+Output:
+----------------------------------------------------------
+[  PASSED  ] ExtractCorrectBytes
+[  PASSED  ] FieldClearedAfterExtract
+[  PASSED  ] EmptyPassphraseRejected
+[  PASSED  ] OversizedPassphraseRejected
+[  PASSED  ] NoQSettingsWritten
+5 passed, 0 failed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"gui.SecurePassphraseField" end time: Jun 21 10:53 CEST
+"gui.SecurePassphraseField" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/644 Testing: gui.MainWindowKeyfiles
+3/644 Test: gui.MainWindowKeyfiles
+Command: "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/bseal_gui_keyfile_gtests"
+Directory: /home/igellai/projects/bseal-cpp-skeleton/build-gui-test
+"gui.MainWindowKeyfiles" start time: Jun 21 10:53 CEST
+Output:
+----------------------------------------------------------
+[  PASSED  ] KeyfileOrderPreserved
+[  PASSED  ] RemoveKeyfilePreservesOrder
+[  PASSED  ] ClearKeyfiles
+[  PASSED  ] NoQSettingsWritten
+[  PASSED  ] PathsMatchCoreOrder
+5 passed, 0 failed
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"gui.MainWindowKeyfiles" end time: Jun 21 10:53 CEST
+"gui.MainWindowKeyfiles" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/644 Testing: gui.CoreIntegration
+4/644 Test: gui.CoreIntegration
+Command: "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/bseal_gui_integration_gtests"
+Directory: /home/igellai/projects/bseal-cpp-skeleton/build-gui-test
+"gui.CoreIntegration" start time: Jun 21 10:53 CEST
+Output:
+----------------------------------------------------------
+[  PASSED  ] GuiEncryptCoreDecryptRoundtrip
+[  PASSED  ] CoreEncryptGuiDecryptRoundtrip
+[  PASSED  ] PassphraseOnlyRoundtrip
+[  PASSED  ] PassphrasePlusKeyfileRoundtrip
+[  PASSED  ] WrongPassphraseFails
+[  PASSED  ] WrongKeyfileFails
+[  PASSED  ] PassphraseFieldClearedAfterStart
+[  PASSED  ] NoSensitiveStateAfterOperation
+8 passed, 0 failed
+<end of output>
+Test time =   3.20 sec
+----------------------------------------------------------
+Test Passed.
+"gui.CoreIntegration" end time: Jun 21 10:53 CEST
+"gui.CoreIntegration" time elapsed: 00:00:03
+----------------------------------------------------------
+
+5/644 Testing: gui.MemoryLock
+5/644 Test: gui.MemoryLock
+Command: "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/bseal_gui_memlock_gtests"
+Directory: /home/igellai/projects/bseal-cpp-skeleton/build-gui-test
+"gui.MemoryLock" start time: Jun 21 10:53 CEST
+Output:
+----------------------------------------------------------
+[  PASSED  ] LockDisabledFnNotCalled
+[  PASSED  ] LockEnabledSuccessProceeds
+[  PASSED  ] LockFailedWarnOnlyProceeds
+[  PASSED  ] LockFailedRequireAborts
+[  PASSED  ] SecurityNoticeText
+5 passed, 0 failed
+<end of output>
+Test time =   1.01 sec
+----------------------------------------------------------
+Test Passed.
+"gui.MemoryLock" end time: Jun 21 10:53 CEST
+"gui.MemoryLock" time elapsed: 00:00:01
+----------------------------------------------------------
+
+6/644 Testing: gui.ErrorPresenter
+6/644 Test: gui.ErrorPresenter
+Command: "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/bseal_gui_error_presenter_gtests"
+Directory: /home/igellai/projects/bseal-cpp-skeleton/build-gui-test
+"gui.ErrorPresenter" start time: Jun 21 10:53 CEST
+Output:
+----------------------------------------------------------
+[  PASSED  ] WrongPassphraseGenericMessage
+[  PASSED  ] WrongKeyfileGenericMessage
+[  PASSED  ] MissingInputShowsPath
+[  PASSED  ] MissingKeyfileShowsBasenameOnly
+[  PASSED  ] OutputNotWritableGenericMessage
+[  PASSED  ] MemoryLockAbortExcludesPassphrase
+6 passed, 0 failed
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"gui.ErrorPresenter" end time: Jun 21 10:53 CEST
+"gui.ErrorPresenter" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/644 Testing: gui.NonPersistence
+7/644 Test: gui.NonPersistence
+Command: "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/bseal_gui_nonpersistence_gtests"
+Directory: /home/igellai/projects/bseal-cpp-skeleton/build-gui-test
+"gui.NonPersistence" start time: Jun 21 10:53 CEST
+Output:
+----------------------------------------------------------
+[  PASSED  ] FreshWindowPassphraseEmpty
+[  PASSED  ] FreshWindowKeyfilesEmpty
+[  PASSED  ] FreshWindowPathsEmpty
+[  PASSED  ] DestroyAndRecreateWindowIsClean
+[  PASSED  ] NoQSettingsOnWindowLifecycle
+[  PASSED  ] NoQSettingsAfterAddingKeyfiles
+[  PASSED  ] NoQSettingsAfterPassphraseExtract
+[  PASSED  ] NoPassphraseKeyInQSettings
+[  PASSED  ] NoPassphraseValueInQSettings
+[  PASSED  ] NoKeyfileValueInQSettings
+[  PASSED  ] QSettingsWhitelistExactlyEmpty
+11 passed, 0 failed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"gui.NonPersistence" end time: Jun 21 10:53 CEST
+"gui.NonPersistence" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jun 21 10:53 CEST

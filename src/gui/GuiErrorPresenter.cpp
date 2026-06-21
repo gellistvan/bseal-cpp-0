@@ -34,7 +34,12 @@ SanitizedGuiError sanitize_for_gui(std::exception_ptr ep, const QString& verb) {
         };
 
     } catch (const bseal::InvalidArgument& e) {
-        // These messages describe path / config problems (not secrets).
+        // InvalidArgument messages are safe to surface: every throw site uses only
+        // user-supplied paths (which the user already knows) or static strings.
+        // Archive-internal paths pass through PathSanitizer before reaching any
+        // throw site, so attacker-controlled strings cannot appear here.
+        // See CoreApi.cpp::require_path_exists / require_directory and
+        // SafeOutputTree.cpp constructor for the complete set of throw sites.
         return {GuiErrorCategory::PathValidation, QString::fromUtf8(e.what())};
 
     } catch (const std::filesystem::filesystem_error&) {
