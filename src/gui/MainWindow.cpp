@@ -28,6 +28,7 @@
 #include <QWidget>
 
 #include <filesystem>
+#include <functional>
 #include <thread>
 
 namespace bseal::gui {
@@ -35,7 +36,7 @@ namespace bseal::gui {
 namespace {
 
 QWidget* path_row(QLineEdit*& out_edit, const QString& label, QWidget* parent,
-                  QObject* receiver, const char* slot) {
+                  std::function<void()> on_browse) {
     auto* w  = new QWidget(parent);
     auto* hl = new QHBoxLayout(w);
     hl->setContentsMargins(0, 0, 0, 0);
@@ -43,7 +44,7 @@ QWidget* path_row(QLineEdit*& out_edit, const QString& label, QWidget* parent,
     out_edit = new QLineEdit(w);
     hl->addWidget(out_edit, 1);
     auto* btn = new QPushButton(QObject::tr("Browse…"), w);
-    QObject::connect(btn, SIGNAL(clicked()), receiver, slot);
+    QObject::connect(btn, &QPushButton::clicked, std::move(on_browse));
     hl->addWidget(btn);
     return w;
 }
@@ -95,8 +96,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
 
     // --- Input / Output paths ---
-    vl->addWidget(path_row(m_inputPath,  tr("Input: "),  central, this, SLOT(onBrowseInput())));
-    vl->addWidget(path_row(m_outputPath, tr("Output:"), central, this, SLOT(onBrowseOutput())));
+    vl->addWidget(path_row(m_inputPath,  tr("Input: "),  central, [this]{ onBrowseInput(); }));
+    vl->addWidget(path_row(m_outputPath, tr("Output:"), central, [this]{ onBrowseOutput(); }));
 
     // --- Passphrase ---
     {

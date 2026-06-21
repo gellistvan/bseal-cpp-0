@@ -1,0 +1,2 @@
+/usr/bin/ar qc libargon2_static.a CMakeFiles/argon2_static.dir/submodules/argon2/src/argon2.c.o CMakeFiles/argon2_static.dir/submodules/argon2/src/core.c.o CMakeFiles/argon2_static.dir/submodules/argon2/src/encoding.c.o CMakeFiles/argon2_static.dir/submodules/argon2/src/thread.c.o CMakeFiles/argon2_static.dir/submodules/argon2/src/blake2/blake2b.c.o CMakeFiles/argon2_static.dir/submodules/argon2/src/opt.c.o
+/usr/bin/ranlib libargon2_static.a

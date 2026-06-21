@@ -122,16 +122,14 @@ option(BSEAL_ENABLE_QT_GUI "Build the bseal-gui Qt Widgets application" OFF)
 if (BSEAL_ENABLE_QT_GUI)
     find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-    # Qt 6.4 does not auto-enable AUTOMOC on qt_add_executable; set it explicitly
-    # before target creation so CMake wires up the autogen step.
-    set(CMAKE_AUTOMOC ON)
     qt_add_executable(bseal-gui
         src/gui/main.cpp
         src/gui/GuiErrorPresenter.cpp
         src/gui/MainWindow.cpp
         src/gui/SecurePassphraseField.cpp
     )
-    set(CMAKE_AUTOMOC OFF)  # don't propagate to fuzz targets below
+    # Qt 6.4 does not auto-enable AUTOMOC on qt_add_executable; set per-target.
+    set_target_properties(bseal-gui PROPERTIES AUTOMOC ON)
 
     target_link_libraries(bseal-gui PRIVATE
         bseal::core
@@ -155,9 +153,9 @@ if (BSEAL_ENABLE_QT_GUI)
             TIMEOUT 10
         )
 
-        set(CMAKE_AUTOMOC ON)
         add_executable(bseal_gui_gtests
             src/gui/SecurePassphraseField.cpp
+            src/gui/GuiErrorPresenter.cpp
             tests/gui/TestSecurePassphraseField.cpp
         )
         add_executable(bseal_gui_keyfile_gtests
@@ -184,9 +182,15 @@ if (BSEAL_ENABLE_QT_GUI)
             src/gui/MainWindow.cpp
             tests/gui/TestGuiErrorPresenter.cpp
         )
-        set(CMAKE_AUTOMOC OFF)
+        add_executable(bseal_gui_nonpersistence_gtests
+            src/gui/SecurePassphraseField.cpp
+            src/gui/GuiErrorPresenter.cpp
+            src/gui/MainWindow.cpp
+            tests/gui/TestGuiNonPersistence.cpp
+        )
 
-        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests)
+        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests)
+            set_target_properties(${_t} PROPERTIES AUTOMOC ON)
             target_link_libraries(${_t} PRIVATE bseal::core Qt6::Widgets)
             target_include_directories(${_t} PRIVATE
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -219,6 +223,11 @@ if (BSEAL_ENABLE_QT_GUI)
         set_tests_properties(gui.ErrorPresenter PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 60
+        )
+        add_test(NAME gui.NonPersistence COMMAND bseal_gui_nonpersistence_gtests)
+        set_tests_properties(gui.NonPersistence PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 10
         )
     endif()
 

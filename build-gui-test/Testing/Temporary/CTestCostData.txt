@@ -1,0 +1,8 @@
+gui.SmokeRun 1 0.0236972
+gui.SecurePassphraseField 1 0.0419413
+gui.MainWindowKeyfiles 1 0.0245758
+gui.CoreIntegration 1 3.20009
+gui.MemoryLock 1 1.01231
+gui.ErrorPresenter 1 0.0483419
+gui.NonPersistence 1 0.0287558
+---

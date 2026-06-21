@@ -1,0 +1,35 @@
+# CMake generated Testfile for 
+# Source directory: /home/igellai/projects/bseal-cpp-skeleton/tests
+# Build directory: /home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests
+# 
+# This file includes the relevant testing commands required for 
+# testing this directory and lists subdirectories to be tested as well.
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_common_gtests[1]_include.cmake")
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_platform_gtests[1]_include.cmake")
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_io_gtests[1]_include.cmake")
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_archive_gtests[1]_include.cmake")
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_crypto_gtests[1]_include.cmake")
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_pipeline_gtests[1]_include.cmake")
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_perf_gtests[1]_include.cmake")
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_app_gtests[1]_include.cmake")
+include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_integration_gtests[1]_include.cmake")
+add_test([=[bseal_smoke_tests]=] "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_smoke_tests")
+set_tests_properties([=[bseal_smoke_tests]=] PROPERTIES  _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;6;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.SourceManifest]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/scripts/check_source_manifest.py" "--repo-root" "/home/igellai/projects/bseal-cpp-skeleton")
+set_tests_properties([=[scan.SourceManifest]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;301;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.UnsafeBypassGuard]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/tests/scripts/scan_unsafe_bypasses.py" "--repo-root" "/home/igellai/projects/bseal-cpp-skeleton")
+set_tests_properties([=[scan.UnsafeBypassGuard]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;311;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.UnsafeBypassGuardSelfTest]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/tests/scripts/test_scan_unsafe_bypasses.py")
+set_tests_properties([=[scan.UnsafeBypassGuardSelfTest]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;321;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.ReleaseChecklistConsistency]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/tests/scripts/check_release_checklist.py" "--repo-root" "/home/igellai/projects/bseal-cpp-skeleton")
+set_tests_properties([=[scan.ReleaseChecklistConsistency]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;330;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.DocsLanguage]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/tests/scripts/check_docs_language.py" "--repo-root" "/home/igellai/projects/bseal-cpp-skeleton")
+set_tests_properties([=[scan.DocsLanguage]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;340;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.LicenseHeaders]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/tests/scripts/test_license_headers.py" "--repo-root" "/home/igellai/projects/bseal-cpp-skeleton")
+set_tests_properties([=[scan.LicenseHeaders]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;350;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.SubmodulePins]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/tests/scripts/test_submodule_pins.py" "--repo-root" "/home/igellai/projects/bseal-cpp-skeleton")
+set_tests_properties([=[scan.SubmodulePins]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;360;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.GuiDocumented]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/tests/scripts/check_gui_docs.py" "--repo-root" "/home/igellai/projects/bseal-cpp-skeleton")
+set_tests_properties([=[scan.GuiDocumented]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;370;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")
+add_test([=[scan.GuiNoPersistence]=] "/home/igellai/miniconda3/bin/python3" "/home/igellai/projects/bseal-cpp-skeleton/tests/scripts/scan_gui_persistence.py" "--repo-root" "/home/igellai/projects/bseal-cpp-skeleton")
+set_tests_properties([=[scan.GuiNoPersistence]=] PROPERTIES  LABELS "scan" WORKING_DIRECTORY "/home/igellai/projects/bseal-cpp-skeleton" _BACKTRACE_TRIPLES "/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;380;add_test;/home/igellai/projects/bseal-cpp-skeleton/tests/CMakeLists.txt;0;")

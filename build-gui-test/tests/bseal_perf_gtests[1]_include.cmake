@@ -1,0 +1,5 @@
+if(EXISTS "/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_perf_gtests[1]_tests.cmake")
+  include("/home/igellai/projects/bseal-cpp-skeleton/build-gui-test/tests/bseal_perf_gtests[1]_tests.cmake")
+else()
+  add_test(bseal_perf_gtests_NOT_BUILT bseal_perf_gtests_NOT_BUILT)
+endif()

@@ -6,6 +6,7 @@
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
+    app.setOrganizationName("bseal");
     app.setApplicationName("bseal");
     app.setApplicationVersion("0.1.0");
 

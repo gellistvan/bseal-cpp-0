@@ -96,32 +96,6 @@ void test_remove_keyfile_preserves_order() {
     ASSERT_TRUE(w.keyfilePaths()[2] == "/tmp/third.key");
 }
 
-// 2b. Remove via index-based helper exposed as test seam.
-//     MainWindow::removeKeyfileAt() is not part of the production API, so we
-//     use the existing public seam approach: clear + re-add minus the removed item.
-//     The real remove slot is wired to QListWidget selection — tested at the
-//     integration level.  Here we test that the list is mutable and correct
-//     after a simulated remove.
-void test_remove_keyfile_order() {
-    bseal::gui::MainWindow w;
-    w.addKeyfilePath("/tmp/k1.key");
-    w.addKeyfilePath("/tmp/k2.key");
-    w.addKeyfilePath("/tmp/k3.key");
-
-    // Verify three items exist, then verify the list after clearing and
-    // re-adding (simulates remove + re-render).
-    ASSERT_EQ(w.keyfilePaths().size(), 3);
-
-    // Simulate removing k2: build expected state manually.
-    QStringList expected;
-    expected << "/tmp/k1.key" << "/tmp/k3.key";
-
-    // This exercises the contract the core cares about: the order of
-    // whatever paths remain equals the order in keyfilePaths().
-    ASSERT_EQ(expected[0], "/tmp/k1.key");
-    ASSERT_EQ(expected[1], "/tmp/k3.key");
-}
-
 // 3. Clear all keyfiles; list is empty afterwards.
 void test_clear_keyfiles() {
     bseal::gui::MainWindow w;
@@ -129,12 +103,9 @@ void test_clear_keyfiles() {
     w.addKeyfilePath("/tmp/b.key");
     ASSERT_EQ(w.keyfilePaths().size(), 2);
 
-    // onClearKeyfiles() is private; invoke via QMetaObject so we can call it
-    // without exposing it — or just invoke the same operation by checking that
-    // keyfilePaths() returns empty after we simulate clearing.
-    //
-    // Since we need to test the slot, use QMetaObject::invokeMethod which works
-    // with private slots if we have a pointer to the object.
+    // onClearKeyfiles() is private. String-based invokeMethod is the only way to
+    // call private slots from outside the class; pointer-to-member syntax requires
+    // a public or friend declaration. The string form is intentional here.
     QMetaObject::invokeMethod(&w, "onClearKeyfiles", Qt::DirectConnection);
 
     ASSERT_EQ(w.keyfilePaths().size(), 0);
@@ -178,12 +149,11 @@ void test_paths_match_core_order() {
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    run_test("KeyfileOrderPreserved",    test_keyfile_order_preserved);
-    run_test("RemoveKeyfilePreservesOrder",  test_remove_keyfile_preserves_order);
-    run_test("RemoveKeyfileOrder",       test_remove_keyfile_order);
-    run_test("ClearKeyfiles",            test_clear_keyfiles);
-    run_test("NoQSettingsWritten",       test_no_qsettings_written);
-    run_test("PathsMatchCoreOrder",      test_paths_match_core_order);
+    run_test("KeyfileOrderPreserved",       test_keyfile_order_preserved);
+    run_test("RemoveKeyfilePreservesOrder", test_remove_keyfile_preserves_order);
+    run_test("ClearKeyfiles",               test_clear_keyfiles);
+    run_test("NoQSettingsWritten",          test_no_qsettings_written);
+    run_test("PathsMatchCoreOrder",         test_paths_match_core_order);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;
