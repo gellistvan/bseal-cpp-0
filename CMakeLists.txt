@@ -126,6 +126,7 @@ if (BSEAL_ENABLE_QT_GUI)
         src/gui/main.cpp
         src/gui/GuiErrorPresenter.cpp
         src/gui/GuiOptions.cpp
+        src/gui/GuiPreview.cpp
         src/gui/MainWindow.cpp
         src/gui/SecurePassphraseField.cpp
     )
@@ -154,6 +155,15 @@ if (BSEAL_ENABLE_QT_GUI)
             TIMEOUT 10
         )
 
+        # Shared GUI source files used by all MainWindow-based test targets.
+        set(BSEAL_GUI_SOURCES
+            src/gui/SecurePassphraseField.cpp
+            src/gui/GuiErrorPresenter.cpp
+            src/gui/GuiOptions.cpp
+            src/gui/GuiPreview.cpp
+            src/gui/MainWindow.cpp
+        )
+
         # Pure C++ unit tests for the GuiOptions model (no Qt required).
         add_executable(bseal_gui_options_gtests
             src/gui/GuiOptions.cpp
@@ -168,62 +178,60 @@ if (BSEAL_ENABLE_QT_GUI)
         add_test(NAME gui.Options COMMAND bseal_gui_options_gtests)
         set_tests_properties(gui.Options PROPERTIES TIMEOUT 10)
 
+        # Pure C++ unit tests for GuiPreview (no Qt required).
+        add_executable(bseal_gui_preview_unit_gtests
+            src/gui/GuiOptions.cpp
+            src/gui/GuiPreview.cpp
+            tests/gui/TestGuiPreviewUnit.cpp
+        )
+        target_link_libraries(bseal_gui_preview_unit_gtests PRIVATE bseal::core)
+        target_include_directories(bseal_gui_preview_unit_gtests PRIVATE
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        )
+        bseal_set_project_warnings(bseal_gui_preview_unit_gtests)
+        bseal_enable_sanitizers_if_requested(bseal_gui_preview_unit_gtests)
+        add_test(NAME gui.PreviewUnit COMMAND bseal_gui_preview_unit_gtests)
+        set_tests_properties(gui.PreviewUnit PROPERTIES TIMEOUT 10)
+
         add_executable(bseal_gui_gtests
             src/gui/SecurePassphraseField.cpp
             src/gui/GuiErrorPresenter.cpp
             tests/gui/TestSecurePassphraseField.cpp
         )
         add_executable(bseal_gui_keyfile_gtests
-            src/gui/SecurePassphraseField.cpp
-            src/gui/GuiErrorPresenter.cpp
-            src/gui/GuiOptions.cpp
-            src/gui/MainWindow.cpp
+            ${BSEAL_GUI_SOURCES}
             tests/gui/TestMainWindowKeyfiles.cpp
         )
         add_executable(bseal_gui_integration_gtests
-            src/gui/SecurePassphraseField.cpp
-            src/gui/GuiErrorPresenter.cpp
-            src/gui/GuiOptions.cpp
-            src/gui/MainWindow.cpp
+            ${BSEAL_GUI_SOURCES}
             tests/gui/TestGuiCoreIntegration.cpp
         )
         add_executable(bseal_gui_memlock_gtests
-            src/gui/SecurePassphraseField.cpp
-            src/gui/GuiErrorPresenter.cpp
-            src/gui/GuiOptions.cpp
-            src/gui/MainWindow.cpp
+            ${BSEAL_GUI_SOURCES}
             tests/gui/TestGuiMemoryLock.cpp
         )
         add_executable(bseal_gui_error_presenter_gtests
-            src/gui/SecurePassphraseField.cpp
-            src/gui/GuiErrorPresenter.cpp
-            src/gui/GuiOptions.cpp
-            src/gui/MainWindow.cpp
+            ${BSEAL_GUI_SOURCES}
             tests/gui/TestGuiErrorPresenter.cpp
         )
         add_executable(bseal_gui_nonpersistence_gtests
-            src/gui/SecurePassphraseField.cpp
-            src/gui/GuiErrorPresenter.cpp
-            src/gui/GuiOptions.cpp
-            src/gui/MainWindow.cpp
+            ${BSEAL_GUI_SOURCES}
             tests/gui/TestGuiNonPersistence.cpp
         )
         add_executable(bseal_gui_advanced_encrypt_gtests
-            src/gui/SecurePassphraseField.cpp
-            src/gui/GuiErrorPresenter.cpp
-            src/gui/GuiOptions.cpp
-            src/gui/MainWindow.cpp
+            ${BSEAL_GUI_SOURCES}
             tests/gui/TestGuiAdvancedEncrypt.cpp
         )
         add_executable(bseal_gui_advanced_decrypt_gtests
-            src/gui/SecurePassphraseField.cpp
-            src/gui/GuiErrorPresenter.cpp
-            src/gui/GuiOptions.cpp
-            src/gui/MainWindow.cpp
+            ${BSEAL_GUI_SOURCES}
             tests/gui/TestGuiAdvancedDecrypt.cpp
         )
+        add_executable(bseal_gui_preview_gtests
+            ${BSEAL_GUI_SOURCES}
+            tests/gui/TestGuiPreview.cpp
+        )
 
-        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests bseal_gui_advanced_encrypt_gtests bseal_gui_advanced_decrypt_gtests)
+        foreach(_t bseal_gui_gtests bseal_gui_keyfile_gtests bseal_gui_integration_gtests bseal_gui_memlock_gtests bseal_gui_error_presenter_gtests bseal_gui_nonpersistence_gtests bseal_gui_advanced_encrypt_gtests bseal_gui_advanced_decrypt_gtests bseal_gui_preview_gtests)
             set_target_properties(${_t} PROPERTIES AUTOMOC ON)
             target_link_libraries(${_t} PRIVATE bseal::core Qt6::Widgets)
             target_include_directories(${_t} PRIVATE
@@ -270,6 +278,11 @@ if (BSEAL_ENABLE_QT_GUI)
         )
         add_test(NAME gui.AdvancedDecrypt COMMAND bseal_gui_advanced_decrypt_gtests)
         set_tests_properties(gui.AdvancedDecrypt PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+            TIMEOUT 30
+        )
+        add_test(NAME gui.Preview COMMAND bseal_gui_preview_gtests)
+        set_tests_properties(gui.Preview PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             TIMEOUT 30
         )

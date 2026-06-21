@@ -400,3 +400,46 @@ A confirmation dialog is required before decryption proceeds with `off`.
 authentication is always performed before any plaintext is committed to disk, regardless of this
 setting.  Durability controls only whether extracted files are fsynced to storage, which affects
 data integrity after a crash or power loss.
+
+## Preview panel
+
+The GUI includes a **Preview** button that generates a human-readable summary of the current
+operation without performing any cryptographic work or reading any file contents.
+
+### What the preview shows
+
+- Mode (encrypt / decrypt), input and output paths.
+- Keyfile basenames (e.g. `my.key`) — **never full paths**.
+- Cipher suite, KDF preset, chunk size, shard size, padding policy, durability mode.
+- Estimated input size (encrypt mode only, when the scan succeeds).
+- Estimated shard count and chunks-per-shard.
+- Active warnings for risky settings (fast KDF, overwrite enabled, hardened extract off,
+  durability off).
+
+### What the preview never shows
+
+- Passphrase or passphrase length.
+- Keyfile contents or cryptographic digests of keyfile contents.
+- Derived key material, nonces, or salts.
+- Plaintext or any decrypted data.
+- Full keyfile directory paths.
+
+### When preview is generated
+
+Preview is **lazy**: it is generated only when the Preview button is clicked (or the panel is
+opened for the first time).  It is **not** generated at startup, and field edits do not trigger
+a new preview.
+
+### Cache
+
+Preview results are cached in memory for the current session, keyed on all non-secret inputs.
+If the options have not changed since the last preview, the cached result is shown immediately
+without rescanning the filesystem.  The cache is a single-entry LRU: changing any option
+(input path, cipher suite, padding, etc.) invalidates it.
+
+### Filesystem scan
+
+For encrypt mode, the preview optionally scans the input directory to estimate total size and
+shard count.  The scan is bounded to 10 000 files; if the directory is larger or unreachable,
+the size field shows "(not scanned)".  The scan runs in a background thread and does not block
+the UI.

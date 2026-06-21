@@ -3,6 +3,7 @@
 
 #include "crypto/Kdf.hpp"
 #include "gui/GuiOptions.hpp"
+#include "gui/GuiPreview.hpp"
 #include "platform/ProcessMemoryLock.hpp"
 
 #include <QMainWindow>
@@ -14,13 +15,14 @@
 class QCheckBox;
 class QCloseEvent;
 class QComboBox;
+class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QPlainTextEdit;
 class QPushButton;
 class QRadioButton;
 class QWidget;
-class QFormLayout;
 
 namespace bseal::gui {
 
@@ -65,11 +67,21 @@ public:
     // fn(title, message) returns true if the user accepted.
     void setConfirmationFnForTests(std::function<bool(const QString&, const QString&)> fn);
 
+    // Replace the input directory scan used for preview size estimation.
+    void setInputScanFnForTests(gui::InputScanFn fn);
+
+    // Returns true while a background preview scan is running.
+    [[nodiscard]] bool isPreviewRunning() const;
+
+    // Returns the current preview panel text (for assertions).
+    [[nodiscard]] QString previewText() const;
+
     // Returns the text of the persistent security notice label.
     [[nodiscard]] QString securityNoticeText() const;
 
 Q_SIGNALS:
     void operationDone(bool ok, const QString& msg);
+    void previewDone(const QString& text); // emitted on main thread when preview is ready
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -82,12 +94,15 @@ private slots:
     void onClearKeyfiles();
     void onRun();
     void onOperationFinished(bool ok, const QString& msg);
+    void onPreview();
+    void onPreviewFinished(QString text, gui::PreviewKey key);
 
 private:
     void setControlsEnabled(bool enabled);
     [[nodiscard]] GuiEncryptOptions collect_encrypt_options() const;
     [[nodiscard]] GuiDecryptOptions collect_decrypt_options() const;
     [[nodiscard]] bool confirm(const QString& title, const QString& msg);
+    void triggerPreview();
 
     QRadioButton*          m_encryptRadio{};
     QRadioButton*          m_decryptRadio{};
@@ -120,6 +135,17 @@ private:
     QLineEdit*             m_kdfParEdit{};
     QComboBox*             m_hardenedCombo{};
     QComboBox*             m_decryptDurabilityCombo{};
+    // Preview section
+    QPushButton*           m_previewToggle{};
+    QWidget*               m_previewPanel{};
+    QPlainTextEdit*        m_previewText{};
+    gui::GuiPreviewCache   m_previewCache{};
+    gui::PreviewKey        m_pendingPreviewKey{};
+    bool                   m_previewRunning{false};
+    gui::InputScanFn       m_inputScanFn{[](const std::string& p) {
+                               return gui::scan_input_bytes(p);
+                           }};
+    std::jthread           m_previewWorker{};
     std::function<platform::ProcessMemoryLockResult()> m_lockFn{platform::try_lock_process_memory};
     std::function<void()>  m_operationFnForTests{};
     std::function<bool(const QString&, const QString&)> m_confirmFn{};
