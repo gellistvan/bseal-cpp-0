@@ -129,10 +129,24 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBSEAL_ENABLE_QT_GUI=ON
 cmake --build build -j
 ```
 
-**The GUI is less secure than CLI hardened mode.** Use it only on trusted,
-isolated workstations. See [`docs/THREAT_MODEL.md` — Qt GUI Security Model](docs/THREAT_MODEL.md)
-and [`docs/OPERATOR_GUIDE.md` — Qt GUI mode](docs/OPERATOR_GUIDE.md) for the full
-security analysis and safe-use guidance.
+The GUI exposes the full CoreApi feature set:
+
+**Encryption options:** cipher suite (XChaCha20-Poly1305 / AES-256-GCM), KDF
+preset (Fast / Strong / Paranoid), chunk size, shard size, padding policy, durability
+mode, keyfiles (ordered list), memory-lock controls.
+
+**Decryption options:** overwrite toggle, KDF resource policy (max memory /
+iterations / parallelism), hardened-extract mode, durability mode, keyfiles, memory-lock.
+
+**Safety features:** passphrase confirmation (encrypt mode), validation before
+passphrase extraction, close guard during operation, basename-only keyfile error
+messages, lazy memory-only preview cache, no `QSettings` persistence.
+
+**The GUI is less secure than CLI hardened mode** (`--passphrase-prompt`).
+Use it only on trusted, isolated workstations. See
+[`docs/THREAT_MODEL.md` — Qt GUI Security Model](docs/THREAT_MODEL.md)
+and [`docs/OPERATOR_GUIDE.md` — Qt GUI mode](docs/OPERATOR_GUIDE.md) for the
+full security analysis and safe-use guidance.
 
 Optional install rules can be enabled with:
 

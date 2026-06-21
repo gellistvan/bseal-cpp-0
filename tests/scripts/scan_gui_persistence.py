@@ -51,9 +51,13 @@ RISKY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # Lines that are explicitly allowed despite matching a pattern above.
 # Format: frozenset of (relative_path, 0-based_line_index) tuples.
 # Add entries here when a pattern match is benign and documented.
-#
-# Currently empty — the GUI has no QSettings usage at all.
-ALLOWED_LINES: frozenset[tuple[str, int]] = frozenset()
+ALLOWED_LINES: frozenset[tuple[str, int]] = frozenset({
+    # "Copy equivalent options summary" button in MainWindow.
+    # Copies generate_cmd_summary() output: CLI flags only.
+    # Passphrase is never stored in GuiOptions. Keyfile paths are replaced
+    # with basenames by generate_cmd_summary() — no full paths in the text.
+    ("src/gui/MainWindow.cpp", 230),
+})
 
 # Source files to scan: only src/gui/ C++ files.
 SCAN_ROOT = "src/gui"
