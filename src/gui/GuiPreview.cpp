@@ -313,7 +313,7 @@ std::string generate_cmd_summary(const GuiEncryptOptions& opts) {
         << " " << (opts.output.empty() ? "<output>" : opts.output)
         << " \\\n";
     out << "  --suite "       << suite_flag(opts.suite)      << " \\\n";
-    out << "  --kdf-preset "  << kdf_flag(opts.kdf_preset)   << " \\\n";
+    out << "  --kdf "          << kdf_flag(opts.kdf_preset)   << " \\\n";
     out << "  --chunk-size "  << opts.chunk_size              << " \\\n";
     out << "  --shard-size "  << opts.shard_size              << " \\\n";
     out << "  --padding "     << padding_flag(opts.padding.kind, opts.padding.fixed_size_bytes) << " \\\n";
