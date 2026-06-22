@@ -37,7 +37,7 @@ app::CoreDecryptParams to_core_params(const GuiDecryptOptions& o) {
 }
 
 std::vector<std::string> validate(const GuiEncryptOptions& o) {
-    std::vector<std::string> errors;
+    std::vector<std::string> errors = o.parse_errors;
     if (o.input.empty())  errors.emplace_back("Input path is required.");
     if (o.output.empty()) errors.emplace_back("Output path is required.");
     if (o.chunk_size == 0) errors.emplace_back("Chunk size must be greater than zero.");
@@ -50,7 +50,7 @@ std::vector<std::string> validate(const GuiEncryptOptions& o) {
 }
 
 std::vector<std::string> validate(const GuiDecryptOptions& o) {
-    std::vector<std::string> errors;
+    std::vector<std::string> errors = o.parse_errors;
     if (o.input.empty())  errors.emplace_back("Input path is required.");
     if (o.output.empty()) errors.emplace_back("Output path is required.");
     try {

@@ -24,6 +24,9 @@ struct GuiCommonOptions {
     bool                               lock_memory{false};
     bool                               require_lock_memory{false};
     platform::DurabilityMode           durability_mode{platform::DurabilityMode::BestEffort};
+    // Populated by widget apply(); cleared at the start of each apply() call.
+    // validate() prepends these before any semantic checks.
+    std::vector<std::string>           parse_errors;
 };
 
 struct GuiEncryptOptions : GuiCommonOptions {

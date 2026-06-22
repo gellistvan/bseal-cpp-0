@@ -149,32 +149,41 @@ void DecryptOptionsWidget::restoreState() {
 }
 
 void DecryptOptionsWidget::apply(GuiDecryptOptions& o) const {
+    o.parse_errors.clear();
     o.overwrite = m_overwriteCheck->isChecked();
 
-    // Empty text keeps model defaults; parse errors → 0 (caught by validate()).
+    // Empty text keeps model defaults. Non-empty text is parsed strictly;
+    // failures set a zero sentinel (caught by validate_kdf_resource_policy)
+    // and record a field-specific message in parse_errors.
     const auto mem = m_kdfMemEdit->text().trimmed().toStdString();
     if (!mem.empty()) {
         try {
-            o.kdf_policy.max_memory_kib =
-                static_cast<std::uint32_t>(bseal::parse_size_bytes(mem) / 1024u);
+            o.kdf_policy.max_memory_kib = bseal::parse_size_kib(mem);
         } catch (...) {
             o.kdf_policy.max_memory_kib = 0;
+            o.parse_errors.emplace_back(
+                "KDF max memory must be a whole number of KiB and no larger than 4 GiB"
+                " (e.g. 512M, 2G).");
         }
     }
     const auto iter = m_kdfIterEdit->text().trimmed().toStdString();
     if (!iter.empty()) {
         try {
-            o.kdf_policy.max_iterations = static_cast<std::uint32_t>(std::stoul(iter));
+            o.kdf_policy.max_iterations = bseal::parse_u32(iter);
         } catch (...) {
             o.kdf_policy.max_iterations = 0;
+            o.parse_errors.emplace_back(
+                "KDF max iterations must be a decimal integer between 1 and 10.");
         }
     }
     const auto par = m_kdfParEdit->text().trimmed().toStdString();
     if (!par.empty()) {
         try {
-            o.kdf_policy.max_parallelism = static_cast<std::uint32_t>(std::stoul(par));
+            o.kdf_policy.max_parallelism = bseal::parse_u32(par);
         } catch (...) {
             o.kdf_policy.max_parallelism = 0;
+            o.parse_errors.emplace_back(
+                "KDF max parallelism must be a decimal integer between 1 and 32.");
         }
     }
 

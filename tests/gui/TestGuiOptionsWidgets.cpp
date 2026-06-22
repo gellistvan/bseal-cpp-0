@@ -262,6 +262,88 @@ void test_decrypt_durability_off() {
     ASSERT_EQ(o.durability_mode, platform::DurabilityMode::Off);
 }
 
+// ---------------------------------------------------------------------------
+// Strict parsing regression tests — prove "4abc" is rejected, not accepted as 4.
+// These cases previously silently passed because std::stoul allows trailing garbage.
+// ---------------------------------------------------------------------------
+
+void test_decrypt_kdf_iter_partial_parse_rejected() {
+    DecryptOptionsWidget w;
+    w.findChild<QLineEdit*>("kdfIterEdit")->setText("4abc");
+    GuiDecryptOptions o;
+    w.apply(o);
+    // Strict parser rejects "4abc"; sentinel 0 and a parse error are set.
+    ASSERT_EQ(o.kdf_policy.max_iterations, 0u);
+    ASSERT_TRUE(!o.parse_errors.empty());
+}
+
+void test_decrypt_kdf_par_partial_parse_rejected() {
+    DecryptOptionsWidget w;
+    w.findChild<QLineEdit*>("kdfParEdit")->setText("8xyz");
+    GuiDecryptOptions o;
+    w.apply(o);
+    ASSERT_EQ(o.kdf_policy.max_parallelism, 0u);
+    ASSERT_TRUE(!o.parse_errors.empty());
+}
+
+void test_decrypt_kdf_iter_sign_rejected() {
+    DecryptOptionsWidget w;
+    w.findChild<QLineEdit*>("kdfIterEdit")->setText("+4");
+    GuiDecryptOptions o;
+    w.apply(o);
+    ASSERT_EQ(o.kdf_policy.max_iterations, 0u);
+    ASSERT_TRUE(!o.parse_errors.empty());
+}
+
+// Large values that could previously wrap into small accepted values.
+void test_decrypt_kdf_iter_overflow_not_wrapped() {
+    DecryptOptionsWidget w;
+    // 4294967296 = UINT32_MAX+1; must not wrap to 0 silently via stoul truncation.
+    w.findChild<QLineEdit*>("kdfIterEdit")->setText("4294967296");
+    GuiDecryptOptions o;
+    w.apply(o);
+    ASSERT_EQ(o.kdf_policy.max_iterations, 0u);
+    ASSERT_TRUE(!o.parse_errors.empty());
+}
+
+void test_decrypt_kdf_mem_non_kib_rejected() {
+    DecryptOptionsWidget w;
+    // "1" = 1 byte, not a whole KiB — must be rejected.
+    w.findChild<QLineEdit*>("kdfMemEdit")->setText("1");
+    GuiDecryptOptions o;
+    w.apply(o);
+    ASSERT_EQ(o.kdf_policy.max_memory_kib, 0u);
+    ASSERT_TRUE(!o.parse_errors.empty());
+}
+
+void test_decrypt_parse_errors_appear_in_validate() {
+    DecryptOptionsWidget w;
+    w.findChild<QLineEdit*>("kdfIterEdit")->setText("4abc");
+    GuiDecryptOptions o;
+    o.input  = "/some/input";
+    o.output = "/some/output";
+    w.apply(o);
+    auto errors = validate(o);
+    ASSERT_TRUE(!errors.empty());
+    // The parse error message must mention the field.
+    bool found = false;
+    for (const auto& e : errors) {
+        if (e.find("KDF max iterations") != std::string::npos) found = true;
+    }
+    ASSERT_TRUE(found);
+}
+
+void test_decrypt_empty_fields_keep_defaults() {
+    DecryptOptionsWidget w;
+    // All KDF text fields left empty → model defaults unchanged, no parse errors.
+    GuiDecryptOptions o;
+    w.apply(o);
+    ASSERT_TRUE(o.parse_errors.empty());
+    ASSERT_EQ(o.kdf_policy.max_memory_kib,  GuiDecryptOptions{}.kdf_policy.max_memory_kib);
+    ASSERT_EQ(o.kdf_policy.max_iterations,  GuiDecryptOptions{}.kdf_policy.max_iterations);
+    ASSERT_EQ(o.kdf_policy.max_parallelism, GuiDecryptOptions{}.kdf_policy.max_parallelism);
+}
+
 void test_decrypt_object_names_intact() {
     DecryptOptionsWidget w;
     ASSERT_TRUE(w.findChild<QCheckBox*>("overwriteCheck") != nullptr);
@@ -295,8 +377,15 @@ int main() {
     run_test("DecryptKdfParParse",            test_decrypt_kdf_par_parse);
     run_test("DecryptHardenedOn",             test_decrypt_hardened_on);
     run_test("DecryptHardenedOff",            test_decrypt_hardened_off);
-    run_test("DecryptDurabilityOff",          test_decrypt_durability_off);
-    run_test("DecryptObjectNamesIntact",      test_decrypt_object_names_intact);
+    run_test("DecryptDurabilityOff",                  test_decrypt_durability_off);
+    run_test("DecryptKdfIterPartialParseRejected",    test_decrypt_kdf_iter_partial_parse_rejected);
+    run_test("DecryptKdfParPartialParseRejected",     test_decrypt_kdf_par_partial_parse_rejected);
+    run_test("DecryptKdfIterSignRejected",            test_decrypt_kdf_iter_sign_rejected);
+    run_test("DecryptKdfIterOverflowNotWrapped",      test_decrypt_kdf_iter_overflow_not_wrapped);
+    run_test("DecryptKdfMemNonKibRejected",           test_decrypt_kdf_mem_non_kib_rejected);
+    run_test("DecryptParseErrorsAppearInValidate",    test_decrypt_parse_errors_appear_in_validate);
+    run_test("DecryptEmptyFieldsKeepDefaults",        test_decrypt_empty_fields_keep_defaults);
+    run_test("DecryptObjectNamesIntact",              test_decrypt_object_names_intact);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;
