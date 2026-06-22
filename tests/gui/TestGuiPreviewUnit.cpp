@@ -451,6 +451,63 @@ void test_preview_result_has_cmd_summary_decrypt() {
     ASSERT_CONTAINS(result.cmd_summary, "bseal decrypt");
 }
 
+// ---------------------------------------------------------------------------
+// Effective hardened extraction text in preview
+// ---------------------------------------------------------------------------
+
+void test_preview_auto_supported_shows_hardened_backend() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Auto;
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/true);
+    ASSERT_CONTAINS(result.text, "hardened backend will be used");
+    ASSERT_TRUE(result.warnings.empty());
+}
+
+void test_preview_auto_unsupported_shows_fallback_text() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Auto;
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/false);
+    ASSERT_CONTAINS(result.text, "fall back to portable");
+    ASSERT_FALSE(result.warnings.empty());
+    bool found = false;
+    for (const auto& w : result.warnings)
+        if (w.find("fall") != std::string::npos || w.find("portable") != std::string::npos)
+            found = true;
+    ASSERT_TRUE(found);
+}
+
+void test_preview_off_shows_portable_backend() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Off;
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/true);
+    ASSERT_CONTAINS(result.text, "portable backend");
+    ASSERT_FALSE(result.warnings.empty());
+}
+
+void test_preview_on_supported_shows_hardened() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::On;
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/true);
+    ASSERT_CONTAINS(result.text, "hardened backend");
+    ASSERT_TRUE(result.warnings.empty());
+}
+
+void test_preview_cache_key_changes_with_hardened_mode() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Auto;
+    const auto key_auto = bseal::gui::make_preview_key(opts);
+
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Off;
+    const auto key_off = bseal::gui::make_preview_key(opts);
+
+    ASSERT_TRUE(!(key_auto == key_off));
+}
+
 } // namespace
 
 int main() {
@@ -491,6 +548,11 @@ int main() {
     run_test("CmdSummaryHeaderComment",             test_cmd_summary_includes_header_comment);
     run_test("PreviewResultHasCmdSummaryEncrypt",   test_preview_result_has_cmd_summary_encrypt);
     run_test("PreviewResultHasCmdSummaryDecrypt",   test_preview_result_has_cmd_summary_decrypt);
+    run_test("PreviewAutoSupportedHardenedText",    test_preview_auto_supported_shows_hardened_backend);
+    run_test("PreviewAutoUnsupportedFallbackText",  test_preview_auto_unsupported_shows_fallback_text);
+    run_test("PreviewOffPortableBackendText",        test_preview_off_shows_portable_backend);
+    run_test("PreviewOnSupportedHardenedText",       test_preview_on_supported_shows_hardened);
+    run_test("PreviewCacheKeyChangesWithMode",       test_preview_cache_key_changes_with_hardened_mode);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;

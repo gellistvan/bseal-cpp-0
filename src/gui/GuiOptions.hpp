@@ -47,8 +47,22 @@ struct GuiDecryptOptions : GuiCommonOptions {
 [[nodiscard]] app::CoreEncryptParams to_core_params(const GuiEncryptOptions& opts);
 [[nodiscard]] app::CoreDecryptParams to_core_params(const GuiDecryptOptions& opts);
 
+// Effective extraction backend classification given mode + platform support.
+enum class HardenedExtractOutcome {
+    HardenedActive,          ///< hardened POSIX backend will be used
+    ExplicitNonHardened,     ///< user chose Off
+    AutoFallbackNonHardened, ///< Auto requested but platform does not support hardened
+    UnsupportedError,        ///< On requested but platform does not support hardened
+};
+
+[[nodiscard]] HardenedExtractOutcome resolve_hardened_extract(
+    cli::HardenedExtractMode mode, bool platform_supported) noexcept;
+
 // Validate options. Returns empty vector if valid, otherwise one message per error.
 [[nodiscard]] std::vector<std::string> validate(const GuiEncryptOptions& opts);
 [[nodiscard]] std::vector<std::string> validate(const GuiDecryptOptions& opts);
+// Overload accepting explicit platform support for deterministic unit tests.
+[[nodiscard]] std::vector<std::string> validate(const GuiDecryptOptions& opts,
+                                                bool platform_supported);
 
 } // namespace bseal::gui

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui/GuiOptions.hpp"
 
+#include "archive/SafeOutputTree.hpp"
 #include "cli/Args.hpp"
 #include "crypto/CryptoBackend.hpp"
 #include "crypto/Kdf.hpp"
@@ -75,16 +76,43 @@ std::vector<std::string> validate(const GuiEncryptOptions& o) {
     return errors;
 }
 
-std::vector<std::string> validate(const GuiDecryptOptions& o) {
+HardenedExtractOutcome resolve_hardened_extract(
+    cli::HardenedExtractMode mode, bool platform_supported) noexcept {
+    switch (mode) {
+        case cli::HardenedExtractMode::On:
+            return platform_supported
+                ? HardenedExtractOutcome::HardenedActive
+                : HardenedExtractOutcome::UnsupportedError;
+        case cli::HardenedExtractMode::Off:
+            return HardenedExtractOutcome::ExplicitNonHardened;
+        case cli::HardenedExtractMode::Auto:
+        default:
+            return platform_supported
+                ? HardenedExtractOutcome::HardenedActive
+                : HardenedExtractOutcome::AutoFallbackNonHardened;
+    }
+}
+
+std::vector<std::string> validate(const GuiDecryptOptions& o, bool platform_supported) {
     std::vector<std::string> errors = o.parse_errors;
     if (o.input.empty())  errors.emplace_back("Input path is required.");
     if (o.output.empty()) errors.emplace_back("Output path is required.");
+    if (resolve_hardened_extract(o.hardened_extract, platform_supported) ==
+        HardenedExtractOutcome::UnsupportedError) {
+        errors.emplace_back(
+            "Hardened extraction ('on') is not supported on this platform. "
+            "Use 'auto' to allow fallback, or 'off' to explicitly use the portable backend.");
+    }
     try {
         crypto::validate_kdf_resource_policy(o.kdf_policy);
     } catch (const std::exception& e) {
         errors.emplace_back(e.what());
     }
     return errors;
+}
+
+std::vector<std::string> validate(const GuiDecryptOptions& o) {
+    return validate(o, archive::SafeOutputTree::is_platform_supported());
 }
 
 } // namespace bseal::gui

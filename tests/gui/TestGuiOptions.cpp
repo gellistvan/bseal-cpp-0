@@ -343,6 +343,65 @@ void test_validate_valid_decrypt() {
     ASSERT_TRUE(bseal::gui::validate(o).empty());
 }
 
+// ---------------------------------------------------------------------------
+// resolve_hardened_extract: all six mode × support combinations
+// ---------------------------------------------------------------------------
+
+using bseal::cli::HardenedExtractMode;
+using bseal::gui::HardenedExtractOutcome;
+using bseal::gui::resolve_hardened_extract;
+
+void test_resolve_auto_supported() {
+    ASSERT_EQ(resolve_hardened_extract(HardenedExtractMode::Auto, true),
+              HardenedExtractOutcome::HardenedActive);
+}
+
+void test_resolve_auto_unsupported() {
+    ASSERT_EQ(resolve_hardened_extract(HardenedExtractMode::Auto, false),
+              HardenedExtractOutcome::AutoFallbackNonHardened);
+}
+
+void test_resolve_on_supported() {
+    ASSERT_EQ(resolve_hardened_extract(HardenedExtractMode::On, true),
+              HardenedExtractOutcome::HardenedActive);
+}
+
+void test_resolve_on_unsupported() {
+    ASSERT_EQ(resolve_hardened_extract(HardenedExtractMode::On, false),
+              HardenedExtractOutcome::UnsupportedError);
+}
+
+void test_resolve_off_supported() {
+    ASSERT_EQ(resolve_hardened_extract(HardenedExtractMode::Off, true),
+              HardenedExtractOutcome::ExplicitNonHardened);
+}
+
+void test_resolve_off_unsupported() {
+    ASSERT_EQ(resolve_hardened_extract(HardenedExtractMode::Off, false),
+              HardenedExtractOutcome::ExplicitNonHardened);
+}
+
+// Validate rejects On + unsupported via explicit platform_supported param.
+void test_validate_on_unsupported_rejects() {
+    bseal::gui::GuiDecryptOptions o;
+    o.input = "/i"; o.output = "/o";
+    o.hardened_extract = HardenedExtractMode::On;
+    const auto errs = bseal::gui::validate(o, /*platform_supported=*/false);
+    ASSERT_TRUE(!errs.empty());
+    bool found = false;
+    for (const auto& e : errs)
+        found = found || e.find("not supported") != std::string::npos;
+    ASSERT_TRUE(found);
+}
+
+// Validate accepts On + supported.
+void test_validate_on_supported_ok() {
+    bseal::gui::GuiDecryptOptions o;
+    o.input = "/i"; o.output = "/o";
+    o.hardened_extract = HardenedExtractMode::On;
+    ASSERT_TRUE(bseal::gui::validate(o, /*platform_supported=*/true).empty());
+}
+
 } // namespace
 
 int main() {
@@ -367,6 +426,14 @@ int main() {
     run_test("ValidateKdfPolicyZeroLimit",  test_validate_kdf_policy_zero_limit);
     run_test("ValidateValidEncrypt",        test_validate_valid_encrypt);
     run_test("ValidateValidDecrypt",        test_validate_valid_decrypt);
+    run_test("ResolveAutoSupported",        test_resolve_auto_supported);
+    run_test("ResolveAutoUnsupported",      test_resolve_auto_unsupported);
+    run_test("ResolveOnSupported",          test_resolve_on_supported);
+    run_test("ResolveOnUnsupported",        test_resolve_on_unsupported);
+    run_test("ResolveOffSupported",         test_resolve_off_supported);
+    run_test("ResolveOffUnsupported",       test_resolve_off_unsupported);
+    run_test("ValidateOnUnsupportedRejects",test_validate_on_unsupported_rejects);
+    run_test("ValidateOnSupportedOk",       test_validate_on_supported_ok);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;

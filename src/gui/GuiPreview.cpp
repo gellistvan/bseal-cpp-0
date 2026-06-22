@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui/GuiPreview.hpp"
 
+#include "archive/SafeOutputTree.hpp"
+#include "gui/GuiOptions.hpp"
+
 #include <filesystem>
 #include <sstream>
 
@@ -79,11 +82,18 @@ std::string durability_name(platform::DurabilityMode m) {
     return "unknown";
 }
 
-std::string hardened_name(cli::HardenedExtractMode m) {
-    switch (m) {
-        case cli::HardenedExtractMode::Auto: return "auto";
-        case cli::HardenedExtractMode::On:   return "on";
-        case cli::HardenedExtractMode::Off:  return "off";
+std::string effective_hardened_text(cli::HardenedExtractMode m, bool platform_supported) {
+    switch (resolve_hardened_extract(m, platform_supported)) {
+        case HardenedExtractOutcome::HardenedActive:
+            return m == cli::HardenedExtractMode::On
+                ? "on — hardened backend"
+                : "auto — hardened backend will be used";
+        case HardenedExtractOutcome::ExplicitNonHardened:
+            return "off — portable backend";
+        case HardenedExtractOutcome::AutoFallbackNonHardened:
+            return "auto — will fall back to portable backend on this platform";
+        case HardenedExtractOutcome::UnsupportedError:
+            return "on — unsupported on this platform";
     }
     return "unknown";
 }
@@ -190,7 +200,7 @@ PreviewResult generate_preview(const GuiEncryptOptions& opts,
     return result;
 }
 
-PreviewResult generate_preview(const GuiDecryptOptions& opts) {
+PreviewResult generate_preview(const GuiDecryptOptions& opts, bool platform_supported) {
     PreviewResult result;
     std::ostringstream out;
 
@@ -200,7 +210,7 @@ PreviewResult generate_preview(const GuiDecryptOptions& opts) {
     append_keyfiles(out, opts.keyfiles);
     out << "\n";
     out << "Overwrite:        " << (opts.overwrite ? "yes" : "no") << "\n";
-    out << "Hardened extract: " << hardened_name(opts.hardened_extract) << "\n";
+    out << "Hardened extract: " << effective_hardened_text(opts.hardened_extract, platform_supported) << "\n";
     out << "KDF max memory:   "
         << fmt_size(static_cast<std::uint64_t>(opts.kdf_policy.max_memory_kib) * 1024u) << "\n";
     out << "KDF max iters:    " << opts.kdf_policy.max_iterations << "\n";
@@ -209,8 +219,12 @@ PreviewResult generate_preview(const GuiDecryptOptions& opts) {
 
     if (opts.overwrite)
         result.warnings.push_back("Overwrite enabled — existing files may be replaced.");
-    if (opts.hardened_extract == cli::HardenedExtractMode::Off)
+    const auto harden_outcome = resolve_hardened_extract(opts.hardened_extract, platform_supported);
+    if (harden_outcome == HardenedExtractOutcome::ExplicitNonHardened)
         result.warnings.push_back("Hardened extract off — not TOCTOU-safe. Unsafe for untrusted archives.");
+    if (harden_outcome == HardenedExtractOutcome::AutoFallbackNonHardened)
+        result.warnings.push_back(
+            "Hardened extract: auto falls back to portable backend on this platform — not TOCTOU-safe.");
     if (opts.durability_mode == platform::DurabilityMode::Off)
         result.warnings.push_back("Durability off: output not fsynced — data may be lost on power failure.");
 
@@ -223,6 +237,10 @@ PreviewResult generate_preview(const GuiDecryptOptions& opts) {
     result.text        = out.str();
     result.cmd_summary = generate_cmd_summary(opts);
     return result;
+}
+
+PreviewResult generate_preview(const GuiDecryptOptions& opts) {
+    return generate_preview(opts, archive::SafeOutputTree::is_platform_supported());
 }
 
 // ---------------------------------------------------------------------------

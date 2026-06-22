@@ -56,6 +56,9 @@ using InputScanFn = std::function<std::optional<std::uint64_t>(const std::string
 [[nodiscard]] PreviewResult generate_preview(const GuiEncryptOptions& opts,
                                              std::optional<std::uint64_t> input_bytes = std::nullopt);
 [[nodiscard]] PreviewResult generate_preview(const GuiDecryptOptions& opts);
+// Overload accepting explicit platform support for deterministic unit tests.
+[[nodiscard]] PreviewResult generate_preview(const GuiDecryptOptions& opts,
+                                             bool platform_supported);
 
 // Generate a CLI-flag-style equivalent options summary.
 // Never includes passphrase, passphrase length, keyfile contents, derived keys, nonces, or salts.
