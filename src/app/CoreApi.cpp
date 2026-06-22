@@ -406,6 +406,71 @@ void fire_progress(const ProgressFn& fn, ProgressPhase phase,
 
 } // namespace
 
+void validate_encrypt_params(const CoreEncryptParams& params) {
+    if (params.input.empty())
+        throw bseal::InvalidArgument("input path is required");
+    require_directory(params.input, "input path");
+    require_keyfiles_exist(params.keyfiles);
+
+    const bool stdout_output = (params.stdout_stream != nullptr);
+    if (!stdout_output && params.output.empty())
+        throw bseal::InvalidArgument("output path is required");
+
+    constexpr std::uint64_t kChunkSizeMin = 65536;
+    constexpr std::uint64_t kChunkSizeMax = 67108864;
+    if (params.chunk_size < kChunkSizeMin || params.chunk_size > kChunkSizeMax)
+        throw bseal::InvalidArgument(
+            "--chunk-size must be between " + std::to_string(kChunkSizeMin) +
+            " and " + std::to_string(kChunkSizeMax) +
+            " bytes inclusive; got " + std::to_string(params.chunk_size));
+    if ((params.chunk_size & (params.chunk_size - 1)) != 0)
+        throw bseal::InvalidArgument(
+            "--chunk-size must be a power of two; got " + std::to_string(params.chunk_size));
+
+    if (!stdout_output) {
+        if (params.shard_size == 0)
+            throw bseal::InvalidArgument("--shard-size must be nonzero");
+        const std::uint64_t min_frame =
+            bseal::io::chunk_frame_v1_encoded_size_from_params(
+                params.chunk_size, bseal::crypto::kAeadTagBytes);
+        if (min_frame > params.shard_size)
+            throw bseal::InvalidArgument(
+                "--shard-size " + std::to_string(params.shard_size) +
+                " bytes is too small: --chunk-size " + std::to_string(params.chunk_size) +
+                " bytes produces a minimum frame of " + std::to_string(min_frame) +
+                " bytes; set --shard-size to at least " + std::to_string(min_frame) + " bytes");
+    }
+
+    if (params.padding.kind == bseal::cli::PaddingPolicyKind::FixedSize) {
+        if (params.padding.fixed_size_bytes == 0)
+            throw bseal::InvalidArgument("fixed-size padding value must be nonzero");
+        if (params.padding.fixed_size_bytes % params.chunk_size != 0)
+            throw bseal::InvalidArgument(
+                "fixed-size padding target (" +
+                std::to_string(params.padding.fixed_size_bytes) +
+                " bytes) is not a multiple of chunk-size (" +
+                std::to_string(params.chunk_size) + " bytes)");
+    }
+}
+
+void validate_decrypt_params(const CoreDecryptParams& params) {
+    if (params.input.empty())
+        throw bseal::InvalidArgument("input path is required");
+    require_directory(params.input, "input path");
+
+    if (params.output.empty())
+        throw bseal::InvalidArgument("output path is required");
+
+    require_keyfiles_exist(params.keyfiles);
+
+    bseal::crypto::validate_kdf_resource_policy(params.kdf_policy);
+
+    if (std::filesystem::exists(params.output) && !params.overwrite &&
+        !std::filesystem::is_empty(params.output))
+        throw bseal::InvalidArgument(
+            "output directory already exists and is not empty; use --overwrite");
+}
+
 void core_encrypt(CoreEncryptParams params) {
     bseal::platform::enforce_memory_lock_policy(
         params.lock_memory, params.require_lock_memory,
@@ -419,11 +484,9 @@ void core_encrypt(CoreEncryptParams params) {
     }
 
     fire_progress(params.on_progress, ProgressPhase::Validating);
+    validate_encrypt_params(params);
 
     const bool stdout_output = (params.stdout_stream != nullptr);
-
-    require_directory(params.input, "input path");
-    require_keyfiles_exist(params.keyfiles);
 
     const std::uint64_t effective_shard_size = stdout_output
         ? std::numeric_limits<std::uint64_t>::max()
@@ -434,23 +497,6 @@ void core_encrypt(CoreEncryptParams params) {
     }
 
     auto context = make_encrypt_context(params);
-
-    if (!stdout_output) {
-        const std::uint16_t v1_tag_len = 16;
-        const std::uint64_t min_shard =
-            bseal::io::chunk_frame_v1_encoded_size_from_params(
-                context.chunk_plain_size, v1_tag_len);
-        if (min_shard > effective_shard_size) {
-            throw bseal::InvalidArgument(
-                "--shard-size " + std::to_string(effective_shard_size) +
-                " bytes is too small: --chunk-size " +
-                std::to_string(params.chunk_size) +
-                " bytes produces a minimum frame of " +
-                std::to_string(min_shard) +
-                " bytes; set --shard-size to at least " +
-                std::to_string(min_shard) + " bytes");
-        }
-    }
 
     auto backend = make_backend(context.suite);
     fire_progress(params.on_progress, ProgressPhase::Kdf);
@@ -603,16 +649,7 @@ void core_decrypt(CoreDecryptParams params) {
     }
 
     fire_progress(params.on_progress, ProgressPhase::Validating);
-
-    require_directory(params.input, "input path");
-    require_keyfiles_exist(params.keyfiles);
-
-    if (std::filesystem::exists(params.output) && !params.overwrite) {
-        if (!std::filesystem::is_empty(params.output)) {
-            throw bseal::InvalidArgument(
-                "output directory already exists and is not empty; use --overwrite");
-        }
-    }
+    validate_decrypt_params(params);
 
     const bool output_existed_before = std::filesystem::exists(params.output);
     std::filesystem::create_directories(params.output);

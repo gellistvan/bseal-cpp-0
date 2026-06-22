@@ -378,4 +378,152 @@ TEST(CoreApiProgress, EncryptProgressProvidesSizes) {
     EXPECT_TRUE(encrypting_has_total);
 }
 
+// ---------------------------------------------------------------------------
+// validate_encrypt_params — direct unit tests (no KDF, no output created)
+// ---------------------------------------------------------------------------
+
+TEST(ValidateEncryptParams, ChunkSizeZeroRejected) {
+    TempDir td("vep_zero");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    p.chunk_size = 0; p.shard_size = 1;
+    EXPECT_THROW(bseal::app::validate_encrypt_params(p), bseal::InvalidArgument);
+}
+
+TEST(ValidateEncryptParams, ChunkSizeTooSmallRejected) {
+    TempDir td("vep_small");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    p.chunk_size = 32768; p.shard_size = 4ull * 1024 * 1024;
+    EXPECT_THROW(bseal::app::validate_encrypt_params(p), bseal::InvalidArgument);
+}
+
+TEST(ValidateEncryptParams, ChunkSizeNotPowerOfTwoRejected_65537) {
+    TempDir td("vep_npo2a");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    p.chunk_size = 65537; p.shard_size = 4ull * 1024 * 1024;
+    EXPECT_THROW(bseal::app::validate_encrypt_params(p), bseal::InvalidArgument);
+}
+
+TEST(ValidateEncryptParams, ChunkSizeNotPowerOfTwoRejected_3MiB) {
+    TempDir td("vep_npo2b");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    p.chunk_size = 3ull * 1024 * 1024; p.shard_size = 4ull * 1024 * 1024;
+    EXPECT_THROW(bseal::app::validate_encrypt_params(p), bseal::InvalidArgument);
+}
+
+TEST(ValidateEncryptParams, ChunkSizeTooLargeRejected) {
+    TempDir td("vep_large");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    p.chunk_size = 128ull * 1024 * 1024; p.shard_size = 256ull * 1024 * 1024;
+    EXPECT_THROW(bseal::app::validate_encrypt_params(p), bseal::InvalidArgument);
+}
+
+TEST(ValidateEncryptParams, ChunkSizeOverflowRejected) {
+    TempDir td("vep_overflow");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    p.chunk_size = 1ull << 40; p.shard_size = std::numeric_limits<std::uint64_t>::max();
+    EXPECT_THROW(bseal::app::validate_encrypt_params(p), bseal::InvalidArgument);
+}
+
+TEST(ValidateEncryptParams, ChunkSizeMinBoundaryAccepted) {
+    TempDir td("vep_min");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    p.chunk_size = 65536; p.shard_size = 4ull * 1024 * 1024;
+    EXPECT_NO_THROW(bseal::app::validate_encrypt_params(p));
+}
+
+TEST(ValidateEncryptParams, ChunkSizeMaxBoundaryAccepted) {
+    TempDir td("vep_max");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    // min frame = 67108864 + 40 (header) + 16 (tag) = 67108920
+    p.chunk_size = 67108864; p.shard_size = 67108920;
+    EXPECT_NO_THROW(bseal::app::validate_encrypt_params(p));
+}
+
+TEST(ValidateEncryptParams, ShardSizeTooSmallRejected) {
+    TempDir td("vep_shard");
+    bseal::app::CoreEncryptParams p;
+    p.input = td.path(); p.output = td.sub("out");
+    // min frame = 65536 + 56 = 65592; shard_size = 65536 < 65592
+    p.chunk_size = 65536; p.shard_size = 65536;
+    EXPECT_THROW(bseal::app::validate_encrypt_params(p), bseal::InvalidArgument);
+}
+
+// ---------------------------------------------------------------------------
+// validate_decrypt_params — direct unit tests
+// ---------------------------------------------------------------------------
+
+TEST(ValidateDecryptParams, InvalidKdfPolicyRejected) {
+    TempDir input("vdp_kdf_in"), output("vdp_kdf_out");
+    bseal::app::CoreDecryptParams p;
+    p.input = input.path(); p.output = output.path();
+    p.kdf_policy.max_memory_kib = 0;  // invalid: must be > 0
+    EXPECT_THROW(bseal::app::validate_decrypt_params(p), bseal::InvalidArgument);
+}
+
+TEST(ValidateDecryptParams, ValidDefaultPolicyAccepted) {
+    TempDir input("vdp_ok_in"), output("vdp_ok_out");
+    bseal::app::CoreDecryptParams p;
+    p.input = input.path(); p.output = output.path();
+    // default KdfResourcePolicy has valid values
+    EXPECT_NO_THROW(bseal::app::validate_decrypt_params(p));
+}
+
+// ---------------------------------------------------------------------------
+// core_encrypt validation — KDF not reached, no output created
+// ---------------------------------------------------------------------------
+
+TEST(CoreEncryptValidation, InvalidChunkSizeKdfNotReached) {
+    TempDir td("val_no_kdf");
+    std::vector<bseal::app::ProgressPhase> phases;
+    auto p = make_encrypt_params(td.path(), td.sub("out"), "pass");
+    p.chunk_size = 32768;
+    p.on_progress = [&](const bseal::app::ProgressEvent& ev) { phases.push_back(ev.phase); };
+    EXPECT_THROW(bseal::app::core_encrypt(std::move(p)), bseal::InvalidArgument);
+    for (auto ph : phases)
+        EXPECT_NE(ph, bseal::app::ProgressPhase::Kdf) << "KDF must not be reached for invalid params";
+}
+
+TEST(CoreEncryptValidation, InvalidChunkSizeNoOutputCreated) {
+    TempDir td("val_no_out");
+    const auto output = td.sub("archive_output");
+    auto p = make_encrypt_params(td.path(), output, "pass");
+    p.chunk_size = 32768;
+    EXPECT_THROW(bseal::app::core_encrypt(std::move(p)), bseal::InvalidArgument);
+    EXPECT_FALSE(fs::exists(output)) << "output dir must not be created for invalid params";
+}
+
+TEST(CoreEncryptValidation, ShardSizeTooSmallRejectedBeforeKdf) {
+    TempDir td("val_shard_kdf");
+    std::vector<bseal::app::ProgressPhase> phases;
+    auto p = make_encrypt_params(td.path(), td.sub("out"), "pass");
+    p.chunk_size = 65536; p.shard_size = 65536;  // min frame = 65592 > 65536
+    p.on_progress = [&](const bseal::app::ProgressEvent& ev) { phases.push_back(ev.phase); };
+    EXPECT_THROW(bseal::app::core_encrypt(std::move(p)), bseal::InvalidArgument);
+    for (auto ph : phases)
+        EXPECT_NE(ph, bseal::app::ProgressPhase::Kdf);
+}
+
+// ---------------------------------------------------------------------------
+// core_decrypt validation — invalid KDF policy rejected before KDF
+// ---------------------------------------------------------------------------
+
+TEST(CoreDecryptValidation, InvalidKdfPolicyRejectedBeforeKdf) {
+    TempDir input("val_dec_kdf_in"), output("val_dec_kdf_out");
+    auto p = make_decrypt_params(input.path(), output.path(), "pass");
+    p.kdf_policy.max_memory_kib = 0;
+    std::vector<bseal::app::ProgressPhase> phases;
+    p.on_progress = [&](const bseal::app::ProgressEvent& ev) { phases.push_back(ev.phase); };
+    EXPECT_THROW(bseal::app::core_decrypt(std::move(p)), bseal::InvalidArgument);
+    for (auto ph : phases)
+        EXPECT_NE(ph, bseal::app::ProgressPhase::Kdf);
+}
+
 } // namespace
