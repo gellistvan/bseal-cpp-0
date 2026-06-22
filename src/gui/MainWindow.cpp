@@ -517,8 +517,8 @@ void MainWindow::setControlsEnabled(bool enabled) {
 
 GuiEncryptOptions MainWindow::collect_encrypt_options() const {
     GuiEncryptOptions o;
-    o.input = m_inputPath->text().trimmed().toStdString();
-    o.output = m_outputPath->text().trimmed().toStdString();
+    o.input = m_inputPath->text().toStdString();
+    o.output = m_outputPath->text().toStdString();
     o.keyfiles.reserve(static_cast<std::size_t>(m_keyfileList->count()));
     for (int i = 0; i < m_keyfileList->count(); ++i)
         o.keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
@@ -530,8 +530,8 @@ GuiEncryptOptions MainWindow::collect_encrypt_options() const {
 
 GuiDecryptOptions MainWindow::collect_decrypt_options() const {
     GuiDecryptOptions o;
-    o.input = m_inputPath->text().trimmed().toStdString();
-    o.output = m_outputPath->text().trimmed().toStdString();
+    o.input = m_inputPath->text().toStdString();
+    o.output = m_outputPath->text().toStdString();
     o.keyfiles.reserve(static_cast<std::size_t>(m_keyfileList->count()));
     for (int i = 0; i < m_keyfileList->count(); ++i)
         o.keyfiles.emplace_back(m_keyfileList->item(i)->text().toStdString());
