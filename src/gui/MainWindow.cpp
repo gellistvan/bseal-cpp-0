@@ -5,6 +5,7 @@
 #include "gui/MainWindow.hpp"
 
 #include "app/CoreApi.hpp"
+#include "archive/SafeOutputTree.hpp"
 #include "gui/DecryptOptionsWidget.hpp"
 #include "gui/EncryptOptionsWidget.hpp"
 #include "gui/GuiErrorPresenter.hpp"
@@ -58,6 +59,7 @@ QWidget* path_field(QLineEdit*& out_edit, QWidget* parent, std::function<void()>
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+    m_platformSupportFn = archive::SafeOutputTree::is_platform_supported;
     setWindowTitle("BSEAL");
     setMinimumSize(660, 650);
 
@@ -305,13 +307,14 @@ void MainWindow::onClearKeyfiles() {
 
 void MainWindow::onRun() {
     const bool encrypt = m_encryptRadio->isChecked();
+    const bool platform_supported = m_platformSupportFn();
 
     // Collect and validate options before touching secrets.
     std::vector<std::string> errors;
     if (encrypt) {
         errors = gui::validate(collect_encrypt_options());
     } else {
-        errors = gui::validate(collect_decrypt_options());
+        errors = gui::validate(collect_decrypt_options(), platform_supported);
     }
     if (!errors.empty()) {
         QString msg;
@@ -333,12 +336,23 @@ void MainWindow::onRun() {
                             "Proceed with overwrite?")))
                 return;
         }
-        if (dec_opts.hardened_extract == cli::HardenedExtractMode::Off) {
+        const auto harden_outcome =
+            gui::resolve_hardened_extract(dec_opts.hardened_extract, platform_supported);
+        if (harden_outcome == gui::HardenedExtractOutcome::ExplicitNonHardened) {
             if (!confirm(tr("Disable hardened extraction?"),
                          tr("Hardened extraction is set to 'off'. This disables TOCTOU "
                             "protection and is unsafe for untrusted archives.\n\n"
                             "Only proceed if you trust the archive source and understand the risk.\n\n"
                             "Proceed without hardened extraction?")))
+                return;
+        } else if (harden_outcome == gui::HardenedExtractOutcome::AutoFallbackNonHardened) {
+            if (!confirm(tr("Non-hardened extraction fallback?"),
+                         tr("Hardened extraction is set to 'auto', but this platform does not "
+                            "support the POSIX hardened backend. Extraction will use the portable "
+                            "backend, which is not TOCTOU-hardened.\n\n"
+                            "This is unsafe for untrusted archives. Only proceed if you trust the "
+                            "archive source.\n\n"
+                            "Proceed with portable (non-hardened) extraction?")))
                 return;
         }
     }
@@ -591,6 +605,10 @@ void MainWindow::setOperationFnForTests(std::function<void()> fn) {
 
 void MainWindow::setConfirmationFnForTests(std::function<bool(const QString&, const QString&)> fn) {
     m_confirmFn = std::move(fn);
+}
+
+void MainWindow::setPlatformSupportFnForTests(std::function<bool()> fn) {
+    m_platformSupportFn = std::move(fn);
 }
 
 void MainWindow::setInputScanFnForTests(gui::InputScanFn fn) {

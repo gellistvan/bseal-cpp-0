@@ -323,6 +323,123 @@ void test_validation_failure_preserves_keyfile_list() {
 }
 
 // ---------------------------------------------------------------------------
+// Hardened extraction fallback: Auto on unsupported platform
+// ---------------------------------------------------------------------------
+
+// Set hardenedCombo to a given index (0=Auto, 1=On, 2=Off).
+static void set_hardened_index(bseal::gui::MainWindow& w, int idx) {
+    auto* combo = w.findChild<QComboBox*>("hardenedCombo");
+    if (!combo) throw std::runtime_error("hardenedCombo not found");
+    combo->setCurrentIndex(idx);
+}
+
+// Test: Auto + unsupported platform → confirmation triggered before passphrase extraction.
+// Confirm returns true → passphrase is extracted (field cleared).
+void test_auto_fallback_confirmation_before_passphrase() {
+    Fixture f("hf1");
+    f.switch_to_decrypt();
+    set_hardened_index(f.w, 0); // Auto
+    f.w.setPlatformSupportFnForTests([] { return false; }); // simulate unsupported
+
+    bool confirmed = false;
+    f.w.setConfirmationFnForTests([&](const QString&, const QString& msg) {
+        // Must see the fallback message — passphrase NOT yet extracted.
+        ASSERT_FALSE(f.pf->text().isEmpty()); // still has text → not yet extracted
+        if (msg.contains("portable") || msg.contains("fallback"))
+            confirmed = true;
+        return true; // accept
+    });
+
+    f.pf->setText("mysecret");
+    f.w.setOperationFnForTests([] {});
+    bool done = false;
+    QObject::connect(&f.w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+
+    ASSERT_TRUE(confirmed);
+    ASSERT_TRUE(f.pf->text().isEmpty()); // passphrase was extracted → cleared
+    ASSERT_TRUE(process_events_until([&] { return done; }, 5000));
+}
+
+// Test: Auto + unsupported platform → declining confirmation aborts before passphrase extraction.
+void test_auto_fallback_declined_aborts_before_passphrase() {
+    Fixture f("hf2");
+    f.switch_to_decrypt();
+    set_hardened_index(f.w, 0); // Auto
+    f.w.setPlatformSupportFnForTests([] { return false; });
+    f.w.setConfirmationFnForTests([](const QString&, const QString&) { return false; });
+
+    f.pf->setText("mysecret");
+    bool done = false;
+    QObject::connect(&f.w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+
+    ASSERT_FALSE(done);
+    ASSERT_FALSE(f.pf->text().isEmpty()); // passphrase NOT extracted
+}
+
+// Test: Auto + supported platform → no confirmation needed (existing behavior preserved).
+void test_auto_supported_no_confirmation() {
+    Fixture f("hf3");
+    f.switch_to_decrypt();
+    set_hardened_index(f.w, 0); // Auto
+    f.w.setPlatformSupportFnForTests([] { return true; }); // supported
+
+    // If confirm is called, throw — it should never be called.
+    f.w.setConfirmationFnForTests([](const QString&, const QString&) {
+        throw std::runtime_error("confirmation called unexpectedly for supported Auto");
+        return false;
+    });
+    f.pf->setText("mysecret");
+    f.w.setOperationFnForTests([] {});
+    bool done = false;
+    QObject::connect(&f.w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+
+    ASSERT_TRUE(f.pf->text().isEmpty()); // extracted and cleared
+    ASSERT_TRUE(process_events_until([&] { return done; }, 5000));
+}
+
+// Test: On + unsupported platform → validation error before passphrase extraction.
+void test_on_unsupported_validation_error_before_passphrase() {
+    Fixture f("hf4");
+    f.switch_to_decrypt();
+    set_hardened_index(f.w, 1); // On
+    f.w.setPlatformSupportFnForTests([] { return false; });
+
+    f.pf->setText("mysecret");
+    bool done = false;
+    QObject::connect(&f.w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+    queue_modal_dismiss();
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+
+    ASSERT_FALSE(done);
+    ASSERT_FALSE(f.pf->text().isEmpty()); // NOT extracted (validation rejected first)
+}
+
+// Test: explicit Off still triggers confirmation (regression guard).
+void test_explicit_off_confirmation_preserved() {
+    Fixture f("hf5");
+    f.switch_to_decrypt();
+    set_hardened_index(f.w, 2); // Off
+
+    bool confirmed = false;
+    f.w.setConfirmationFnForTests([&](const QString&, const QString&) {
+        confirmed = true;
+        return false; // reject to abort
+    });
+    f.pf->setText("mysecret");
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+
+    ASSERT_TRUE(confirmed);
+    ASSERT_FALSE(f.pf->text().isEmpty()); // not extracted (rejected)
+}
+
+// ---------------------------------------------------------------------------
 // Chunk size validation: invalid sizes must reject before passphrase extraction
 // ---------------------------------------------------------------------------
 
@@ -483,6 +600,11 @@ int main() {
     run_test("EmptyOutputPathRejected",               test_empty_output_path_rejected);
     run_test("InvalidFixedPaddingNoExtraction",       test_invalid_fixed_padding_no_passphrase_extraction);
     run_test("InvalidKdfPolicyNoExtraction",          test_invalid_kdf_policy_no_passphrase_extraction);
+    run_test("AutoFallbackConfirmBeforePassphrase",   test_auto_fallback_confirmation_before_passphrase);
+    run_test("AutoFallbackDeclinedAbortsBeforePass",  test_auto_fallback_declined_aborts_before_passphrase);
+    run_test("AutoSupportedNoConfirmation",           test_auto_supported_no_confirmation);
+    run_test("OnUnsupportedValidationError",          test_on_unsupported_validation_error_before_passphrase);
+    run_test("ExplicitOffConfirmationPreserved",      test_explicit_off_confirmation_preserved);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;

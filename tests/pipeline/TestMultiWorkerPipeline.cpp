@@ -15,6 +15,7 @@
 #include "crypto/XChaCha20Poly1305Backend.hpp"
 #include "pipeline/DecryptPipeline.hpp"
 #include "pipeline/EncryptPipeline.hpp"
+#include "platform/CpuFeatures.hpp"
 
 #include "PipelineTestSupport.hpp"
 
@@ -184,6 +185,7 @@ TEST(MultiWorkerPipeline, XChaCha20EncryptOneWorkerDecryptFourWorkers) {
 // ---------------------------------------------------------------------------
 
 TEST(MultiWorkerPipeline, AesGcmDecryptWith1WorkerMatchesExpected) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     TempDir temp("bseal_mw_aesgcm_1worker");
     const auto input  = temp.path() / "input";
     create_sample_tree(input);
@@ -201,6 +203,7 @@ TEST(MultiWorkerPipeline, AesGcmDecryptWith1WorkerMatchesExpected) {
 }
 
 TEST(MultiWorkerPipeline, AesGcmDecryptWith4WorkersMatchesExpected) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     TempDir temp("bseal_mw_aesgcm_4workers");
     const auto input  = temp.path() / "input";
     create_sample_tree(input);
@@ -220,6 +223,7 @@ TEST(MultiWorkerPipeline, AesGcmDecryptWith4WorkersMatchesExpected) {
 // Decrypt the same sealed archive three times with 1, 2, and 4 workers and
 // verify byte-for-byte identical output regardless of parallelism.
 TEST(MultiWorkerPipeline, AesGcmIdenticalOutputAcrossWorkerCounts) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     TempDir input_temp("bseal_mw_aesgcm_src");
     TempDir sealed_temp("bseal_mw_aesgcm_sealed");
 

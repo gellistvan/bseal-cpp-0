@@ -28,13 +28,19 @@ std::filesystem::perms bits_to_permissions(std::uint32_t bits) {
 }
 
 std::filesystem::file_time_type unix_ns_to_file_time(std::int64_t ns) {
+    using ftp = std::filesystem::file_time_type;
+#ifdef _WIN32
+    // On MSVC, ftp::duration is 100-ns ticks since 1601-01-01.
+    // Convert ns→100-ns ticks first, then add the 1601→1970 offset.
+    // (Adding the offset in ns would overflow int64 for modern timestamps.)
+    constexpr int64_t kWin32UnixDelta100ns = 116444736000000000LL;
+    const int64_t unix100ns = ns / 100LL;
+    return ftp(ftp::duration(unix100ns + kWin32UnixDelta100ns));
+#else
     using namespace std::chrono;
-
-    // On POSIX, file_time_type::clock uses the Unix epoch on both libstdc++ and
-    // libc++, so we can construct directly from ns-since-epoch without clock_cast
-    // or now(). The cast handles the case where file_time_type::duration ≠ nanoseconds.
-    return std::filesystem::file_time_type(
-        duration_cast<std::filesystem::file_time_type::duration>(nanoseconds{ns}));
+    // On POSIX, file_time_type uses Unix epoch; no offset needed.
+    return ftp(duration_cast<ftp::duration>(nanoseconds{ns}));
+#endif
 }
 
 } // namespace

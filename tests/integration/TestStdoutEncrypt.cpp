@@ -138,7 +138,21 @@ ProcessResult run_bseal(
     cmd += " > " + shell_quote(stdout_f);
     cmd += " 2> " + shell_quote(stderr_f);
 
+#ifdef _WIN32
+    // Batch file sidesteps cmd.exe /C quote-stripping (see TestBlackBoxCli.cpp).
+    // SET lines at the top inject env vars that the POSIX path prepends to the shell command.
+    const auto bat = scratch / "_run.bat";
+    {
+        std::ofstream bf(bat, std::ios::binary);
+        for (const auto& [k, v] : env_vars) {
+            bf << "SET " << k << "=" << v << "\r\n";
+        }
+        bf << cmd << "\r\n";
+    }
+    const int raw = std::system(bat.string().c_str());
+#else
     const int raw = std::system(cmd.c_str());
+#endif
     ProcessResult r;
     r.exit_code = normalize_rc(raw);
     if (fs::exists(stdout_f)) r.stdout_bytes = read_file(stdout_f);
@@ -151,6 +165,12 @@ void fix_timestamp(const fs::path& p) {
 #if !defined(_WIN32)
     utimbuf tb{1700000000, 1700000000};
     utime(p.c_str(), &tb);
+#else
+    // Convert Unix epoch 1700000000 → Windows file_time_type (100-ns ticks since 1601-01-01).
+    constexpr int64_t kWin32UnixDelta100ns = 116444736000000000LL;
+    const int64_t win100ns = 1700000000LL * 10000000LL + kWin32UnixDelta100ns;
+    std::error_code ec;
+    fs::last_write_time(p, fs::file_time_type(fs::file_time_type::duration(win100ns)), ec);
 #endif
 }
 

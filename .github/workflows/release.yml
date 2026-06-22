@@ -1,0 +1,154 @@
+name: Release
+
+# Triggers only on version tags pushed to the repo.
+# Pattern covers: v0.1.0  v1.2.3  v1.2.3-rc1  v2.0.0-beta.2
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+# Minimal default: no write access to any resource.
+# The release job overrides this to contents: write.
+permissions:
+  contents: read
+
+jobs:
+
+  # --------------------------------------------------------------------------
+  # Linux build: ubuntu-latest, Release config, .deb via CPack.
+  # apt package versions are pinned to the ubuntu-24.04 image snapshot;
+  # they advance only when GitHub updates the runner image.
+  # --------------------------------------------------------------------------
+  build-linux:
+    name: Build and test (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential pkg-config \
+            libsodium-dev libssl-dev \
+            dpkg-dev
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBSEAL_ENABLE_INSTALL=ON \
+            -DBSEAL_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j$(nproc)
+
+      - name: Package (.deb)
+        run: cd build && cpack
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: linux-package
+          path: build/*.deb
+          if-no-files-found: error
+          retention-days: 1
+
+  # --------------------------------------------------------------------------
+  # Windows build: windows-latest (Server 2022), Release config, .zip via CPack.
+  #
+  # Dependencies via vcpkg (pre-installed on the runner image):
+  #   - Library versions are determined by the vcpkg registry commit bundled
+  #     with the runner image. To pin them exactly, add a "builtin-baseline"
+  #     commit hash to vcpkg.json and set VCPKG_COMMIT_ID in the runner env.
+  #   - Triplet x64-windows-static: statically links the CRT and all deps,
+  #     producing a single standalone bseal.exe with no runtime dependencies.
+  #
+  # libsodium is found via vcpkg's unofficial-sodium CMake config (not
+  # pkg-config), so no pkg-config installation is required on Windows.
+  # --------------------------------------------------------------------------
+  build-windows:
+    name: Build and test (Windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Configure (Release, static)
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DBSEAL_ENABLE_INSTALL=ON `
+            -DBSEAL_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: Package (.zip)
+        # -C Release ensures CPack picks up the Release build tree, not Debug.
+        run: cd build && cpack -C Release
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: windows-package
+          path: build\*.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  # --------------------------------------------------------------------------
+  # Release: only runs when BOTH platform builds pass.
+  # Downloads the two artifacts, computes SHA-256 checksums, and creates the
+  # GitHub Release. Uses the built-in gh CLI (no third-party release action).
+  # Tags containing '-' (e.g. v1.2.3-rc1) are marked as pre-releases.
+  # --------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create the release and upload assets
+
+    steps:
+      - uses: actions/download-artifact@fa0a91b85d4f404e444306234bafc98c0e1131af # v4.1.8
+        with:
+          name: linux-package
+          path: artifacts/
+
+      - uses: actions/download-artifact@fa0a91b85d4f404e444306234bafc98c0e1131af # v4.1.8
+        with:
+          name: windows-package
+          path: artifacts/
+
+      - name: Compute SHA-256 checksums
+        # Users can verify downloads with: sha256sum --check SHA256SUMS.txt
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release and attach artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PRERELEASE_FLAG=""
+          if [[ "${{ github.ref_name }}" == *-* ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "BSEAL ${{ github.ref_name }}" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            artifacts/*

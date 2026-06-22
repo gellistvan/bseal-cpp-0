@@ -80,7 +80,10 @@ DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QDialog(parent) {
     m_hardenedCombo->addItem(tr("off — unsafe"),          2);
     m_hardenedCombo->setCurrentIndex(0);
     m_hardenedCombo->setItemData(0, tr("Use hardened POSIX extraction when available; "
-                                       "fall back to portable otherwise."), Qt::ToolTipRole);
+                                       "fall back to portable (non-TOCTOU-hardened) otherwise.\n"
+                                       "On platforms without POSIX support, you will be asked to "
+                                       "confirm before proceeding. Use 'on' to fail closed instead."),
+                                Qt::ToolTipRole);
     m_hardenedCombo->setItemData(1, tr("Require POSIX hardened extraction; "
                                        "fail immediately if unavailable."), Qt::ToolTipRole);
     m_hardenedCombo->setItemData(2, tr("Always use the portable (non-hardened) backend. "
@@ -89,7 +92,8 @@ DecryptOptionsWidget::DecryptOptionsWidget(QWidget* parent) : QDialog(parent) {
 
     auto* hardenedWarn = new QLabel(
         tr("⚠️  'off' disables TOCTOU protection and is unsafe for untrusted archives. "
-           "You will be asked to confirm before proceeding."),
+           "'auto' uses hardened extraction only on supported platforms — you will be asked "
+           "to confirm if it falls back to portable. You will be asked to confirm before proceeding."),
         this);
     hardenedWarn->setWordWrap(true);
     hardenedWarn->setStyleSheet("color:#7a0000;");

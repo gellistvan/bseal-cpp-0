@@ -13,6 +13,18 @@
 
 set(ARGON2_SUBMODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/submodules/argon2")
 
+# On Windows, vcpkg's libsodium bundles most argon2 symbols. Building our own
+# argon2_static would produce duplicate symbols at link time. We only need the
+# headers for compilation; libsodium satisfies the symbols at link time.
+if (WIN32)
+    add_library(argon2_static INTERFACE)
+    add_library(argon2::argon2 ALIAS argon2_static)
+    target_include_directories(argon2_static INTERFACE
+        $<BUILD_INTERFACE:${ARGON2_SUBMODULE_DIR}/include>
+    )
+    return()
+endif()
+
 if (NOT EXISTS "${ARGON2_SUBMODULE_DIR}/include/argon2.h")
     message(FATAL_ERROR
         "Argon2 submodule is missing. Run:\n"
@@ -55,6 +67,7 @@ target_compile_features(argon2_static PRIVATE c_std_99)
 # Silence warnings from upstream sources that we do not own.
 target_compile_options(argon2_static PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-w>
+    $<$<C_COMPILER_ID:MSVC>:/W0>
 )
 
 # The opt.c path uses pthreads for parallel lanes on POSIX systems.

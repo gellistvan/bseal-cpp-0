@@ -216,7 +216,9 @@ crypto::SecureBuffer read_passphrase_from_stdin() {
         throw bseal::InvalidArgument("passphrase exceeds maximum length of " +
                                      std::to_string(kMaxPassphraseBytes) + " bytes");
     }
-    if (n == 0 || !std::cin) {
+    // Check n == 0 only; !std::cin (fail/eof after the last get()) is expected
+    // when stdin has no trailing newline and is not an error condition.
+    if (n == 0 || std::cin.bad()) {
         crypto::secure_memzero(staging, kBuf);
         throw bseal::InvalidArgument("failed to read passphrase from stdin");
     }

@@ -210,7 +210,7 @@ KatResult kat_argon2id_impl() {
 
     if (rc != ARGON2_OK) {
         return fail("argon2id",
-            std::string("argon2id_hash_raw returned: ") + argon2_error_message(rc));
+            std::string("argon2id_hash_raw returned: ") + std::to_string(rc));
     }
     if (!bytes_equal(hash, kExpected, 32)) {
         return fail("argon2id", "hash mismatch");

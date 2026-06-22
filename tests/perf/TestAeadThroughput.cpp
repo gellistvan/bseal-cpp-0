@@ -16,6 +16,7 @@
 #include "crypto/AesGcmBackend.hpp"
 #include "crypto/CryptoBackend.hpp"
 #include "crypto/XChaCha20Poly1305Backend.hpp"
+#include "platform/CpuFeatures.hpp"
 
 #include "common/Types.hpp"
 
@@ -166,6 +167,7 @@ TEST(AeadThroughput, XChaCha20Poly1305Encrypt) {
 }
 
 TEST(AeadThroughput, AesGcmEncrypt) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     bseal::crypto::AesGcmBackend backend;
     measure_throughput(backend, "AES-256-GCM");
 }

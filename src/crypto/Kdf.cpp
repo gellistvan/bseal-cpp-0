@@ -270,7 +270,7 @@ SecureBuffer derive_master_seed(const KdfInput& input) {
     );
 
     if (rc != ARGON2_OK) {
-        throw Error(std::string("Argon2id derivation failed: ") + argon2_error_message(rc));
+        throw Error(std::string("Argon2id derivation failed: ") + std::to_string(rc));
     }
 
     // Build the HKDF IKM (pass_key || keyfile_mix) in a SecureBuffer so that Argon2id-derived

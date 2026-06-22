@@ -457,13 +457,15 @@ TEST(MalformedShards, FrameHeader_WrongMagic_Throws) {
         bseal::io::kGlobalPublicHeaderV1Size + bseal::io::kShardPublicHeaderV1Size;
     patch_bytes(shard, kFrameOffset, {'G', 'A', 'R', 'B'});
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -478,13 +480,15 @@ TEST(MalformedShards, FrameHeader_UnknownFlags_Throws) {
     // 0xFFFE = all bits set except FinalChunk bit0 — all unknown bits set
     patch_u16_le(shard, kFlagsOffset, 0xFFFEu);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -499,13 +503,15 @@ TEST(MalformedShards, FrameHeader_TagLen8_Throws) {
     constexpr std::uint64_t kTagLenOffset = kFrameOffset + 32;
     patch_u16_le(shard, kTagLenOffset, 8u);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -521,13 +527,15 @@ TEST(MalformedShards, FrameHeader_CiphertextLenMismatch_Throws) {
     patch_u64_le(shard, kCiphertextLenOffset,
                  static_cast<std::uint64_t>(kTestChunkPlain) + 1u);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -541,13 +549,15 @@ TEST(MalformedShards, FrameHeader_NonzeroReserved0_Throws) {
     constexpr std::uint64_t kReserved0Offset = kFrameOffset + 34;
     patch_u16_le(shard, kReserved0Offset, 1u);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -561,13 +571,15 @@ TEST(MalformedShards, FrameHeader_NonzeroReserved1_Throws) {
     constexpr std::uint64_t kReserved1Offset = kFrameOffset + 36;
     patch_u32_le(shard, kReserved1Offset, 0xDEADBEEFu);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -756,13 +768,15 @@ TEST(MalformedShards, FrameHeader_PlaintextLenExceedsChunkPlainSize_Throws) {
     constexpr std::uint64_t kPlaintextLenOffset = kFrameOffset + 20;
     patch_u32_le(shard, kPlaintextLenOffset, kTestChunkPlain + 1u);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -777,13 +791,15 @@ TEST(MalformedShards, FrameHeader_WrongShardIndex_Throws) {
     // Shard file is shard 0; claim shard 1 in the frame.
     patch_u32_le(shard, kShardIndexOffset, 1u);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -794,13 +810,15 @@ TEST(MalformedShards, ShardReader_MissingChunkIndexGap_Throws) {
     auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
     auto c1 = fake_ciphertext_and_tag(0x40, kTestChunkPlain);
 
-    bseal::io::ShardWriter writer(
-        make_writer_options(dir, 4 * 1024 * 1024, kTestChunkPlain, 1, 2));
-    write_fake_frame(writer, 0, kTestChunkPlain, false,
-                     bseal::ConstByteSpan{c0.data(), c0.size()});
-    write_fake_frame(writer, 1, kTestChunkPlain, true,
-                     bseal::ConstByteSpan{c1.data(), c1.size()});
-    writer.finish();
+    {
+        bseal::io::ShardWriter writer(
+            make_writer_options(dir, 4 * 1024 * 1024, kTestChunkPlain, 1, 2));
+        write_fake_frame(writer, 0, kTestChunkPlain, false,
+                         bseal::ConstByteSpan{c0.data(), c0.size()});
+        write_fake_frame(writer, 1, kTestChunkPlain, true,
+                         bseal::ConstByteSpan{c1.data(), c1.size()});
+        writer.finish();
+    }
 
     const auto shard = only_bin_file(dir);
 
@@ -815,16 +833,18 @@ TEST(MalformedShards, ShardReader_MissingChunkIndexGap_Throws) {
 
     patch_u64_le(shard, kChunkIdxOffset, 2u);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    auto first = reader.read_next_chunk_record();
-    ASSERT_TRUE(first.has_value());
+        auto first = reader.read_next_chunk_record();
+        ASSERT_TRUE(first.has_value());
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }
@@ -835,13 +855,15 @@ TEST(MalformedShards, ShardReader_ReorderedChunkIndex_Throws) {
     auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
     auto c1 = fake_ciphertext_and_tag(0x40, kTestChunkPlain);
 
-    bseal::io::ShardWriter writer(
-        make_writer_options(dir, 4 * 1024 * 1024, kTestChunkPlain, 1, 2));
-    write_fake_frame(writer, 0, kTestChunkPlain, false,
-                     bseal::ConstByteSpan{c0.data(), c0.size()});
-    write_fake_frame(writer, 1, kTestChunkPlain, true,
-                     bseal::ConstByteSpan{c1.data(), c1.size()});
-    writer.finish();
+    {
+        bseal::io::ShardWriter writer(
+            make_writer_options(dir, 4 * 1024 * 1024, kTestChunkPlain, 1, 2));
+        write_fake_frame(writer, 0, kTestChunkPlain, false,
+                         bseal::ConstByteSpan{c0.data(), c0.size()});
+        write_fake_frame(writer, 1, kTestChunkPlain, true,
+                         bseal::ConstByteSpan{c1.data(), c1.size()});
+        writer.finish();
+    }
 
     const auto shard = only_bin_file(dir);
 
@@ -858,16 +880,18 @@ TEST(MalformedShards, ShardReader_ReorderedChunkIndex_Throws) {
     // Set chunk index of second frame to 0 — same as first (duplicate / reordered)
     patch_u64_le(shard, kChunkIdxOffset, 0u);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    auto first = reader.read_next_chunk_record();
-    ASSERT_TRUE(first.has_value());
+        auto first = reader.read_next_chunk_record();
+        ASSERT_TRUE(first.has_value());
 
-    EXPECT_THROW(
-        (void)reader.read_next_chunk_record(),
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            (void)reader.read_next_chunk_record(),
+            bseal::InvalidArgument);
+    }
 
     fs::remove_all(dir);
 }

@@ -6,7 +6,17 @@
 #include <exception>
 #include <iostream>
 
+#ifdef _WIN32
+#  include <fcntl.h>
+#  include <io.h>
+#endif
+
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // Shard data written to stdout (--output -) is binary. Set binary mode so
+    // the CRT doesn't expand \n → \r\n and corrupt the ciphertext.
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     try {
         const auto args = bseal::cli::parse_args(argc, argv);
 

@@ -85,7 +85,18 @@ ProcessResult run_bseal(const fs::path& scratch,
     const auto stdout_f = scratch / "stdout.txt";
     const auto stderr_f = scratch / "stderr.txt";
     write_file(stdin_f, stdin_text);
-    const int raw = std::system(make_command_line(args, stdin_f, stdout_f, stderr_f).c_str());
+    const std::string cmd_str = make_command_line(args, stdin_f, stdout_f, stderr_f);
+#ifdef _WIN32
+    // Batch file sidesteps cmd.exe /C quote-stripping (see TestBlackBoxCli.cpp).
+    const auto bat = scratch / "_run.bat";
+    {
+        std::ofstream bf(bat, std::ios::binary);
+        bf << cmd_str << "\r\n";
+    }
+    const int raw = std::system(bat.string().c_str());
+#else
+    const int raw = std::system(cmd_str.c_str());
+#endif
     ProcessResult r;
     r.exit_code = normalize_system_result(raw);
     if (fs::exists(stdout_f)) r.stdout_text = read_file(stdout_f);

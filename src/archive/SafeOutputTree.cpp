@@ -28,6 +28,11 @@ bool SafeOutputTree::is_platform_supported() noexcept {
 SafeOutputTree::SafeOutputTree(const std::filesystem::path& root,
                                HardenedExtractMode mode)
     : root_path_(root) {
+    // Canonicalize root so the escape check (lexically_relative) works even
+    // when the caller passes a short-name path (e.g. RUNNER~1 on Windows).
+    std::error_code canon_ec;
+    auto canonical_root = std::filesystem::weakly_canonical(root, canon_ec);
+    if (!canon_ec) root_path_ = std::move(canonical_root);
     if (mode == HardenedExtractMode::On && !is_platform_supported()) {
         throw InvalidArgument(
             "--hardened-extract=on is not supported on this platform; "
@@ -284,8 +289,11 @@ void SafeOutputTree::rename_into(const std::filesystem::path& src_abs,
     // Guard against a pre-existing symlink redirecting the write outside root.
     {
         std::error_code canon_ec;
+        // Use weakly_canonical (same as the constructor) so the 8.3-vs-long-name
+        // form matches root_path_ on Windows (canonical() may expand RUNNER~1 to the
+        // full username, breaking lexically_relative against root_path_).
         const auto real_parent =
-            std::filesystem::canonical(dest_abs.parent_path(), canon_ec);
+            std::filesystem::weakly_canonical(dest_abs.parent_path(), canon_ec);
         if (!canon_ec) {
             const auto rel = real_parent.lexically_relative(root_path_);
             if (!rel.empty() && *rel.begin() == "..") {

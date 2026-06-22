@@ -88,15 +88,24 @@ def compute_tree_sha256_via_shell(root: Path) -> str:
     Uses is_symlink() to exclude symlinks, matching find -type f behaviour
     (find -type f does not follow or include symlinks).
     """
-    # Collect files the same way as `find <root> -type f | sort`
+    # Collect files the same way as `(cd <root> && find . -type f | sort)`,
+    # using ./-prefixed POSIX relative paths to match sha256sum output format.
+    # Use as_posix() so the hash is identical on Windows (backslash paths) and
+    # Linux/macOS — the Linux sha256sum pipeline always uses forward slashes.
     all_files = sorted(
-        str(p) for p in root.rglob("*")
+        "./" + p.relative_to(root).as_posix() for p in root.rglob("*")
         if p.is_file() and not p.is_symlink()
     )
     # Compute per-file sha256sum lines: "<hash>  <path>"
     combined = hashlib.sha256()
     for f in all_files:
-        file_hash = hashlib.sha256(Path(f).read_bytes()).hexdigest()
+        content = (root / f[2:]).read_bytes()
+        # Normalize CRLF → LF for text files so Windows git.core.autocrlf
+        # checkout doesn't break the hash. Binary files (containing NUL) are
+        # hashed as-is.
+        if b"\x00" not in content:
+            content = content.replace(b"\r\n", b"\n")
+        file_hash = hashlib.sha256(content).hexdigest()
         combined.update(f"{file_hash}  {f}\n".encode())
     return combined.hexdigest()
 

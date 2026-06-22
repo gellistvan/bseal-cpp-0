@@ -2,6 +2,7 @@ build/
 .claude
 .cache
 build-tsan/
+build-test/
 build-gui/
 build-fuzz/
 build-debug/
@@ -16,6 +17,7 @@ cmake-build-*/
 .vscode/
 .idea/
 *.bin
+!tests/fixtures/**/*.bin
 *.tmp
 compile_commands.json
 .DS_Store
