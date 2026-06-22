@@ -60,10 +60,10 @@ add_library(bseal_core
 )
 
 add_library(bseal::core ALIAS bseal_core)
-find_package(PkgConfig REQUIRED)
 if (BSEAL_FUZZ_STATIC_LINK)
     # OSS-Fuzz/ClusterFuzzLite: fuzzer runner containers have no shared libs.
     # Locate the static archives directly so the binaries are self-contained.
+    find_package(PkgConfig REQUIRED)
     find_library(SODIUM_STATIC_LIB NAMES libsodium.a REQUIRED)
     find_path(SODIUM_INCLUDE_DIR NAMES sodium.h PATH_SUFFIXES sodium)
     add_library(_bseal_sodium STATIC IMPORTED)
@@ -74,7 +74,12 @@ if (BSEAL_FUZZ_STATIC_LINK)
     endif()
     set(BSEAL_SODIUM_TARGET _bseal_sodium)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
+elseif (WIN32)
+    # Windows: use vcpkg's CMake config (unofficial-sodium) instead of pkg-config.
+    find_package(unofficial-sodium CONFIG REQUIRED)
+    set(BSEAL_SODIUM_TARGET unofficial-sodium::sodium)
 else()
+    find_package(PkgConfig REQUIRED)
     pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
     set(BSEAL_SODIUM_TARGET PkgConfig::SODIUM)
 endif()
@@ -87,6 +92,11 @@ target_link_libraries(bseal_core
         blake3::blake3
         argon2::argon2
 )
+
+if (WIN32)
+    # BCryptGenRandom used in platform/Random.cpp on Windows.
+    target_link_libraries(bseal_core PRIVATE bcrypt)
+endif()
 
 
 target_include_directories(bseal_core
@@ -330,12 +340,47 @@ if (BSEAL_BUILD_FUZZERS)
 endif()
 
 if (BSEAL_ENABLE_INSTALL)
-    install(TARGETS bseal bseal_core
-        EXPORT bsealTargets
+    install(TARGETS bseal
         RUNTIME DESTINATION bin
-        LIBRARY DESTINATION lib
+        COMPONENT runtime
+    )
+    install(TARGETS bseal_core
+        EXPORT bsealTargets
         ARCHIVE DESTINATION lib
+        COMPONENT dev
     )
     install(DIRECTORY src/ DESTINATION include/bseal
-        FILES_MATCHING PATTERN "*.hpp")
+        COMPONENT dev
+        FILES_MATCHING PATTERN "*.hpp"
+    )
+endif()
+
+# ---------------------------------------------------------------------------
+# CPack — minimal packaging config (ZIP on Windows, DEB on Linux)
+# include(CPack) must come after all install() calls.
+# ---------------------------------------------------------------------------
+if (BSEAL_ENABLE_INSTALL)
+    set(CPACK_PACKAGE_NAME              "bseal")
+    set(CPACK_PACKAGE_VERSION           "${PROJECT_VERSION}")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
+    set(CPACK_PACKAGE_VENDOR            "BSEAL Project")
+    set(CPACK_PACKAGE_CONTACT           "istvan.gellai@gmail.com")
+    set(CPACK_RESOURCE_FILE_LICENSE     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+    set(CPACK_STRIP_FILES               ON)
+    # Package only the CLI binary; exclude dev headers and static lib.
+    set(CPACK_COMPONENTS_ALL            runtime)
+    set(CPACK_COMPONENT_RUNTIME_REQUIRED ON)
+
+    if (WIN32)
+        set(CPACK_GENERATOR  "ZIP")
+        set(CPACK_SYSTEM_NAME "win64")
+    else()
+        set(CPACK_GENERATOR  "DEB")
+        set(CPACK_DEBIAN_PACKAGE_SECTION  "utils")
+        set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+        # Auto-detect runtime .so deps from the linked binary (requires dpkg-dev).
+        set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    endif()
+
+    include(CPack)
 endif()

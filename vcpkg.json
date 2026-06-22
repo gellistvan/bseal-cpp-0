@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "bseal",
+  "version-string": "0.1.0",
+  "dependencies": [
+    { "name": "libsodium" },
+    { "name": "openssl" }
+  ]
+}
