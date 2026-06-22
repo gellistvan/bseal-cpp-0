@@ -23,6 +23,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QEventLoop>
 #include <QLineEdit>
 #include <QRadioButton>
@@ -159,6 +160,18 @@ struct Fixture {
 QCheckBox* get_check(bseal::gui::MainWindow& w, const char* name) {
     auto* c = w.findChild<QCheckBox*>(QString::fromUtf8(name));
     if (!c) throw std::runtime_error(std::string("checkbox not found: ") + name);
+    return c;
+}
+
+QLineEdit* get_line_edit(bseal::gui::MainWindow& w, const char* name) {
+    auto* e = w.findChild<QLineEdit*>(QString::fromUtf8(name));
+    if (!e) throw std::runtime_error(std::string("line edit not found: ") + name);
+    return e;
+}
+
+QComboBox* get_combo(bseal::gui::MainWindow& w, const char* name) {
+    auto* c = w.findChild<QComboBox*>(QString::fromUtf8(name));
+    if (!c) throw std::runtime_error(std::string("combo not found: ") + name);
     return c;
 }
 
@@ -309,6 +322,141 @@ void test_validation_failure_preserves_keyfile_list() {
     ASSERT_TRUE(f.w.keyfilePaths().size() == 1);
 }
 
+// ---------------------------------------------------------------------------
+// Chunk size validation: invalid sizes must reject before passphrase extraction
+// ---------------------------------------------------------------------------
+
+// Helper: set chunk size, run, verify passphrase not extracted.
+void check_invalid_chunk_rejects(const char* tag, const char* chunk_text) {
+    Fixture f(tag);
+    get_line_edit(f.w, "chunkSizeEdit")->setText(chunk_text);
+    f.pf->setText("mysecret");
+    f.cf->setText("mysecret");
+    queue_modal_dismiss();
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+    ASSERT_FALSE(f.pf->text().isEmpty());
+}
+
+void test_chunk_size_32k_rejected() {
+    check_invalid_chunk_rejects("ck1", "32K");
+}
+
+void test_chunk_size_65537_rejected() {
+    check_invalid_chunk_rejects("ck2", "65537");
+}
+
+void test_chunk_size_3m_rejected() {
+    check_invalid_chunk_rejects("ck3", "3M");
+}
+
+void test_chunk_size_128m_rejected() {
+    check_invalid_chunk_rejects("ck4", "128M");
+}
+
+void test_chunk_size_5g_rejected() {
+    check_invalid_chunk_rejects("ck5", "5G");
+}
+
+// Helper: set chunk size, run with no-op operation, verify passphrase was extracted (field cleared).
+void check_valid_chunk_allowed(const char* tag, const char* chunk_text) {
+    Fixture f(tag);
+    get_line_edit(f.w, "chunkSizeEdit")->setText(chunk_text);
+    f.pf->setText("mysecret");
+    f.cf->setText("mysecret");
+    f.w.setOperationFnForTests([] {});
+    bool done = false;
+    QObject::connect(&f.w, &bseal::gui::MainWindow::operationDone,
+                     [&](bool, const QString&) { done = true; });
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+    ASSERT_TRUE(f.pf->text().isEmpty()); // passphrase was extracted → field cleared
+    ASSERT_TRUE(process_events_until([&] { return done; }, 5000));
+}
+
+void test_chunk_size_64k_allowed() {
+    check_valid_chunk_allowed("ck6", "64K");
+}
+
+void test_chunk_size_16m_allowed() {
+    check_valid_chunk_allowed("ck7", "16M");
+}
+
+void test_chunk_size_64m_allowed() {
+    check_valid_chunk_allowed("ck8", "64M");
+}
+
+// ---------------------------------------------------------------------------
+// Path collection: paths must not be trimmed
+// ---------------------------------------------------------------------------
+
+void test_input_path_leading_space_preserved() {
+    bseal::gui::MainWindow w;
+    auto inputs = w.findChildren<QLineEdit*>();
+    if (inputs.size() < 2) throw std::runtime_error("expected ≥2 QLineEdit children");
+    inputs[0]->setText(" /tmp/leading-space");
+    auto opts = w.collectEncryptOptionsForTests();
+    ASSERT_TRUE(opts.input == " /tmp/leading-space");
+}
+
+void test_output_path_trailing_space_preserved() {
+    bseal::gui::MainWindow w;
+    auto inputs = w.findChildren<QLineEdit*>();
+    if (inputs.size() < 2) throw std::runtime_error("expected ≥2 QLineEdit children");
+    inputs[1]->setText("/tmp/trailing-space ");
+    auto opts = w.collectEncryptOptionsForTests();
+    ASSERT_TRUE(opts.output == "/tmp/trailing-space ");
+}
+
+void test_empty_input_path_rejected() {
+    Fixture f("ep1", /*set_paths=*/false);
+    f.outEdit->setText("/tmp/somewhere");
+    f.pf->setText("pass");
+    f.cf->setText("pass");
+    queue_modal_dismiss();
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+    ASSERT_FALSE(f.pf->text().isEmpty());
+}
+
+void test_empty_output_path_rejected() {
+    Fixture f("ep2", /*set_paths=*/false);
+    f.inEdit->setText(f.src.sub("data").string().c_str());
+    // leave outEdit empty
+    f.pf->setText("pass");
+    f.cf->setText("pass");
+    queue_modal_dismiss();
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+    ASSERT_FALSE(f.pf->text().isEmpty());
+}
+
+// ---------------------------------------------------------------------------
+// Fixed-size padding: non-multiple of chunk size must reject before extraction
+// ---------------------------------------------------------------------------
+
+void test_invalid_fixed_padding_no_passphrase_extraction() {
+    Fixture f("fp1");
+    // Select fixed-size padding (index 3) with a value not divisible by 16 MiB default chunk.
+    get_combo(f.w, "paddingCombo")->setCurrentIndex(3);
+    get_line_edit(f.w, "fixedPaddingEdit")->setText("100K"); // 102400, not multiple of 16 MiB
+    f.pf->setText("mysecret");
+    f.cf->setText("mysecret");
+    queue_modal_dismiss();
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+    ASSERT_FALSE(f.pf->text().isEmpty());
+}
+
+// ---------------------------------------------------------------------------
+// Decrypt KDF policy: zero max_memory must reject before passphrase extraction
+// ---------------------------------------------------------------------------
+
+void test_invalid_kdf_policy_no_passphrase_extraction() {
+    Fixture f("kdf1");
+    f.switch_to_decrypt();
+    get_line_edit(f.w, "kdfMemEdit")->setText("0"); // 0 KiB → fails validate_kdf_resource_policy
+    f.pf->setText("mysecret");
+    queue_modal_dismiss();
+    QMetaObject::invokeMethod(&f.w, "onRun", Qt::DirectConnection);
+    ASSERT_FALSE(f.pf->text().isEmpty());
+}
+
 } // namespace
 
 int main() {
@@ -321,6 +469,20 @@ int main() {
     run_test("OperationStartClearsPassphrase",        test_operation_start_clears_passphrase);
     run_test("DecryptOperationStartClearsPassphrase", test_decrypt_operation_start_clears_passphrase);
     run_test("ValidationFailurePreservesKeyfileList", test_validation_failure_preserves_keyfile_list);
+    run_test("ChunkSize32KRejected",                  test_chunk_size_32k_rejected);
+    run_test("ChunkSize65537Rejected",                test_chunk_size_65537_rejected);
+    run_test("ChunkSize3MRejected",                   test_chunk_size_3m_rejected);
+    run_test("ChunkSize128MRejected",                 test_chunk_size_128m_rejected);
+    run_test("ChunkSize5GRejected",                   test_chunk_size_5g_rejected);
+    run_test("ChunkSize64KAllowed",                   test_chunk_size_64k_allowed);
+    run_test("ChunkSize16MAllowed",                   test_chunk_size_16m_allowed);
+    run_test("ChunkSize64MAllowed",                   test_chunk_size_64m_allowed);
+    run_test("InputPathLeadingSpacePreserved",         test_input_path_leading_space_preserved);
+    run_test("OutputPathTrailingSpacePreserved",       test_output_path_trailing_space_preserved);
+    run_test("EmptyInputPathRejected",                test_empty_input_path_rejected);
+    run_test("EmptyOutputPathRejected",               test_empty_output_path_rejected);
+    run_test("InvalidFixedPaddingNoExtraction",       test_invalid_fixed_padding_no_passphrase_extraction);
+    run_test("InvalidKdfPolicyNoExtraction",          test_invalid_kdf_policy_no_passphrase_extraction);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;

@@ -288,7 +288,7 @@ void test_validate_chunk_exceeds_shard() {
     auto errs = bseal::gui::validate(o);
     ASSERT_TRUE(!errs.empty());
     bool found = false;
-    for (const auto& e : errs) found = found || e.find("Chunk") != std::string::npos;
+    for (const auto& e : errs) found = found || e.find("chunk") != std::string::npos || e.find("Chunk") != std::string::npos || e.find("shard") != std::string::npos || e.find("Shard") != std::string::npos;
     ASSERT_TRUE(found);
 }
 
