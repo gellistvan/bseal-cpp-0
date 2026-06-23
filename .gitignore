@@ -2,10 +2,12 @@ build/
 .claude
 .cache
 build-tsan/
+build-gui/
 build-fuzz/
 build-debug/
 build-coverage/
 build-static-test/
+build-gui-test/
 build-cfl/
 build-sani-cfl/
 CLAUDE.md

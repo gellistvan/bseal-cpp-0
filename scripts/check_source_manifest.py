@@ -46,6 +46,7 @@ _TESTS_EXCLUDED_SUBDIRS = frozenset(
         "vendor",    # third-party support library (minigtest), not a test case
         "scripts",   # Python scripts, not C++ sources
         "fixtures",  # binary test data, not C++ sources
+        "gui",       # registered in root CMakeLists.txt under BSEAL_ENABLE_QT_GUI; checked by _check_gui_test_sources
     }
 )
 
@@ -58,6 +59,21 @@ def _check_production_sources(repo_root: Path) -> list[str]:
         rel = cpp.relative_to(repo_root).as_posix()
         if rel not in cmake_text:
             errors.append(f"  UNLISTED production source: {rel}  (not found in CMakeLists.txt)")
+    return errors
+
+
+def _check_gui_test_sources(repo_root: Path) -> list[str]:
+    """GUI tests are registered in the root CMakeLists.txt, not tests/CMakeLists.txt."""
+    cmake_text = (repo_root / "CMakeLists.txt").read_text(encoding="utf-8")
+    errors = []
+    gui_dir = repo_root / "tests" / "gui"
+    if not gui_dir.is_dir():
+        return errors
+    for cpp in sorted(gui_dir.glob("*.cpp")):
+        # e.g. "tests/gui/TestMainWindowKeyfiles.cpp"
+        rel = cpp.relative_to(repo_root).as_posix()
+        if rel not in cmake_text:
+            errors.append(f"  UNLISTED gui test source: {rel}  (not found in CMakeLists.txt)")
     return errors
 
 
@@ -127,8 +143,9 @@ def main() -> int:
 
     prod_errors = _check_production_sources(repo_root)
     test_errors = _check_test_sources(repo_root)
+    gui_errors  = _check_gui_test_sources(repo_root)
     fuzz_errors = _check_fuzz_sources(repo_root)
-    total = len(prod_errors) + len(test_errors) + len(fuzz_errors)
+    total = len(prod_errors) + len(test_errors) + len(gui_errors) + len(fuzz_errors)
 
     if total:
         print(f"FAIL: source manifest check found {total} unregistered file(s):")
@@ -138,6 +155,9 @@ def main() -> int:
         if test_errors:
             print("Test source manifest errors:")
             print("\n".join(test_errors))
+        if gui_errors:
+            print("GUI test source manifest errors:")
+            print("\n".join(gui_errors))
         if fuzz_errors:
             print("Fuzz source manifest errors:")
             print("\n".join(fuzz_errors))
@@ -150,10 +170,11 @@ def main() -> int:
         for cpp in tests_root.rglob("*.cpp")
         if cpp.relative_to(tests_root).parts[0] not in _TESTS_EXCLUDED_SUBDIRS
     )
+    gui_count  = len(list((repo_root / "tests" / "gui").glob("*.cpp")))
     fuzz_count = len(list((repo_root / "tests" / "fuzz").glob("*.cpp")))
     print(
         f"OK: {src_count} production source(s), {test_count} non-excluded test source(s),"
-        f" {fuzz_count} fuzz source(s) — all registered."
+        f" {gui_count} gui test source(s), {fuzz_count} fuzz source(s) — all registered."
     )
     return 0
 

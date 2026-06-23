@@ -157,6 +157,102 @@ alone. A reasonable CI workflow:
 The summary is printed to the CI log. The HTML artifact can be downloaded and
 browsed locally to identify uncovered paths.
 
+## GUI test suite overview
+
+All GUI tests require `QT_QPA_PLATFORM=offscreen` (set automatically by ctest).
+
+| ctest label | Binary | Source file | Focus |
+|---|---|---|---|
+| `gui.SmokeRun` | `bseal-gui --selftest` | _(built-in)_ | Binary launches without crash |
+| `gui.Options` | `bseal_gui_options_gtests` | `TestGuiOptions.cpp` | `GuiOptions → CoreApi` field mapping (pure C++, no Qt) |
+| `gui.PreviewUnit` | `bseal_gui_preview_unit_gtests` | `TestGuiPreviewUnit.cpp` | Preview/summary generation, cache, secret exclusion |
+| `gui.SecurePassphraseField` | `bseal_gui_gtests` | `TestSecurePassphraseField.cpp` | `SecurePassphraseField` extraction and clearing |
+| `gui.MainWindowKeyfiles` | `bseal_gui_keyfile_gtests` | `TestMainWindowKeyfiles.cpp` | Keyfile list add/remove/order |
+| `gui.AdvancedEncrypt` | `bseal_gui_advanced_encrypt_gtests` | `TestGuiAdvancedEncrypt.cpp` | Encrypt widget → `GuiEncryptOptions` |
+| `gui.AdvancedDecrypt` | `bseal_gui_advanced_decrypt_gtests` | `TestGuiAdvancedDecrypt.cpp` | Decrypt widget → `GuiDecryptOptions`; overwrite/hardened confirm |
+| `gui.OptionsWidgets` | `bseal_gui_options_widgets_gtests` | `TestGuiOptionsWidgets.cpp` | Widget `objectName` stability; `apply()` parsing for all fields |
+| `gui.NonPersistence` | `bseal_gui_nonpersistence_gtests` | `TestGuiNonPersistence.cpp` | No `QSettings` keys written; fresh-window state is empty |
+| `gui.MemoryLock` | `bseal_gui_memlock_gtests` | `TestGuiMemoryLock.cpp` | Memory-lock check runs before passphrase extraction |
+| `gui.ValidationOrder` | `bseal_gui_validation_order_gtests` | `TestGuiValidationOrder.cpp` | Validation and confirmations run before `extractPassphrase()` |
+| `gui.Preview` | `bseal_gui_preview_gtests` | `TestGuiPreview.cpp` | Lazy generation; cache reuse; preview never includes secrets |
+| `gui.ErrorPresenter` | `bseal_gui_error_presenter_gtests` | `TestGuiErrorPresenter.cpp` | Error sanitization; no paths/keys in messages |
+| `gui.CoreIntegration` | `bseal_gui_integration_gtests` | `TestGuiCoreIntegration.cpp` | Full encrypt/decrypt round-trips; close guard; wrong-passphrase handling |
+| `gui.FeatureParity` | `bseal_gui_parity_gtests` | `TestGuiFeatureParity.cpp` | CoreApi ↔ GUI parity checklist; production defaults; UI safety |
+
+---
+
+## GUI feature-parity coverage
+
+The test binary `bseal_gui_parity_gtests` (ctest label `gui.FeatureParity`) is
+the living checklist of CoreApi ↔ GUI option parity.  It enforces:
+
+### CoreEncryptParams field mapping (`tests/gui/TestGuiFeatureParity.cpp`)
+
+| CoreEncryptParams field  | GUI model field               | Test assertion |
+|--------------------------|-------------------------------|----------------|
+| `input`                  | `GuiCommonOptions::input`     | `ParityEncryptAllFieldsMapped` |
+| `output`                 | `GuiCommonOptions::output`    | `ParityEncryptAllFieldsMapped` |
+| `keyfiles`               | `GuiCommonOptions::keyfiles`  | `ParityEncryptAllFieldsMapped` |
+| `suite`                  | `GuiEncryptOptions::suite`    | `ParityEncryptAllFieldsMapped` |
+| `kdf_preset`             | `GuiEncryptOptions::kdf_preset` | `ParityEncryptAllFieldsMapped` |
+| `chunk_size`             | `GuiEncryptOptions::chunk_size` | `ParityEncryptAllFieldsMapped` |
+| `shard_size`             | `GuiEncryptOptions::shard_size` | `ParityEncryptAllFieldsMapped` |
+| `padding`                | `GuiEncryptOptions::padding`  | `ParityEncryptAllFieldsMapped` |
+| `durability_mode`        | `GuiCommonOptions::durability_mode` | `ParityEncryptAllFieldsMapped` |
+| `lock_memory`            | `GuiCommonOptions::lock_memory` | `ParityEncryptAllFieldsMapped` |
+| `require_lock_memory`    | `GuiCommonOptions::require_lock_memory` | `ParityEncryptAllFieldsMapped` |
+| `stdout_stream`          | _CLI-only_ — asserted `nullptr` | `ParityEncryptAllFieldsMapped` |
+| `allow_large_stdout`     | _CLI-only_ — asserted `false` | `ParityEncryptAllFieldsMapped` |
+| `passphrase`             | _injected by MainWindow::onRun_ — not in GuiOptions | n/a |
+| `on_warning`             | _wired by MainWindow::onRun_ — not in GuiOptions | n/a |
+| `on_progress`            | _wired by MainWindow::onRun_ — not in GuiOptions | n/a |
+
+### CoreDecryptParams field mapping
+
+| CoreDecryptParams field  | GUI model field               | Test assertion |
+|--------------------------|-------------------------------|----------------|
+| `input`                  | `GuiCommonOptions::input`     | `ParityDecryptAllFieldsMapped` |
+| `output`                 | `GuiCommonOptions::output`    | `ParityDecryptAllFieldsMapped` |
+| `keyfiles`               | `GuiCommonOptions::keyfiles`  | `ParityDecryptAllFieldsMapped` |
+| `overwrite`              | `GuiDecryptOptions::overwrite` | `ParityDecryptAllFieldsMapped` |
+| `kdf_policy`             | `GuiDecryptOptions::kdf_policy` | `ParityDecryptAllFieldsMapped` |
+| `hardened_extract`       | `GuiDecryptOptions::hardened_extract` | `ParityDecryptAllFieldsMapped` |
+| `durability_mode`        | `GuiCommonOptions::durability_mode` | `ParityDecryptAllFieldsMapped` |
+| `lock_memory`            | `GuiCommonOptions::lock_memory` | `ParityDecryptAllFieldsMapped` |
+| `require_lock_memory`    | `GuiCommonOptions::require_lock_memory` | `ParityDecryptAllFieldsMapped` |
+| `passphrase`             | _injected by MainWindow::onRun_ | n/a |
+| `on_warning`             | _wired by MainWindow::onRun_ | n/a |
+| `on_progress`            | _wired by MainWindow::onRun_ | n/a |
+
+### GUI security regression coverage
+
+| Guarantee | Test file | Test name |
+|-----------|-----------|-----------|
+| Production KDF default is Strong (not Fast) | `TestGuiFeatureParity.cpp` | `ParityEncryptProductionDefaults` |
+| `ProgressEvent` has no string/path/secret fields | `TestGuiFeatureParity.cpp` | `ParityProgressEventNoStringFields` |
+| Command summary never includes passphrase value | `TestGuiFeatureParity.cpp` | `ParityCmdSummaryExcludesPassphrase` |
+| Command summary uses keyfile basename only | `TestGuiFeatureParity.cpp` | `ParityCmdSummaryKeyfileBasenameOnly` |
+| Confirm passphrase field visible in encrypt mode | `TestGuiFeatureParity.cpp` | `ParityConfirmFieldVisibleEncrypt` |
+| Confirm passphrase field hidden in decrypt mode | `TestGuiFeatureParity.cpp` | `ParityConfirmFieldHiddenDecrypt` |
+| Passphrase NOT extracted on validation failure | `TestGuiValidationOrder.cpp` | `InvalidOptionsNoPassphraseExtraction` |
+| Passphrase NOT extracted on confirmation rejection | `TestGuiValidationOrder.cpp` | `ConfirmationRejectedNoExtraction` |
+| Passphrase mismatch clears both fields | `TestGuiValidationOrder.cpp` | `MismatchClearsBothFields` |
+| Close rejected while operation is running | `TestGuiCoreIntegration.cpp` | `CloseBlockedDuringOperation` |
+| Preview generation is lazy and cached | `TestGuiPreview.cpp` | `PreviewCacheReused` |
+| Command summary not in preview before panel opens | `TestGuiPreview.cpp` | _(implicit: preview starts empty)_ |
+| Progress callback wiring does not affect CLI | `TestCoreApi.cpp` | `NoCallbackIsAccepted` |
+
+### Maintenance rule
+
+When adding a field to `CoreEncryptParams` or `CoreDecryptParams`:
+1. Add the field to `GuiEncryptOptions` / `GuiDecryptOptions` and `GuiCommonOptions` as appropriate.
+2. Map it in `to_core_params()` (`src/gui/GuiOptions.cpp`).
+3. Add an assertion in `ParityEncryptAllFieldsMapped` or `ParityDecryptAllFieldsMapped`.
+4. Add a row to the table above.
+5. If the field is CLI-only, assert its zero/null value in the same test and document it in the "CLI-only" note at the top of `TestGuiFeatureParity.cpp`.
+
+---
+
 ## GCC negative-hit-count warning
 
 GCC's gcov may emit `branch N taken -1` for certain optimised branches

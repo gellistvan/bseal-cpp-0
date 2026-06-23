@@ -208,6 +208,33 @@ inline constexpr const char* BSEAL_BINARY_PATH = R\"bseal_path($<TARGET_FILE:bse
 "
 )
 
+add_executable(bseal_app_gtests
+        app/TestCoreApi.cpp
+)
+
+add_dependencies(bseal_app_gtests bseal)
+
+target_include_directories(bseal_app_gtests
+        PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/integration/$<CONFIG>"
+)
+
+target_link_libraries(bseal_app_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
+target_compile_features(bseal_app_gtests PRIVATE cxx_std_20)
+bseal_set_project_warnings(bseal_app_gtests)
+bseal_enable_sanitizers_if_requested(bseal_app_gtests)
+bseal_enable_coverage_if_requested(bseal_app_gtests)
+
+if (GTest_FOUND)
+    include(GoogleTest)
+    gtest_discover_tests(bseal_app_gtests
+            TEST_PREFIX app.
+            DISCOVERY_TIMEOUT 120
+    )
+else()
+    add_test(NAME bseal_app_gtests COMMAND bseal_app_gtests)
+endif()
+
 add_executable(bseal_integration_gtests
         integration/TestBlackBoxCli.cpp
         integration/TestCliRegression.cpp
@@ -266,6 +293,8 @@ if (Python3_FOUND)
     set(BSEAL_SCANNER_SELFTEST "${CMAKE_SOURCE_DIR}/tests/scripts/test_scan_unsafe_bypasses.py")
     set(BSEAL_CHECKLIST_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_release_checklist.py")
     set(BSEAL_DOCS_LANGUAGE_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_docs_language.py")
+    set(BSEAL_GUI_DOCS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/check_gui_docs.py")
+    set(BSEAL_GUI_PERSISTENCE_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/scan_gui_persistence.py")
     set(BSEAL_LICENSE_HEADERS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_license_headers.py")
     set(BSEAL_SUBMODULE_PINS_SCRIPT "${CMAKE_SOURCE_DIR}/tests/scripts/test_submodule_pins.py")
 
@@ -335,6 +364,26 @@ if (Python3_FOUND)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
     set_tests_properties(scan.SubmodulePins PROPERTIES
+        LABELS "scan"
+    )
+
+    add_test(
+        NAME scan.GuiDocumented
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_GUI_DOCS_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.GuiDocumented PROPERTIES
+        LABELS "scan"
+    )
+
+    add_test(
+        NAME scan.GuiNoPersistence
+        COMMAND "${Python3_EXECUTABLE}" "${BSEAL_GUI_PERSISTENCE_SCRIPT}"
+                "--repo-root" "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(scan.GuiNoPersistence PROPERTIES
         LABELS "scan"
     )
 else()

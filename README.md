@@ -70,6 +70,7 @@ These requirements apply to the explicitly supported Linux platform. The build m
 * [Argon2](https://github.com/P-H-C/phc-winner-argon2) — bundled as a git submodule under `submodules/argon2` (dual-licensed CC0-1.0 / Apache-2.0; built automatically by CMake)
 
 Both submodules are pinned to specific commit hashes recorded in `submodules/PINS.md`. The CMake configure step verifies the hashes and fails with a clear error if either submodule has drifted from its pin. See `docs/MAINTAINABILITY.md` (submodule upgrade procedure) for how to update a pin safely.
+* Optional: Qt 6 Widgets (`Qt6::Widgets`) — required only for the optional GUI build (`-DBSEAL_ENABLE_QT_GUI=ON`); the CLI build has no Qt dependency.
 * Optional: GoogleTest. If system GoogleTest is unavailable, the test tree falls back to the local lightweight compatibility harness.
 
 ## Build
@@ -118,6 +119,34 @@ cmake --build build-coverage --target coverage-html
 ```
 
 See [`docs/COVERAGE.md`](docs/COVERAGE.md) for details, toolchain notes, and CI guidance.
+
+### Qt GUI (optional)
+
+An optional Qt 6 Widgets graphical interface (`bseal-gui`) can be built with:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBSEAL_ENABLE_QT_GUI=ON
+cmake --build build -j
+```
+
+The GUI exposes the full CoreApi feature set:
+
+**Encryption options:** cipher suite (XChaCha20-Poly1305 / AES-256-GCM), KDF
+preset (Fast / Strong / Paranoid), chunk size, shard size, padding policy, durability
+mode, keyfiles (ordered list), memory-lock controls.
+
+**Decryption options:** overwrite toggle, KDF resource policy (max memory /
+iterations / parallelism), hardened-extract mode, durability mode, keyfiles, memory-lock.
+
+**Safety features:** passphrase confirmation (encrypt mode), validation before
+passphrase extraction, close guard during operation, basename-only keyfile error
+messages, lazy memory-only preview cache, no `QSettings` persistence.
+
+**The GUI is less secure than CLI hardened mode** (`--passphrase-prompt`).
+Use it only on trusted, isolated workstations. See
+[`docs/THREAT_MODEL.md` — Qt GUI Security Model](docs/THREAT_MODEL.md)
+and [`docs/OPERATOR_GUIDE.md` — Qt GUI mode](docs/OPERATOR_GUIDE.md) for the
+full security analysis and safe-use guidance.
 
 Optional install rules can be enabled with:
 
@@ -355,7 +384,7 @@ The exact byte sequence fed to Argon2id, HKDF, and the keyfile mix is documented
 ```text
 src/
   main.cpp      Thin CLI entry point: parse args, call app functions, map errors to exit codes
-  app/          Application-level encrypt/decrypt orchestration
+  app/          Application-level encrypt/decrypt orchestration; CoreApi boundary for GUI
   cli/          CLI parsing and command model
   crypto/       AEAD backends, KDF, key schedule, secure buffers
   archive/      Internal archive record format, metadata, safe path handling, extraction
@@ -363,6 +392,7 @@ src/
   pipeline/     Chunk encryption/decryption orchestration and work queues
   platform/     CPU feature detection, secure random, memory locking
   common/       Shared errors, byte aliases, size parsing
+  gui/          Optional Qt 6 Widgets GUI (bseal-gui); built with -DBSEAL_ENABLE_QT_GUI=ON
 
 tests/
   platform/     Platform utility tests
@@ -414,7 +444,7 @@ and the checklist for adding a new target.
 * [`docs/DURABILITY.md`](docs/DURABILITY.md) — what `--durability` guarantees, platform limits, and power-loss caveats.
 * [`docs/COVERAGE.md`](docs/COVERAGE.md) — how to build with coverage instrumentation and generate line/function reports.
 * [`docs/KDF_POLICY.md`](docs/KDF_POLICY.md) — Argon2id presets, runtime resource policy, recommended settings, and benchmarking.
-* [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) — deployment guide: passphrase quality, keyfile management, hardened extraction, swap/core-dump hardening.
+* [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) — deployment guide: passphrase quality, keyfile management, hardened extraction, swap/core-dump hardening, Qt GUI safe-use guidance.
 * [`docs/CPU_REQUIREMENTS.md`](docs/CPU_REQUIREMENTS.md) — hardware AES requirements, `bseal cpu-features` usage, and fail-closed rationale for AES-256-GCM.
 * [`docs/SELF_TEST.md`](docs/SELF_TEST.md) — known-answer test vectors, source references, and what each primitive check detects.
 

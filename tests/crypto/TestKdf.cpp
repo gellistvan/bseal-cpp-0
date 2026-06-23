@@ -22,6 +22,7 @@ namespace {
 using bseal::Byte;
 using bseal::Bytes;
 using bseal::InvalidArgument;
+using bseal::KeyfileAccessError;
 using bseal::crypto::KdfInput;
 using bseal::crypto::KdfParams;
 using bseal::crypto::KdfPreset;
@@ -206,7 +207,7 @@ TEST(Kdf, HashKeyfilesEmptyListReturnsEmptyVector) {
 TEST(Kdf, HashKeyfilesRejectsMissingFile) {
     const auto missing = std::filesystem::temp_directory_path() / "bseal_missing_keyfile_for_test.bin";
 
-    EXPECT_TRUE((throws_exception<InvalidArgument>([&] {
+    EXPECT_TRUE((throws_exception<KeyfileAccessError>([&] {
         hash_keyfiles_blake3({missing});
     })));
 }

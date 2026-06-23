@@ -236,3 +236,251 @@ and confirms the archive is complete and undamaged.
 If a passphrase or keyfile may have been compromised, re-encrypt the archive
 with a new passphrase and new keyfile rather than attempting to update the
 existing archive in place.  BSEAL does not support in-place re-keying.
+
+---
+
+## Qt GUI mode
+
+BSEAL includes an optional Qt 6 Widgets graphical interface.  This section
+describes how to build it and how to use it safely.
+
+### Building the GUI
+
+The GUI is **disabled by default**.  Enable it with:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBSEAL_ENABLE_QT_GUI=ON
+cmake --build build -j
+```
+
+Qt 6 (`Qt6::Widgets`) must be available on the build machine.
+
+### Security summary
+
+The Qt GUI is **less secure than CLI hardened mode** (`--passphrase-prompt`).
+It is a convenience interface intended for trusted, isolated workstations.  It
+is not appropriate for shared desktops, remote-desktop sessions, machines under
+monitoring, or machines with active malware.
+
+See `docs/THREAT_MODEL.md` — [Qt GUI Security Model](#qt-gui-security-model)
+for the full threat analysis.
+
+**For maximum assurance, use the CLI with `--passphrase-prompt`.**
+
+### Recommended GUI usage
+
+| Do | Why |
+|----|-----|
+| Use on a single-user, locally owned machine | Reduces desktop-environment exposure |
+| Close the GUI immediately after the operation | Limits the window where passphrases could be extracted |
+| Enable "Try to lock process memory" | Reduces swap risk (but does not eliminate all exposure) |
+| Keep the screen locked or the window hidden while typing a passphrase | Prevents shoulder surfing and screenshot capture |
+| Store keyfiles outside the directory being encrypted | Prevents accidental inclusion in the archive |
+| Record keyfile names and the BLAKE3 hash of each keyfile | Detects accidental modification; use `b3sum` or `sha256sum` as a proxy |
+| Keep independent backups of keyfiles and the passphrase | Loss of either makes the archive permanently unrecoverable |
+
+| Avoid | Why |
+|-------|-----|
+| Shared or multi-user desktops | Other users or processes may capture the passphrase field |
+| Remote-desktop or VNC sessions | The remote-capture pipeline may log screen contents |
+| Copying the passphrase to the clipboard | Clipboard managers may retain it indefinitely |
+| Using keyfiles that are likely to be modified (e.g. photos with growing EXIF data) | Byte changes change the derived key |
+
+### Passphrase confirmation for encryption
+
+The GUI requires the passphrase to be entered twice when encrypting.  The
+"Confirm:" field appears only in encrypt mode and is hidden when decrypting.
+
+- Both fields must be non-empty and must match exactly.  A mismatch is
+  rejected before encryption starts — no archive is written.
+- On mismatch, both fields are cleared and a warning is shown.  The warning
+  message does not contain either passphrase value or length.
+- The confirm field is automatically cleared when switching to decrypt mode.
+- **A lost passphrase makes the archive permanently unrecoverable.**  Write the
+  passphrase down and store it securely before encrypting.
+
+### Operation lifecycle and close behaviour
+
+Encryption and decryption run in a background thread.  The GUI controls are
+disabled for the duration and re-enabled on completion.
+
+- **No cancellation**: once started, an operation cannot be cancelled.  Wait
+  for it to finish before closing the window, removing a keyfile device, or
+  cutting power to the machine.  Interrupting mid-operation may leave the
+  output directory in a partially written state.
+- **Close guard**: the window refuses to close while an operation is in
+  progress.  A message in the status bar explains the block.  Once the
+  operation finishes (success or error), the window can be closed normally.
+- **Error display**: errors are shown in a dialog box (modal) or in the status
+  bar (success).  Keyfile access errors show only the filename, not the full
+  path.  Authentication failures use a generic message that does not reveal
+  whether the passphrase or keyfile was wrong.
+- **Progress status**: the status bar shows the current operation phase
+  (Validating → Deriving key → Planning → Encrypting/Decrypting → complete).
+  The "Deriving key" phase is where Argon2id runs and may take several seconds
+  depending on the KDF preset.  Progress status never contains passphrase,
+  key material, filenames from the archive, or any sensitive value — only a
+  phase label.
+
+### Keyfile behavior
+
+The GUI applies the same keyfile semantics as the CLI:
+
+- Only **file bytes** matter; renaming or re-permissioning a keyfile changes nothing.
+- Any modification of bytes — including embedded metadata (EXIF in JPEG, ID3 in MP3,
+  PDF document properties) — **changes the derived key** and makes existing archives
+  unrecoverable without the original bytes.
+- Order is significant: the keyfile list order in the GUI is the KDF input order.
+
+Keep a record of the keyfile order used for each archive.  If in doubt, record
+a cryptographic hash of each keyfile immediately after creation:
+
+```bash
+b3sum my-archive.key          # BLAKE3 (preferred; matches BSEAL internal hash)
+sha256sum my-archive.key      # SHA-256 (widely available alternative)
+```
+
+Store the recorded hash alongside the archive metadata, separately from the keyfile.
+
+### Advanced encryption options
+
+Click **▶ Advanced encryption options** to expand the section.  It is hidden in
+decrypt mode and collapsed by default in encrypt mode.
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| Cipher suite | XChaCha20-Poly1305 | AES-256-GCM requires hardware AES support (AES-NI on x86). There is **no** automatic fallback — choose the right suite for your hardware. |
+| KDF preset | Strong | Controls Argon2id memory/time cost. **Fast** is for low-value data or testing only. **Paranoid** uses very high memory cost and is slow. |
+| Chunk size | 16M | Size of each individually authenticated ciphertext chunk. Must be `> 0` and `≤ shard size`. Accepts suffixes: `K`, `M`, `G`, `T`. |
+| Shard size | 4G | Maximum size of each output `*.bin` shard file. Accepts suffixes: `K`, `M`, `G`, `T`. |
+| Padding | power2 | `none`: no padding. `chunk`: pad to full chunk size. `power2`: pad to next power of two (hides sizes with low overhead). `fixed-size`: pad to an exact byte count (requires the Fixed padding size field). |
+| Fixed padding size | — | Active only when padding is `fixed-size`. Accepts size suffixes. Must be `> 0`. |
+| Durability | best-effort | `off`: skip all fsync (fastest, least durable). `best-effort`: fsync on close. `on`: fsync after every chunk write (slowest, most durable). |
+
+**Security notes for advanced options:**
+
+- Switching from XChaCha20-Poly1305 to AES-256-GCM on a machine without hardware AES
+  will be significantly slower and is not recommended.
+- **Fast KDF** reduces passphrase brute-force resistance.  Do not use it for
+  sensitive data.
+- Archives encrypted with non-default settings require the same settings at
+  decrypt time only for the cipher suite — the KDF preset, chunk size, shard
+  size, padding, and durability mode are stored in the archive header.
+
+### Advanced decryption options
+
+Click **▶ Advanced decryption options** to expand the section.  It is hidden in
+encrypt mode and collapsed by default in decrypt mode.  Default settings are
+safe for all trusted archives.
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| Overwrite existing output | off | Allow decryption into a non-empty output directory. Existing files may be replaced. A confirmation dialog is shown before proceeding. **Leave off** unless you explicitly need to overwrite. |
+| KDF max memory | 2G | Maximum memory the archive's KDF (Argon2id) is permitted to consume. Accepts size suffixes: `K`, `M`, `G`. Setting this too low causes decryption to fail for archives encrypted with higher KDF settings. Setting it very high can exhaust system memory. |
+| KDF max iterations | 4 | Maximum Argon2id iteration count allowed. Lower values reject archives encrypted with higher iteration counts. |
+| KDF max parallelism | 8 | Maximum Argon2id parallelism allowed. Lower values reject high-parallelism archives. |
+| Hardened extract | auto (recommended) | Controls TOCTOU protection. `auto`: use hardened POSIX backend when available, fall back otherwise. `on`: require hardened backend, fail if unavailable. `off`: always use portable backend (unsafe for untrusted archives — see below). |
+| Durability | best-effort | Controls fsync on extracted output files. `off`: no sync. `best-effort`: sync on close (default). `on`: sync after every write (slowest, most durable). Does **not** affect authentication. |
+
+**Safe defaults**: overwrite=off, hardened extract=auto, durability=best-effort.  The KDF policy defaults
+(2G memory / 4 iterations / 8 threads) cover all built-in presets including Paranoid.  You only need
+to adjust KDF limits if you are decrypting archives produced outside BSEAL with unusual KDF parameters.
+
+**Overwrite risk**: enabling overwrite allows extraction to replace any file in the output directory
+whose name matches an archive entry.  Pre-existing files not covered by the archive are left in place.
+A confirmation is required before proceeding.  Do not enable overwrite unless you have independently
+verified the contents of the archive.
+
+**Hardened extract off — danger**: setting hardened extract to `off` disables the POSIX hardened
+extraction backend.  This makes extraction vulnerable to TOCTOU (time-of-check-to-time-of-use) attacks
+where a malicious archive or a race condition could cause files to be extracted to unexpected locations.
+Only use `off` if:
+
+- You have audited the archive and trust it completely.
+- Your platform does not support `openat`/`O_NOFOLLOW` (in which case `auto` already falls back safely).
+- You are doing controlled testing.
+
+A confirmation dialog is required before decryption proceeds with `off`.
+
+**Durability vs authentication**: the durability setting has no effect on authentication.  AEAD
+authentication is always performed before any plaintext is committed to disk, regardless of this
+setting.  Durability controls only whether extracted files are fsynced to storage, which affects
+data integrity after a crash or power loss.
+
+## Preview panel
+
+The GUI includes a **Preview** button that generates a human-readable summary of the current
+operation without performing any cryptographic work or reading any file contents.
+
+### What the preview shows
+
+- Mode (encrypt / decrypt), input and output paths.
+- Keyfile basenames (e.g. `my.key`) — **never full paths**.
+- Cipher suite, KDF preset, chunk size, shard size, padding policy, durability mode.
+- Estimated input size (encrypt mode only, when the scan succeeds).
+- Estimated shard count and chunks-per-shard.
+- Active warnings for risky settings (fast KDF, overwrite enabled, hardened extract off,
+  durability off).
+
+### What the preview never shows
+
+- Passphrase or passphrase length.
+- Keyfile contents or cryptographic digests of keyfile contents.
+- Derived key material, nonces, or salts.
+- Plaintext or any decrypted data.
+- Full keyfile directory paths.
+
+### When preview is generated
+
+Preview is **lazy**: it is generated only when the Preview button is clicked (or the panel is
+opened for the first time).  It is **not** generated at startup, and field edits do not trigger
+a new preview.
+
+### Cache
+
+Preview results are cached in memory for the current session, keyed on all non-secret inputs.
+If the options have not changed since the last preview, the cached result is shown immediately
+without rescanning the filesystem.  The cache is a single-entry LRU: changing any option
+(input path, cipher suite, padding, etc.) invalidates it.
+
+### Filesystem scan
+
+For encrypt mode, the preview optionally scans the input directory to estimate total size and
+shard count.  The scan is bounded to 10 000 files; if the directory is larger or unreachable,
+the size field shows "(not scanned)".  The scan runs in a background thread and does not block
+the UI.
+
+### Equivalent CLI options summary
+
+Below the human-readable preview, the panel shows an **equivalent options summary** in
+CLI-flag style.  This helps you understand feature parity and reproduce the same operation
+from the command line.
+
+**What the summary shows:**
+
+- `bseal encrypt` or `bseal decrypt` with the current input/output paths.
+- All non-secret options as CLI flags: `--suite`, `--kdf-preset`, `--chunk-size`,
+  `--shard-size`, `--padding`, `--durability`, `--hardened-extract`, KDF resource limits.
+- Keyfile **basenames only** — directory paths are replaced by a `# path redacted` comment.
+- `--passphrase-prompt` as a placeholder flag, with a comment that the passphrase is
+  entered interactively and is never shown.
+
+**What the summary never shows:**
+
+- Passphrase or passphrase length.
+- Keyfile contents, directory paths, or cryptographic digests.
+- Derived key material, nonces, or salts.
+
+The summary header states explicitly that it is an equivalent options summary, **not a
+runnable command**.  Some GUI-only behaviour (memory locking, confirmation dialogs) has no
+CLI equivalent and is omitted.
+
+**Copy button:**
+
+A "Copy equivalent options summary" button copies the summary text to the system clipboard.
+The button is explicit — nothing is copied automatically.
+
+> **Clipboard warning:** clipboard managers and some desktop environments retain clipboard
+> history.  The summary contains your input and output paths.  If those paths are sensitive,
+> be aware that clipboard history tools may retain this text after you copy it.
+> Passphrase and keyfile contents are never copied.

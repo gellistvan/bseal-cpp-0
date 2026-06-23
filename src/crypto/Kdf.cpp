@@ -167,12 +167,12 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
         std::error_code ec;
         const auto file_size = std::filesystem::file_size(path, ec);
         if (ec) {
-            throw InvalidArgument("failed to read keyfile size: " + path.string());
+            throw KeyfileAccessError("failed to read keyfile size", path);
         }
 
         std::ifstream in(path, std::ios::binary);
         if (!in) {
-            throw InvalidArgument("failed to open keyfile: " + path.string());
+            throw KeyfileAccessError("failed to open keyfile", path);
         }
 
         // FORMAT.md §8:
@@ -201,7 +201,7 @@ hash_keyfiles_blake3(const std::vector<std::filesystem::path>& keyfiles) {
         }
 
         if (!in.eof()) {
-            throw InvalidArgument("failed while reading keyfile: " + path.string());
+            throw KeyfileAccessError("failed while reading keyfile", path);
         }
 
         KeyfileDigest digest{};

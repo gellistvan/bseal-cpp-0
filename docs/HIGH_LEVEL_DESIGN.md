@@ -846,3 +846,130 @@ randomized .bin shards → AEAD frames → plaintext chunks → archive records 
 ```
 
 The BSEAL-F1 format is frozen. The implementation has meaningful functionality and a complete end-to-end pipeline. The primary remaining work is external cryptographic review, audit of the POSIX-hardened extraction backend, and formal size-leakage analysis for the padding system.
+
+---
+
+## 17. GUI Options Model
+
+The Qt GUI uses a thin options model (`src/gui/GuiOptions.hpp/.cpp`) to decouple widget state from `app::CoreApi` construction.
+
+### 17.1 Structure
+
+Two structs mirror the CoreApi parameter types:
+
+| GUI struct | CoreApi counterpart |
+|---|---|
+| `GuiEncryptOptions` | `CoreEncryptParams` |
+| `GuiDecryptOptions` | `CoreDecryptParams` |
+
+Both share a `GuiCommonOptions` base (input/output paths, keyfile list, memory-lock flags, durability mode). Encrypt-only fields (cipher suite, KDF preset, chunk/shard sizes, padding policy) live in `GuiEncryptOptions`; decrypt-only fields (overwrite, KDF resource policy, hardened-extract mode) live in `GuiDecryptOptions`.
+
+### 17.2 Why passphrases are excluded
+
+The options model contains no passphrase or key material. `GuiEncryptOptions::to_core_params()` returns a `CoreEncryptParams` with an empty passphrase; `MainWindow::onRun` extracts the passphrase from the `SecurePassphraseField` and moves it into the params immediately before starting the worker thread. This keeps the model free of `SecureBuffer` and means validation and option collection can run before any secret is touched.
+
+### 17.3 Validation
+
+`validate(const GuiEncryptOptions&)` and `validate(const GuiDecryptOptions&)` return a `std::vector<std::string>` of user-facing error messages (empty = valid). `MainWindow::onRun` calls validate before the memory-lock check and before extracting the passphrase, so invalid options are caught early and no secret is extracted unnecessarily.
+
+### 17.4 stdout output
+
+`CoreEncryptParams::stdout_stream` is a CLI-only feature (piping a single shard to a shell pipeline). It is absent from `GuiEncryptOptions` and is never set by the GUI; the default `nullptr` selects normal file output.
+
+---
+
+## 18. Qt GUI Architecture
+
+The Qt Widgets GUI (`src/gui/`) is built around a thin orchestration layer
+(`MainWindow`) backed by focused, single-purpose classes.
+
+### 18.1 Component map
+
+| Class | File | Purpose |
+|---|---|---|
+| `MainWindow` | `MainWindow.*` | Orchestrates the full GUI lifecycle. Handles passphrase extraction, memory-lock policy, confirmation dialogs, and worker-thread launch. Does not contain option-parsing logic. |
+| `EncryptOptionsWidget` | `EncryptOptionsWidget.*` | Self-contained collapsible panel for advanced encrypt options (cipher suite, KDF preset, chunk/shard sizes, padding, durability). Owns its widgets and `apply(GuiEncryptOptions&)` parsing. |
+| `DecryptOptionsWidget` | `DecryptOptionsWidget.*` | Self-contained collapsible panel for advanced decrypt options (overwrite, KDF resource policy, hardened extraction mode, durability). Owns its widgets and `apply(GuiDecryptOptions&)` parsing. |
+| `SecurePassphraseField` | `SecurePassphraseField.*` | Read-only after extraction (`extractPassphrase()` moves bytes into a `SecureBuffer` and clears the Qt field). |
+| `GuiErrorPresenter` | `GuiErrorPresenter.*` | Sanitizes exception messages for display — strips file paths, keys, and implementation details. Never logs sensitive data. |
+| `GuiOptions` | `GuiOptions.*` | The mapping layer. Holds `GuiEncryptOptions` and `GuiDecryptOptions` structs with defaults, `validate()`, and `to_core_params()`. Passphrase is **not** stored here. |
+| `GuiPreview` / `GuiPreviewCache` | `GuiPreview.*` | Generates a human-readable operation summary on demand. Never reads keyfile contents, derives keys, or includes secrets. Cache is keyed on non-secret fields only. |
+
+### 18.2 Data flow through the option layer
+
+```
+Widget state
+  ↓ (EncryptOptionsWidget::apply / DecryptOptionsWidget::apply)
+GuiEncryptOptions / GuiDecryptOptions     ← validate() here, before touching secrets
+  ↓ (to_core_params())
+CoreEncryptParams / CoreDecryptParams     ← passphrase moved in by MainWindow::onRun
+  ↓ (std::jthread worker)
+app::core_encrypt / app::core_decrypt
+```
+
+The split between UI construction (`EncryptOptionsWidget`) and option mapping
+(`GuiOptions`) means neither layer does the other's job: widgets own widget
+state, GuiOptions owns the CoreApi interface.
+
+### 18.3 Security boundaries
+
+- **Passphrase** is never stored in `GuiOptions` structs. It lives only in
+  `SecurePassphraseField` until `extractPassphrase()` moves it into a
+  `SecureBuffer` immediately before the worker thread starts.
+- **Keyfile paths** are passed to the core as strings. The preview system
+  exposes only basenames in its output, never full paths.
+- **Error sanitization** is centralized in `GuiErrorPresenter`; `MainWindow`
+  never formats error messages itself.
+- **Confirmation dialogs** for risky settings (overwrite, hardened=off) are
+  handled in `MainWindow::onRun` after validation but before any secret is
+  extracted, so an abort never leaves a partially-extracted `SecureBuffer`.
+
+### 18.4 Progress reporting
+
+`CoreEncryptParams` and `CoreDecryptParams` each carry an optional `ProgressFn on_progress`
+callback.  `core_encrypt` and `core_decrypt` invoke it at phase boundaries from the worker
+thread — callers must marshal to the UI thread if needed.
+
+**Phase sequence:**
+
+| Phase | When fired |
+|-------|-----------|
+| `Validating` | Before path and keyfile checks |
+| `Kdf` | Immediately before Argon2id runs |
+| `Planning` | After KDF; before archive plan and shard layout *(encrypt only)* |
+| `Encrypting` | Before `EncryptPipeline::run()` |
+| `Decrypting` | Before `DecryptPipeline::run()` *(decrypt only)* |
+| `Done` | After the pipeline completes successfully |
+
+`ProgressEvent` carries only numeric fields (`phase`, `total_bytes`, `total_shards`).
+
+**What `ProgressEvent` never contains:** passphrase, key material, nonces, salts, archive
+filenames, keyfile paths, or any secret-derived value.
+
+The GUI (`MainWindow`) sets `on_progress` before spawning the worker thread.  The callback
+posts a `QMetaObject::invokeMethod` to the main thread, which updates the status bar with a
+human-readable phase label.  Phase-only events (at most five per operation) need no
+throttling.
+
+### 18.5 Testing approach
+
+Widget tests use Qt's `findChild<T>(objectName)` to locate widgets by their
+`setObjectName` identifiers, which are stable across refactors. `EncryptOptionsWidget`
+and `DecryptOptionsWidget` each have a dedicated test binary that instantiates
+the widget directly and calls `apply()`, separate from the `MainWindow`-level
+tests that verify end-to-end behavior.
+
+**Feature-parity regression tests** (`tests/gui/TestGuiFeatureParity.cpp`,
+ctest label `gui.FeatureParity`) serve as a living checklist: every
+`CoreEncryptParams` and `CoreDecryptParams` field is named explicitly with
+an assertion that `to_core_params()` copies it correctly.  CLI-only fields
+(`stdout_stream`, `allow_large_stdout`) are asserted `nullptr`/`false`.
+The `ProgressEvent` struct is statically asserted to contain only
+numeric/enum fields (no strings).  See `docs/COVERAGE.md` §GUI feature-parity
+coverage for the full field-by-field table and maintenance rule.
+
+**Validation ordering** (`tests/gui/TestGuiValidationOrder.cpp`,
+ctest `gui.ValidationOrder`) proves that options validation, risky-option
+confirmations, and memory-lock checks all run before `extractPassphrase()` is
+called, so the passphrase widget is never cleared on an aborted operation.
+
