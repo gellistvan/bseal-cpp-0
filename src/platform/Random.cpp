@@ -3,19 +3,47 @@
 #include "common/Errors.hpp"
 
 #include <array>
-#include <cerrno>
-#include <climits>
 #include <cstddef>
-#include <cstring>
-#include <fcntl.h>
 #include <limits>
 #include <string>
 #include <string_view>
-#include <sys/random.h>
-#include <unistd.h>
+
+#if defined(_WIN32)
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
+#    include <bcrypt.h>
+#else
+#    include <cerrno>
+#    include <climits>
+#    include <cstring>
+#    include <fcntl.h>
+#    include <sys/random.h>
+#    include <unistd.h>
+#endif
 
 namespace bseal::platform {
 namespace {
+
+#if defined(_WIN32)
+
+void fill_platform_random(Byte* out, std::size_t size) {
+    while (size > 0) {
+        const ULONG chunk = static_cast<ULONG>(
+            std::min<std::size_t>(size, static_cast<std::size_t>(std::numeric_limits<ULONG>::max())));
+        const NTSTATUS status =
+            BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(out), chunk,
+                            BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        if (status < 0) {
+            throw SystemError("BCryptGenRandom failed");
+        }
+        out += chunk;
+        size -= chunk;
+    }
+}
+
+#else // POSIX
 
 [[nodiscard]] std::string errno_message(std::string_view operation, int err) {
     return std::string(operation) + " failed: " + std::strerror(err);
@@ -26,8 +54,13 @@ public:
     explicit FileDescriptor(int fd) noexcept : fd_(fd) {}
     FileDescriptor(const FileDescriptor&) = delete;
     FileDescriptor& operator=(const FileDescriptor&) = delete;
-    ~FileDescriptor() { if (fd_ >= 0) { (void)::close(fd_); } }
+    ~FileDescriptor() {
+        if (fd_ >= 0) {
+            (void)::close(fd_);
+        }
+    }
     [[nodiscard]] int get() const noexcept { return fd_; }
+
 private:
     int fd_{-1};
 };
@@ -39,7 +72,8 @@ void fill_from_urandom(Byte* out, std::size_t size) {
     }
 
     while (size > 0) {
-        const std::size_t request = std::min<std::size_t>(size, static_cast<std::size_t>(SSIZE_MAX));
+        const std::size_t request =
+            std::min<std::size_t>(size, static_cast<std::size_t>(SSIZE_MAX));
         const ssize_t n = ::read(fd.get(), out, request);
         if (n > 0) {
             const auto got = static_cast<std::size_t>(n);
@@ -57,9 +91,10 @@ void fill_from_urandom(Byte* out, std::size_t size) {
     }
 }
 
-void fill_from_getrandom_or_fallback(Byte* out, std::size_t size) {
+void fill_platform_random(Byte* out, std::size_t size) {
     while (size > 0) {
-        const std::size_t request = std::min<std::size_t>(size, static_cast<std::size_t>(SSIZE_MAX));
+        const std::size_t request =
+            std::min<std::size_t>(size, static_cast<std::size_t>(SSIZE_MAX));
         const ssize_t n = ::getrandom(out, request, 0);
         if (n > 0) {
             const auto got = static_cast<std::size_t>(n);
@@ -83,6 +118,8 @@ void fill_from_getrandom_or_fallback(Byte* out, std::size_t size) {
         throw SystemError(errno_message("getrandom", err));
     }
 }
+
+#endif // platform
 
 [[nodiscard]] std::string base32_no_padding(ConstByteSpan bytes) {
     static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -113,7 +150,7 @@ void fill_secure_random(ByteSpan output) {
     if (output.empty()) {
         return;
     }
-    fill_from_getrandom_or_fallback(output.data(), output.size());
+    fill_platform_random(output.data(), output.size());
 }
 
 Bytes secure_random_bytes(std::size_t count) {
