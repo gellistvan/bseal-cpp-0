@@ -71,6 +71,10 @@ public:
     // fn(title, message) returns true if the user accepted.
     void setConfirmationFnForTests(std::function<bool(const QString&, const QString&)> fn);
 
+    // Override the platform-support check (SafeOutputTree::is_platform_supported).
+    // Allows tests to simulate unsupported-platform scenarios deterministically.
+    void setPlatformSupportFnForTests(std::function<bool()> fn);
+
     // Replace the input directory scan used for preview size estimation.
     void setInputScanFnForTests(gui::InputScanFn fn);
 
@@ -144,6 +148,7 @@ private:
     std::function<platform::ProcessMemoryLockResult()> m_lockFn{platform::try_lock_process_memory};
     std::function<void()>  m_operationFnForTests{};
     std::function<bool(const QString&, const QString&)> m_confirmFn{};
+    std::function<bool()>  m_platformSupportFn{};
     bool                   m_operationRunning{false};
     // Declared last so ~jthread() (which joins) runs before any widget is destroyed.
     std::jthread           m_worker{};

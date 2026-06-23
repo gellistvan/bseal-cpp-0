@@ -74,6 +74,13 @@ struct CoreDecryptParams {
     ProgressFn                         on_progress{};
 };
 
+// Validate non-secret parameters before any passphrase-derived work.
+// Throws InvalidArgument or KeyfileAccessError on failure.
+// core_encrypt / core_decrypt call these internally; callers may also invoke
+// them early for immediate user-facing feedback without touching the KDF.
+void validate_encrypt_params(const CoreEncryptParams& params);
+void validate_decrypt_params(const CoreDecryptParams& params);
+
 // Encrypt a directory to shards using a pre-obtained passphrase.
 // Throws bseal::Error (including AuthenticationFailed) on failure.
 // All warnings go through params.on_warning; nothing is printed to stdout/stderr.

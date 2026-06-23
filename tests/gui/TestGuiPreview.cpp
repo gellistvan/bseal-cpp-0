@@ -7,12 +7,14 @@
 #include "gui/MainWindow.hpp"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QEventLoop>
 #include <QLineEdit>
 #include <QMetaObject>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSettings>
 #include <QTimer>
 #include <QWidget>
 
@@ -243,6 +245,45 @@ void test_preview_no_full_keyfile_path_in_widget(MainWindow& w) {
         throw std::runtime_error("full keyfile path leaked into preview text");
 }
 
+// Copy button does not trigger hidden generation when summary is empty.
+void test_copy_button_does_not_generate_if_empty(MainWindow& w) {
+    bool scan_called = false;
+    w.setInputScanFnForTests([&](const std::string&) {
+        scan_called = true;
+        return std::nullopt;
+    });
+
+    auto* copyBtn = w.findChild<QPushButton*>("copySummaryBtn");
+    ASSERT_TRUE(copyBtn != nullptr);
+
+    // Summary is empty; clicking copy must not trigger a scan or generation.
+    copyBtn->click();
+    pump_events(100);
+    ASSERT_FALSE(scan_called);
+    ASSERT_TRUE(w.cmdSummaryText().isEmpty());
+}
+
+// Preview cache is memory-only: no QSettings keys are written after preview generation.
+void test_no_qsettings_written_after_preview(MainWindow& w) {
+    QCoreApplication::setOrganizationName("bseal_preview_qsettings_test_org");
+    QCoreApplication::setApplicationName("bseal_preview_qsettings_test_app");
+    { QSettings s; s.clear(); s.sync(); }
+
+    w.setInputScanFnForTests([](const std::string&) { return std::nullopt; });
+    find_preview_toggle(w)->click();
+    pump_events(400);
+
+    QSettings s;
+    if (!s.allKeys().isEmpty()) {
+        std::string msg = "QSettings keys written after preview generation:";
+        for (const QString& k : s.allKeys())
+            msg += " " + k.toStdString();
+        throw std::runtime_error(msg);
+    }
+
+    { QSettings cleanup; cleanup.clear(); cleanup.sync(); }
+}
+
 int main() {
     run_test("ToggleExists",                 test_preview_toggle_exists);
     run_test("PanelHiddenOnStart",           test_preview_panel_hidden_on_start);
@@ -256,6 +297,8 @@ int main() {
     run_test("ModeSwitchClearsPreview",      test_mode_switch_clears_preview);
     run_test("RunningFalseAfterDone",        test_preview_running_false_after_done);
     run_test("NoFullKeyfilePathInWidget",    test_preview_no_full_keyfile_path_in_widget);
+    run_test("CopyButtonNoGenerateIfEmpty", test_copy_button_does_not_generate_if_empty);
+    run_test("NoQSettingsAfterPreview",     test_no_qsettings_written_after_preview);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;

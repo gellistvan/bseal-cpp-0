@@ -52,4 +52,32 @@ inline std::uint64_t parse_size_bytes(std::string_view text) {
     return value * multiplier;
 }
 
+// Parses a strict decimal uint32. Rejects empty, signs, whitespace, and trailing garbage.
+inline std::uint32_t parse_u32(std::string_view text) {
+    if (text.empty())
+        throw InvalidArgument("integer value must not be empty");
+    std::uint64_t value = 0;
+    for (char c : text) {
+        if (c < '0' || c > '9')
+            throw InvalidArgument("invalid integer: '" + std::string(text) + "'");
+        value = value * 10 + static_cast<std::uint64_t>(c - '0');
+        if (value > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()))
+            throw InvalidArgument("integer value is too large: '" + std::string(text) + "'");
+    }
+    return static_cast<std::uint32_t>(value);
+}
+
+// Parses a size string (e.g. "256M", "2G") and returns the value in KiB.
+// Rejects values that are not whole multiples of 1024 bytes and values
+// that do not fit in uint32_t.
+inline std::uint32_t parse_size_kib(std::string_view text) {
+    const std::uint64_t bytes = parse_size_bytes(text);
+    if (bytes % 1024 != 0)
+        throw InvalidArgument("size must be a whole number of KiB (e.g. 256M, 2G)");
+    const std::uint64_t kib = bytes / 1024;
+    if (kib > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()))
+        throw InvalidArgument("size is too large (maximum ~4 TiB expressed in KiB)");
+    return static_cast<std::uint32_t>(kib);
+}
+
 } // namespace bseal

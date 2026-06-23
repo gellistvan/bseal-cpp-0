@@ -5,7 +5,6 @@
 #include "common/SizeParser.hpp"
 #include "crypto/Kdf.hpp"
 
-#include <limits>
 #include <string_view>
 
 namespace bseal::cli {
@@ -72,37 +71,7 @@ PaddingPolicy parse_padding(std::string_view value) {
                           "'; valid values: none, chunk, power2, fixed-size=N");
 }
 
-std::uint32_t parse_u32(std::string_view text) {
-    if (text.empty()) {
-        throw InvalidArgument("integer value must not be empty");
-    }
-    std::uint64_t value = 0;
-    for (char c : text) {
-        if (c < '0' || c > '9') {
-            throw InvalidArgument("invalid integer: '" + std::string(text) + "'");
-        }
-        value = value * 10 + static_cast<std::uint64_t>(c - '0');
-        if (value > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) {
-            throw InvalidArgument("integer value is too large: '" + std::string(text) + "'");
-        }
-    }
-    return static_cast<std::uint32_t>(value);
-}
-
-// Parse a size string (e.g. "256M", "2G") and return the value in KiB.
-// Requires the result to be a whole number of KiB.
-std::uint32_t parse_size_kib(std::string_view text) {
-    const std::uint64_t bytes = parse_size_bytes(text);
-    if (bytes % 1024 != 0) {
-        throw InvalidArgument(
-            "--max-kdf-memory must be a whole number of KiB (e.g. 256M, 2G)");
-    }
-    const std::uint64_t kib = bytes / 1024;
-    if (kib > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) {
-        throw InvalidArgument("--max-kdf-memory size is too large");
-    }
-    return static_cast<std::uint32_t>(kib);
-}
+// parse_u32 and parse_size_kib live in common/SizeParser.hpp; use them via bseal:: below.
 
 void parse_common_option(CommonOptions& options, std::string_view key, std::string_view value) {
     if (key == "--input") {
@@ -193,13 +162,13 @@ ParsedArgs parse_args(int argc, char** argv) {
                 parsed.decrypt.overwrite = true;
             } else if (key == "--max-kdf-memory") {
                 parsed.decrypt.kdf_policy.max_memory_kib =
-                    parse_size_kib(arg_at(++i, argc, argv));
+                    bseal::parse_size_kib(arg_at(++i, argc, argv));
             } else if (key == "--max-kdf-iterations") {
                 parsed.decrypt.kdf_policy.max_iterations =
-                    parse_u32(arg_at(++i, argc, argv));
+                    bseal::parse_u32(arg_at(++i, argc, argv));
             } else if (key == "--max-kdf-parallelism") {
                 parsed.decrypt.kdf_policy.max_parallelism =
-                    parse_u32(arg_at(++i, argc, argv));
+                    bseal::parse_u32(arg_at(++i, argc, argv));
             } else if (key == "--hardened-extract") {
                 parsed.decrypt.hardened_extract =
                     parse_hardened_extract(arg_at(++i, argc, argv));

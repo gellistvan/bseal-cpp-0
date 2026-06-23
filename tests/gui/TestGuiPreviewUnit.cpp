@@ -451,6 +451,178 @@ void test_preview_result_has_cmd_summary_decrypt() {
     ASSERT_CONTAINS(result.cmd_summary, "bseal decrypt");
 }
 
+// ---------------------------------------------------------------------------
+// Effective hardened extraction text in preview
+// ---------------------------------------------------------------------------
+
+void test_preview_auto_supported_shows_hardened_backend() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Auto;
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/true);
+    ASSERT_CONTAINS(result.text, "hardened backend will be used");
+    ASSERT_TRUE(result.warnings.empty());
+}
+
+void test_preview_auto_unsupported_shows_fallback_text() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Auto;
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/false);
+    ASSERT_CONTAINS(result.text, "fall back to portable");
+    ASSERT_FALSE(result.warnings.empty());
+    bool found = false;
+    for (const auto& w : result.warnings)
+        if (w.find("fall") != std::string::npos || w.find("portable") != std::string::npos)
+            found = true;
+    ASSERT_TRUE(found);
+}
+
+void test_preview_off_shows_portable_backend() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Off;
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/true);
+    ASSERT_CONTAINS(result.text, "portable backend");
+    ASSERT_FALSE(result.warnings.empty());
+}
+
+void test_preview_on_supported_shows_hardened() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::On;
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/true);
+    ASSERT_CONTAINS(result.text, "hardened backend");
+    ASSERT_TRUE(result.warnings.empty());
+}
+
+void test_preview_cache_key_changes_with_hardened_mode() {
+    bseal::gui::GuiDecryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Auto;
+    const auto key_auto = bseal::gui::make_preview_key(opts);
+
+    opts.hardened_extract = bseal::cli::HardenedExtractMode::Off;
+    const auto key_off = bseal::gui::make_preview_key(opts);
+
+    ASSERT_TRUE(!(key_auto == key_off));
+}
+
+// ---------------------------------------------------------------------------
+// Cache invalidation: each non-secret field change invalidates cache
+// ---------------------------------------------------------------------------
+
+void test_cache_output_path_change_invalidates() {
+    bseal::gui::GuiPreviewCache cache;
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input = "/i"; opts.output = "/out_a";
+    const auto k1 = bseal::gui::make_preview_key(opts);
+    cache.set(k1, {"text", "", {}});
+
+    opts.output = "/out_b";
+    const auto k2 = bseal::gui::make_preview_key(opts);
+    ASSERT_TRUE(!cache.get(k2).has_value());
+}
+
+void test_cache_keyfile_list_change_invalidates() {
+    bseal::gui::GuiPreviewCache cache;
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.keyfiles = {"/some/dir/a.key"};
+    const auto k1 = bseal::gui::make_preview_key(opts);
+    cache.set(k1, {"text", "", {}});
+
+    opts.keyfiles = {"/other/dir/b.key"};
+    const auto k2 = bseal::gui::make_preview_key(opts);
+    ASSERT_TRUE(!cache.get(k2).has_value());
+}
+
+void test_cache_mode_change_invalidates() {
+    bseal::gui::GuiPreviewCache cache;
+    bseal::gui::GuiEncryptOptions enc;
+    enc.input = "/i"; enc.output = "/o";
+    const auto k_enc = bseal::gui::make_preview_key(enc);
+    cache.set(k_enc, {"text", "", {}});
+
+    bseal::gui::GuiDecryptOptions dec;
+    dec.input = "/i"; dec.output = "/o";
+    const auto k_dec = bseal::gui::make_preview_key(dec);
+    ASSERT_TRUE(!cache.get(k_dec).has_value());
+}
+
+void test_cache_shard_size_change_invalidates() {
+    bseal::gui::GuiPreviewCache cache;
+    bseal::gui::PreviewKey key;
+    key.encrypt_mode = true;
+    key.shard_size   = 1024ull * 1024 * 1024;
+    cache.set(key, {"text", "", {}});
+
+    bseal::gui::PreviewKey key2 = key;
+    key2.shard_size = 2048ull * 1024 * 1024;
+    ASSERT_TRUE(!cache.get(key2).has_value());
+}
+
+void test_cache_kdf_preset_change_invalidates() {
+    bseal::gui::GuiPreviewCache cache;
+    bseal::gui::PreviewKey key;
+    key.encrypt_mode = true;
+    key.kdf_preset   = bseal::crypto::KdfPreset::Strong;
+    cache.set(key, {"text", "", {}});
+
+    bseal::gui::PreviewKey key2 = key;
+    key2.kdf_preset = bseal::crypto::KdfPreset::Paranoid;
+    ASSERT_TRUE(!cache.get(key2).has_value());
+}
+
+void test_cache_cipher_suite_change_invalidates() {
+    bseal::gui::GuiPreviewCache cache;
+    bseal::gui::PreviewKey key;
+    key.encrypt_mode = true;
+    key.suite        = bseal::crypto::CipherSuite::XChaCha20Poly1305;
+    cache.set(key, {"text", "", {}});
+
+    bseal::gui::PreviewKey key2 = key;
+    key2.suite = bseal::crypto::CipherSuite::Aes256Gcm;
+    ASSERT_TRUE(!cache.get(key2).has_value());
+}
+
+void test_cache_overwrite_change_invalidates() {
+    bseal::gui::GuiPreviewCache cache;
+    bseal::gui::PreviewKey key;
+    key.encrypt_mode = false;
+    key.overwrite    = false;
+    cache.set(key, {"text", "", {}});
+
+    bseal::gui::PreviewKey key2 = key;
+    key2.overwrite = true;
+    ASSERT_TRUE(!cache.get(key2).has_value());
+}
+
+void test_cache_kdf_policy_change_invalidates() {
+    bseal::gui::GuiPreviewCache cache;
+    bseal::gui::PreviewKey key;
+    key.encrypt_mode              = false;
+    key.kdf_policy.max_memory_kib = 65536;
+    cache.set(key, {"text", "", {}});
+
+    bseal::gui::PreviewKey key2 = key;
+    key2.kdf_policy.max_memory_kib = 131072;
+    ASSERT_TRUE(!cache.get(key2).has_value());
+}
+
+// ---------------------------------------------------------------------------
+// CLI summary uses --kdf, not --kdf-preset
+// ---------------------------------------------------------------------------
+
+void test_cmd_summary_uses_kdf_not_kdf_preset() {
+    bseal::gui::GuiEncryptOptions opts;
+    opts.input = "/i"; opts.output = "/o";
+    opts.kdf_preset = bseal::crypto::KdfPreset::Strong;
+    const auto s = bseal::gui::generate_cmd_summary(opts);
+    ASSERT_CONTAINS(s, "--kdf ");
+    ASSERT_NOT_CONTAINS(s, "--kdf-preset");
+}
+
 } // namespace
 
 int main() {
@@ -491,6 +663,20 @@ int main() {
     run_test("CmdSummaryHeaderComment",             test_cmd_summary_includes_header_comment);
     run_test("PreviewResultHasCmdSummaryEncrypt",   test_preview_result_has_cmd_summary_encrypt);
     run_test("PreviewResultHasCmdSummaryDecrypt",   test_preview_result_has_cmd_summary_decrypt);
+    run_test("PreviewAutoSupportedHardenedText",    test_preview_auto_supported_shows_hardened_backend);
+    run_test("PreviewAutoUnsupportedFallbackText",  test_preview_auto_unsupported_shows_fallback_text);
+    run_test("PreviewOffPortableBackendText",        test_preview_off_shows_portable_backend);
+    run_test("PreviewOnSupportedHardenedText",       test_preview_on_supported_shows_hardened);
+    run_test("PreviewCacheKeyChangesWithMode",       test_preview_cache_key_changes_with_hardened_mode);
+    run_test("CacheOutputPathChangeInvalidates",     test_cache_output_path_change_invalidates);
+    run_test("CacheKeyfileListChangeInvalidates",    test_cache_keyfile_list_change_invalidates);
+    run_test("CacheModeChangeInvalidates",           test_cache_mode_change_invalidates);
+    run_test("CacheShardSizeChangeInvalidates",      test_cache_shard_size_change_invalidates);
+    run_test("CacheKdfPresetChangeInvalidates",      test_cache_kdf_preset_change_invalidates);
+    run_test("CacheCipherSuiteChangeInvalidates",    test_cache_cipher_suite_change_invalidates);
+    run_test("CacheOverwriteChangeInvalidates",      test_cache_overwrite_change_invalidates);
+    run_test("CacheKdfPolicyChangeInvalidates",      test_cache_kdf_policy_change_invalidates);
+    run_test("CmdSummaryUsesKdfNotKdfPreset",        test_cmd_summary_uses_kdf_not_kdf_preset);
 
     std::cout << g_passed << " passed, " << g_failed << " failed\n";
     return g_failed == 0 ? 0 : 1;

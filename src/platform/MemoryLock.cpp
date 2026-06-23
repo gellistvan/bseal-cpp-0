@@ -1,25 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "platform/MemoryLock.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <limits>
-#include <sys/mman.h>
-#include <unistd.h>
 #include <utility>
+
+#if defined(_WIN32)
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
+#else
+#    include <sys/mman.h>
+#    include <unistd.h>
+#endif
 
 namespace bseal::platform {
 namespace {
 
 [[nodiscard]] std::size_t page_size() noexcept {
+#if defined(_WIN32)
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return static_cast<std::size_t>(info.dwPageSize);
+#else
     const long value = ::sysconf(_SC_PAGESIZE);
-    if (value <= 0) {
-        return 4096;
-    }
-    return static_cast<std::size_t>(value);
+    return (value > 0) ? static_cast<std::size_t>(value) : 4096u;
+#endif
 }
 
-[[nodiscard]] bool align_region(void* ptr, std::size_t size, void*& aligned_ptr, std::size_t& aligned_size) noexcept {
+[[nodiscard]] bool align_region(void* ptr, std::size_t size, void*& aligned_ptr,
+                                std::size_t& aligned_size) noexcept {
     if (ptr == nullptr || size == 0) {
         aligned_ptr = nullptr;
         aligned_size = 0;
@@ -54,16 +65,21 @@ LockedMemoryRegion::LockedMemoryRegion(void* ptr, std::size_t size) noexcept
     if (!align_region(ptr, size, locked_ptr_, locked_size_)) {
         return;
     }
-
-#ifdef MADV_DONTDUMP
+#if defined(_WIN32)
+    if (VirtualLock(locked_ptr_, locked_size_)) {
+        locked_ = true;
+    }
+    // Windows has no MADV_DONTDUMP equivalent; dont_dump_ stays false.
+#else
+#    ifdef MADV_DONTDUMP
     if (::madvise(locked_ptr_, locked_size_, MADV_DONTDUMP) == 0) {
         dont_dump_ = true;
     }
-#endif
-
+#    endif
     if (::mlock(locked_ptr_, locked_size_) == 0) {
         locked_ = true;
     }
+#endif
 }
 
 LockedMemoryRegion::LockedMemoryRegion(LockedMemoryRegion&& other) noexcept
@@ -87,9 +103,7 @@ LockedMemoryRegion& LockedMemoryRegion::operator=(LockedMemoryRegion&& other) no
     return *this;
 }
 
-LockedMemoryRegion::~LockedMemoryRegion() {
-    release();
-}
+LockedMemoryRegion::~LockedMemoryRegion() { release(); }
 
 bool LockedMemoryRegion::locked() const noexcept { return locked_; }
 bool LockedMemoryRegion::dont_dump() const noexcept { return dont_dump_; }
@@ -101,14 +115,19 @@ void LockedMemoryRegion::release() noexcept {
         dont_dump_ = false;
         return;
     }
-
+#if defined(_WIN32)
+    if (locked_) {
+        VirtualUnlock(locked_ptr_, locked_size_);
+    }
+#else
     if (locked_) {
         (void)::munlock(locked_ptr_, locked_size_);
     }
-#ifdef MADV_DODUMP
+#    ifdef MADV_DODUMP
     if (dont_dump_) {
         (void)::madvise(locked_ptr_, locked_size_, MADV_DODUMP);
     }
+#    endif
 #endif
     locked_ptr_ = nullptr;
     locked_size_ = 0;

@@ -120,6 +120,7 @@ void EncryptOptionsWidget::restoreState() {
 }
 
 void EncryptOptionsWidget::apply(GuiEncryptOptions& o) const {
+    o.parse_errors.clear();
     o.suite = (m_suiteCombo->currentIndex() == 1)
                  ? crypto::CipherSuite::Aes256Gcm
                  : crypto::CipherSuite::XChaCha20Poly1305;
@@ -130,25 +131,37 @@ void EncryptOptionsWidget::apply(GuiEncryptOptions& o) const {
         default: o.kdf_preset = crypto::KdfPreset::Strong;   break;
     }
 
-    // Empty text keeps the model default; parse errors → 0 (caught by validate()).
+    // Empty text keeps the model default. Non-empty invalid text sets 0 and records
+    // a field-specific message in parse_errors (surfaced by validate()).
     const auto cs = m_chunkSizeEdit->text().trimmed().toStdString();
     if (!cs.empty()) {
-        try { o.chunk_size = bseal::parse_size_bytes(cs); } catch (...) { o.chunk_size = 0; }
+        try { o.chunk_size = bseal::parse_size_bytes(cs); }
+        catch (...) {
+            o.chunk_size = 0;
+            o.parse_errors.emplace_back("Chunk size contains an invalid value: '" + cs + "'.");
+        }
     }
     const auto ss = m_shardSizeEdit->text().trimmed().toStdString();
     if (!ss.empty()) {
-        try { o.shard_size = bseal::parse_size_bytes(ss); } catch (...) { o.shard_size = 0; }
+        try { o.shard_size = bseal::parse_size_bytes(ss); }
+        catch (...) {
+            o.shard_size = 0;
+            o.parse_errors.emplace_back("Shard size contains an invalid value: '" + ss + "'.");
+        }
     }
 
     switch (m_paddingCombo->currentIndex()) {
         case 0: o.padding = {cli::PaddingPolicyKind::None,  0}; break;
         case 1: o.padding = {cli::PaddingPolicyKind::Chunk, 0}; break;
         case 3: {
+            const auto fp = m_fixedPaddingEdit->text().trimmed().toStdString();
             std::uint64_t sz = 0;
-            try {
-                sz = bseal::parse_size_bytes(
-                    m_fixedPaddingEdit->text().trimmed().toStdString());
-            } catch (...) {}
+            try { sz = bseal::parse_size_bytes(fp); }
+            catch (...) {
+                if (!fp.empty())
+                    o.parse_errors.emplace_back(
+                        "Fixed padding size contains an invalid value: '" + fp + "'.");
+            }
             o.padding = {cli::PaddingPolicyKind::FixedSize, sz};
             break;
         }

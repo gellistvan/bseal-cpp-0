@@ -23,6 +23,7 @@ endif()
 
 add_executable(bseal_common_gtests
     common/TestCheckedArithmetic.cpp
+    common/TestSizeParser.cpp
 )
 target_link_libraries(bseal_common_gtests PRIVATE bseal::core ${BSEAL_GTEST_LIBS})
 bseal_set_project_warnings(bseal_common_gtests)
