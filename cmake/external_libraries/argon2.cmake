@@ -15,11 +15,15 @@ set(ARGON2_SUBMODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/submodules/argon2")
 
 # On Windows this project uses vcpkg's libsodium, which already bundles argon2
 # internally.  Building our own argon2_static would produce duplicate symbols at
-# link time, so we expose an empty interface target instead and let libsodium
-# satisfy the argon2 symbols transitively.
+# link time, so we expose an interface-only target (no compiled sources) and let
+# libsodium satisfy the argon2 symbols transitively.  The submodule headers are
+# still required for compilation, so we expose them via INTERFACE include dirs.
 if (WIN32)
     add_library(argon2_static INTERFACE)
     add_library(argon2::argon2 ALIAS argon2_static)
+    target_include_directories(argon2_static INTERFACE
+        $<BUILD_INTERFACE:${ARGON2_SUBMODULE_DIR}/include>
+    )
     return()
 endif()
 

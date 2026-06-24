@@ -56,7 +56,7 @@ ALLOWED_LINES: frozenset[tuple[str, int]] = frozenset({
     # Copies generate_cmd_summary() output: CLI flags only.
     # Passphrase is never stored in GuiOptions. Keyfile paths are replaced
     # with basenames by generate_cmd_summary() — no full paths in the text.
-    ("src/gui/MainWindow.cpp", 229),
+    ("src/gui/MainWindow.cpp", 231),
 })
 
 # Source files to scan: only src/gui/ C++ files.

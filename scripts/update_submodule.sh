@@ -129,11 +129,11 @@ git -C "${ABS_SUBMODULE_PATH}" checkout --detach "${NEW_COMMIT}"
 
 echo "Computing directory-tree SHA-256..."
 NEW_TREE_HASH=$(
-    find "${ABS_SUBMODULE_PATH}" -type f \
+    (cd "${ABS_SUBMODULE_PATH}" && find . -type f \
     | LC_ALL=C sort \
     | xargs sha256sum \
     | sha256sum \
-    | awk '{print $1}'
+    | awk '{print $1}')
 )
 echo "  tree-sha256: ${NEW_TREE_HASH}"
 
