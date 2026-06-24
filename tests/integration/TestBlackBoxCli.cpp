@@ -1219,10 +1219,13 @@ TEST(BlackBoxCli, PaddingFixedSizeTooSmallFails) {
     const auto sealed = temp.subdir("sealed");
 
     fs::create_directories(input);
-    // Write a file large enough to exceed a very small fixed-size target.
-    write_file(input / "data.txt", repeated("x", 10000));
+    // Write a file large enough to exceed the fixed-size target.
+    // We need an input that produces an archive > 64K so the fixed-size=64K
+    // target triggers the "too small" check (not the "not a multiple" check,
+    // which fires when fixed_size % chunk_size != 0; 64K % 64K == 0).
+    write_file(input / "data.txt", repeated("x", 100000));
 
-    // 1K is smaller than the archive produced from a 10000-byte file.
+    // 64K is a valid chunk-size multiple but smaller than the ~100K archive.
     const auto result = run_bseal(
         temp.subdir("encrypt-run"),
         {
@@ -1230,7 +1233,7 @@ TEST(BlackBoxCli, PaddingFixedSizeTooSmallFails) {
             "--input", input.string(), "--output", sealed.string(),
             "--suite", "xchacha20-poly1305",
             "--kdf", "fast", "--chunk-size", "64K", "--shard-size", "512K",
-            "--padding", "fixed-size=1K",
+            "--padding", "fixed-size=64K",
         },
         "passphrase\n");
 

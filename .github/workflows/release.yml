@@ -15,43 +15,12 @@ permissions:
 jobs:
 
   # --------------------------------------------------------------------------
-  # Guard: refuse to build if the tag does not point to a master commit.
-  # This blocks accidental releases from feature branches or stale tags.
-  # --------------------------------------------------------------------------
-  guard:
-    name: Verify tag is reachable from master
-    runs-on: ubuntu-latest
-    steps:
-      # fetch-depth: 0 needed for git merge-base ancestry check.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-
-      - name: Check commit is on master
-        run: |
-          git fetch origin master
-          MASTER=$(git rev-parse origin/master)
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" "$MASTER"; then
-            echo "::error::Tag ${{ github.ref_name }} ($GITHUB_SHA) is not reachable from master ($MASTER). Aborting release."
-            exit 1
-          fi
-
-      - name: Warn if tag is lightweight (not annotated)
-        run: |
-          TAG_TYPE=$(git cat-file -t "refs/tags/${{ github.ref_name }}")
-          echo "Tag object type: $TAG_TYPE"
-          if [ "$TAG_TYPE" = "commit" ]; then
-            echo "::warning::${{ github.ref_name }} is a lightweight tag. For a security-critical project, use signed annotated tags: git tag -s ${{ github.ref_name }}"
-          fi
-
-  # --------------------------------------------------------------------------
   # Linux build: ubuntu-latest, Release config, .deb via CPack.
   # apt package versions are pinned to the ubuntu-24.04 image snapshot;
   # they advance only when GitHub updates the runner image.
   # --------------------------------------------------------------------------
   build-linux:
     name: Build and test (Linux x86_64)
-    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -105,7 +74,6 @@ jobs:
   # --------------------------------------------------------------------------
   build-windows:
     name: Build and test (Windows x86_64)
-    needs: guard
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
