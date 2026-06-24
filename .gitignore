@@ -16,6 +16,7 @@ cmake-build-*/
 .vscode/
 .idea/
 *.bin
+!tests/fixtures/**/*.bin
 *.tmp
 compile_commands.json
 .DS_Store
