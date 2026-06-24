@@ -85,6 +85,29 @@ inline void expect_false(bool condition, const char* expression, const char* fil
     }
 }
 
+// Supports `ASSERT_TRUE(x) << "extra detail"` — destructor throws if failed.
+struct StreamingAssertion {
+    bool passed_;
+    const char* expr_;
+    const char* file_;
+    int line_;
+    std::ostringstream detail_;
+
+    StreamingAssertion(bool cond, const char* expr, const char* file, int line)
+        : passed_(cond), expr_(expr), file_(file), line_(line) {}
+
+    ~StreamingAssertion() noexcept(false) {
+        if (!passed_) fail(expr_, file_, line_, detail_.str());
+    }
+
+    template <typename T>
+    StreamingAssertion& operator<<(const T& v) { detail_ << v; return *this; }
+};
+
+inline StreamingAssertion assert_true(bool c, const char* e, const char* f, int l) {
+    return StreamingAssertion(c, e, f, l);
+}
+
 } // namespace testing
 
 #define TEST(SUITE_NAME, TEST_NAME)                                                                        \
@@ -101,6 +124,8 @@ inline void expect_false(bool condition, const char* expression, const char* fil
 #define EXPECT_NE(A, B) ::testing::expect_ne((A), (B), #A, #B, __FILE__, __LINE__)
 #define EXPECT_GE(A, B) ::testing::expect_ge((A), (B), #A, #B, __FILE__, __LINE__)
 #define EXPECT_GT(A, B) ::testing::expect_gt((A), (B), #A, #B, __FILE__, __LINE__)
+#define ASSERT_TRUE(EXPR) ::testing::assert_true(static_cast<bool>(EXPR), #EXPR, __FILE__, __LINE__)
+#define ASSERT_FALSE(EXPR) ::testing::assert_true(!static_cast<bool>(EXPR), "!" #EXPR, __FILE__, __LINE__)
 
 #define EXPECT_NO_THROW(STATEMENT)                                                                         \
     do {                                                                                                   \
