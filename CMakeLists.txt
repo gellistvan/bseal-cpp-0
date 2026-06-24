@@ -350,8 +350,8 @@ if (BSEAL_ENABLE_INSTALL)
         COMPONENT dev
     )
     install(DIRECTORY src/ DESTINATION include/bseal
-        FILES_MATCHING PATTERN "*.hpp"
         COMPONENT dev
+        FILES_MATCHING PATTERN "*.hpp"
     )
 endif()
 

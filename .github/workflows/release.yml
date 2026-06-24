@@ -112,12 +112,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies via vcpkg
-        run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
-            libsodium:x64-windows-static `
-            openssl:x64-windows-static
-
       - name: Configure (Release, static)
         run: |
           cmake -S . -B build `
