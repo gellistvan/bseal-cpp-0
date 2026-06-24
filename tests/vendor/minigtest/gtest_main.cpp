@@ -22,6 +22,8 @@ int RunAllTests() {
         try {
             test.function();
             std::cout << "[  PASSED  ] " << test.suite << '.' << test.name << '\n';
+        } catch (const ::testing::SkipException& e) {
+            std::cout << "[  SKIPPED ] " << test.suite << '.' << test.name << ": " << e.what() << '\n';
         } catch (const std::exception& e) {
             ++failed;
             std::cerr << "[  FAILED  ] " << test.suite << '.' << test.name << ": " << e.what() << '\n';
