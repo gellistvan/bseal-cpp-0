@@ -71,17 +71,17 @@ jobs:
         with:
           submodules: recursive
 
-      # Pin vcpkg to the same commit recorded in vcpkg.json builtin-baseline so
-      # package versions are reproducible regardless of runner image updates.
-      # To update: pick a new vcpkg commit, run its bootstrap-vcpkg.bat, verify
-      # libsodium+openssl resolve, then update both this SHA and builtin-baseline.
+      # Pin vcpkg to a specific release tag so package versions are reproducible
+      # regardless of runner image updates. The checked-out vcpkg tree is its
+      # own implicit baseline — no builtin-baseline SHA in vcpkg.json is needed.
+      # To update: pick a new tag from github.com/microsoft/vcpkg/releases and
+      # update VCPKG_TAG here and in release.yml (both values must match).
       - name: Pin vcpkg
         shell: pwsh
         env:
-          VCPKG_COMMIT: a34c873a9717a888f58dc05268dea15592c2f822
+          VCPKG_TAG: "2024.11.16"
         run: |
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg-pinned
-          git -C C:\vcpkg-pinned checkout $env:VCPKG_COMMIT
+          git clone --depth 1 --branch $env:VCPKG_TAG https://github.com/microsoft/vcpkg.git C:\vcpkg-pinned
           C:\vcpkg-pinned\bootstrap-vcpkg.bat -disableMetrics
           echo "VCPKG_ROOT=C:\vcpkg-pinned" >> $env:GITHUB_ENV
 

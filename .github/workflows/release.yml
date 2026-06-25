@@ -78,15 +78,14 @@ jobs:
         with:
           submodules: recursive
 
-      # Pin vcpkg to the same commit recorded in vcpkg.json builtin-baseline.
-      # See ci.yml Windows job for update instructions.
+      # Pin vcpkg to a specific release tag. See ci.yml Windows job for update
+      # instructions. VCPKG_TAG must match the value in ci.yml.
       - name: Pin vcpkg
         shell: pwsh
         env:
-          VCPKG_COMMIT: a34c873a9717a888f58dc05268dea15592c2f822
+          VCPKG_TAG: "2024.11.16"
         run: |
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg-pinned
-          git -C C:\vcpkg-pinned checkout $env:VCPKG_COMMIT
+          git clone --depth 1 --branch $env:VCPKG_TAG https://github.com/microsoft/vcpkg.git C:\vcpkg-pinned
           C:\vcpkg-pinned\bootstrap-vcpkg.bat -disableMetrics
           echo "VCPKG_ROOT=C:\vcpkg-pinned" >> $env:GITHUB_ENV
 

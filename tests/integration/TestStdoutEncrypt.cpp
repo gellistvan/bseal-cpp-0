@@ -252,6 +252,9 @@ TEST(StdoutEncrypt, RoundTrip) {
 // identical encrypt runs must produce bit-for-bit identical stdout output.
 
 TEST(StdoutEncrypt, ByteIdentity) {
+#if !defined(BSEAL_ENABLE_TEST_SEAMS)
+    GTEST_SKIP() << "test seams not compiled in; rebuild with -DBSEAL_ENABLE_TEST_SEAMS=ON";
+#endif
     TempDir td("bseal_stdout_bi");
 
     const auto input = td.subdir("input");

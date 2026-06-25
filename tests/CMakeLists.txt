@@ -256,6 +256,11 @@ target_include_directories(bseal_integration_gtests
 target_link_libraries(bseal_integration_gtests PRIVATE ${BSEAL_GTEST_LIBS})
 target_compile_features(bseal_integration_gtests PRIVATE cxx_std_20)
 bseal_set_project_warnings(bseal_integration_gtests)
+if (BSEAL_ENABLE_TEST_SEAMS)
+    # Let the test binary know seams are compiled into the bseal binary it launches,
+    # so seam-dependent tests (ByteIdentity) can skip instead of fail when absent.
+    target_compile_definitions(bseal_integration_gtests PRIVATE BSEAL_ENABLE_TEST_SEAMS)
+endif ()
 bseal_enable_sanitizers_if_requested(bseal_integration_gtests)
 bseal_enable_coverage_if_requested(bseal_integration_gtests)
 
