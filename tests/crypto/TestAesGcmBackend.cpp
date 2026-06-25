@@ -3,6 +3,7 @@
 
 #include "common/Errors.hpp"
 #include "common/Types.hpp"
+#include "platform/CpuFeatures.hpp"
 
 #include <gtest/gtest.h>
 
@@ -63,6 +64,7 @@ ChunkAad make_aad() {
 } // namespace
 
 TEST(AesGcmBackend, ReportsExpectedProperties) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     AesGcmBackend backend;
 
     EXPECT_EQ(backend.suite(), CipherSuite::Aes256Gcm);
@@ -73,6 +75,7 @@ TEST(AesGcmBackend, ReportsExpectedProperties) {
 }
 
 TEST(AesGcmBackend, EncryptDecryptRoundTrip) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     AesGcmBackend backend;
 
     Bytes key = make_bytes(backend.key_size(), 0x10);
@@ -105,6 +108,7 @@ TEST(AesGcmBackend, EncryptDecryptRoundTrip) {
 }
 
 TEST(AesGcmBackend, EncryptDecryptEmptyPlaintext) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     AesGcmBackend backend;
 
     Bytes key = make_bytes(backend.key_size(), 0x01);
@@ -132,6 +136,7 @@ TEST(AesGcmBackend, EncryptDecryptEmptyPlaintext) {
 }
 
 TEST(AesGcmBackend, TamperedCiphertextFailsAuthentication) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     AesGcmBackend backend;
 
     Bytes key = make_bytes(backend.key_size(), 0x10);
@@ -160,6 +165,7 @@ TEST(AesGcmBackend, TamperedCiphertextFailsAuthentication) {
 }
 
 TEST(AesGcmBackend, TamperedTagFailsAuthentication) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     AesGcmBackend backend;
 
     Bytes key = make_bytes(backend.key_size(), 0x10);
@@ -188,6 +194,7 @@ TEST(AesGcmBackend, TamperedTagFailsAuthentication) {
 }
 
 TEST(AesGcmBackend, WrongAadFailsAuthentication) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     AesGcmBackend backend;
 
     Bytes key = make_bytes(backend.key_size(), 0x10);
@@ -220,6 +227,7 @@ TEST(AesGcmBackend, WrongAadFailsAuthentication) {
 }
 
 TEST(AesGcmBackend, RejectsInvalidKeyAndNonceSizes) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     AesGcmBackend backend;
 
     Bytes bad_key(backend.key_size() - 1, 0x11);
@@ -249,6 +257,7 @@ TEST(AesGcmBackend, RejectsInvalidKeyAndNonceSizes) {
 }
 
 TEST(AesGcmBackend, RejectsCiphertextShorterThanTag) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     AesGcmBackend backend;
 
     Bytes key = make_bytes(backend.key_size(), 0x10);

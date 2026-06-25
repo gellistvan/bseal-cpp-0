@@ -291,26 +291,28 @@ TEST(TestShardReader, ReadsMultipleChunkFramesFromOneShard) {
     EXPECT_EQ(shards[0].first_chunk_index(), 0u);
     EXPECT_EQ(shards[0].chunk_count(), 2u);
 
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    auto r0 = reader.read_next_chunk_record();
-    ASSERT_TRUE(r0.has_value());
-    EXPECT_EQ(r0->chunk_index, 0u);
-    EXPECT_EQ(r0->plaintext_size, static_cast<std::uint64_t>(kTestChunkPlain));
-    EXPECT_EQ(r0->ciphertext, c0);
-    EXPECT_EQ(r0->frame_flags & bseal::io::kChunkFrameFlagFinalChunk, 0u);
-    EXPECT_EQ(r0->frame_header_bytes.size(), bseal::io::kChunkFrameHeaderV1Size);
+        auto r0 = reader.read_next_chunk_record();
+        ASSERT_TRUE(r0.has_value());
+        EXPECT_EQ(r0->chunk_index, 0u);
+        EXPECT_EQ(r0->plaintext_size, static_cast<std::uint64_t>(kTestChunkPlain));
+        EXPECT_EQ(r0->ciphertext, c0);
+        EXPECT_EQ(r0->frame_flags & bseal::io::kChunkFrameFlagFinalChunk, 0u);
+        EXPECT_EQ(r0->frame_header_bytes.size(), bseal::io::kChunkFrameHeaderV1Size);
 
-    auto r1 = reader.read_next_chunk_record();
-    ASSERT_TRUE(r1.has_value());
-    EXPECT_EQ(r1->chunk_index, 1u);
-    EXPECT_EQ(r1->plaintext_size, static_cast<std::uint64_t>(kTestChunkPlain / 2));
-    EXPECT_EQ(r1->ciphertext, c1);
-    EXPECT_NE(r1->frame_flags & bseal::io::kChunkFrameFlagFinalChunk, 0u);
-    EXPECT_EQ(r1->frame_header_bytes.size(), bseal::io::kChunkFrameHeaderV1Size);
+        auto r1 = reader.read_next_chunk_record();
+        ASSERT_TRUE(r1.has_value());
+        EXPECT_EQ(r1->chunk_index, 1u);
+        EXPECT_EQ(r1->plaintext_size, static_cast<std::uint64_t>(kTestChunkPlain / 2));
+        EXPECT_EQ(r1->ciphertext, c1);
+        EXPECT_NE(r1->frame_flags & bseal::io::kChunkFrameFlagFinalChunk, 0u);
+        EXPECT_EQ(r1->frame_header_bytes.size(), bseal::io::kChunkFrameHeaderV1Size);
 
-    EXPECT_FALSE(reader.read_next_chunk_record().has_value());
+        EXPECT_FALSE(reader.read_next_chunk_record().has_value());
+    }
     std::filesystem::remove_all(dir);
 }
 
@@ -360,18 +362,20 @@ TEST(TestShardReader, ReadsMultipleShardsUsingMetadataNotFilenameOrder) {
     auto rediscovered = bseal::io::ShardReader::discover(dir);
     ASSERT_EQ(rediscovered.size(), 2u);
 
-    bseal::io::ShardReader reader(
-        std::move(rediscovered), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
-    auto r0 = reader.read_next_chunk_record();
-    auto r1 = reader.read_next_chunk_record();
+    {
+        bseal::io::ShardReader reader(
+            std::move(rediscovered), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+        auto r0 = reader.read_next_chunk_record();
+        auto r1 = reader.read_next_chunk_record();
 
-    ASSERT_TRUE(r0.has_value());
-    ASSERT_TRUE(r1.has_value());
-    EXPECT_EQ(r0->chunk_index, 0u);
-    EXPECT_EQ(r0->ciphertext, c0);
-    EXPECT_EQ(r1->chunk_index, 1u);
-    EXPECT_EQ(r1->ciphertext, c1);
-    EXPECT_FALSE(reader.read_next_chunk_record().has_value());
+        ASSERT_TRUE(r0.has_value());
+        ASSERT_TRUE(r1.has_value());
+        EXPECT_EQ(r0->chunk_index, 0u);
+        EXPECT_EQ(r0->ciphertext, c0);
+        EXPECT_EQ(r1->chunk_index, 1u);
+        EXPECT_EQ(r1->ciphertext, c1);
+        EXPECT_FALSE(reader.read_next_chunk_record().has_value());
+    }
 
     std::filesystem::remove_all(dir);
 }
@@ -426,22 +430,26 @@ TEST(TestShardReader, RejectsTamperedFrameLength) {
     const auto dir = make_temp_dir("bseal_shard_reader_bad_frame_length");
 
     auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
-    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
-                                                      kTestChunkPlain, 1, 1));
-    write_fake_frame(writer, 0, kTestChunkPlain, true,
-                     bseal::ConstByteSpan{c0.data(), c0.size()});
-    writer.finish();
+    {
+        bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                          kTestChunkPlain, 1, 1));
+        write_fake_frame(writer, 0, kTestChunkPlain, true,
+                         bseal::ConstByteSpan{c0.data(), c0.size()});
+        writer.finish();
+    }
 
     const auto file = only_bin_file(dir);
     write_u64_le_at(file, frame_ciphertext_len_offset(first_frame_offset()), 1);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        { (void)reader.read_next_chunk_record(); },
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            { (void)reader.read_next_chunk_record(); },
+            bseal::InvalidArgument);
+    } // reader destroyed, file handle released before remove_all
 
     std::filesystem::remove_all(dir);
 }
@@ -452,13 +460,15 @@ TEST(TestShardReader, RejectsTamperedChunkIndex) {
     auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
     auto c1 = fake_ciphertext_and_tag(0x40, kTestChunkPlain);
 
-    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
-                                                      kTestChunkPlain, 1, 2));
-    write_fake_frame(writer, 0, kTestChunkPlain, false,
-                     bseal::ConstByteSpan{c0.data(), c0.size()});
-    write_fake_frame(writer, 1, kTestChunkPlain, true,
-                     bseal::ConstByteSpan{c1.data(), c1.size()});
-    writer.finish();
+    {
+        bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                          kTestChunkPlain, 1, 2));
+        write_fake_frame(writer, 0, kTestChunkPlain, false,
+                         bseal::ConstByteSpan{c0.data(), c0.size()});
+        write_fake_frame(writer, 1, kTestChunkPlain, true,
+                         bseal::ConstByteSpan{c1.data(), c1.size()});
+        writer.finish();
+    }
 
     const auto file = only_bin_file(dir);
     write_u64_le_at(
@@ -466,16 +476,18 @@ TEST(TestShardReader, RejectsTamperedChunkIndex) {
         frame_global_chunk_index_offset(second_frame_offset(kTestChunkPlain)),
         2);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    auto first = reader.read_next_chunk_record();
-    ASSERT_TRUE(first.has_value());
+        auto first = reader.read_next_chunk_record();
+        ASSERT_TRUE(first.has_value());
 
-    EXPECT_THROW(
-        { (void)reader.read_next_chunk_record(); },
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            { (void)reader.read_next_chunk_record(); },
+            bseal::InvalidArgument);
+    }
 
     std::filesystem::remove_all(dir);
 }
@@ -486,13 +498,15 @@ TEST(TestShardReader, RejectsDuplicateFrame) {
     auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
     auto c1 = fake_ciphertext_and_tag(0x40, kTestChunkPlain);
 
-    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
-                                                      kTestChunkPlain, 1, 2));
-    write_fake_frame(writer, 0, kTestChunkPlain, false,
-                     bseal::ConstByteSpan{c0.data(), c0.size()});
-    write_fake_frame(writer, 1, kTestChunkPlain, true,
-                     bseal::ConstByteSpan{c1.data(), c1.size()});
-    writer.finish();
+    {
+        bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                          kTestChunkPlain, 1, 2));
+        write_fake_frame(writer, 0, kTestChunkPlain, false,
+                         bseal::ConstByteSpan{c0.data(), c0.size()});
+        write_fake_frame(writer, 1, kTestChunkPlain, true,
+                         bseal::ConstByteSpan{c1.data(), c1.size()});
+        writer.finish();
+    }
 
     const auto file = only_bin_file(dir);
     write_u64_le_at(
@@ -500,16 +514,18 @@ TEST(TestShardReader, RejectsDuplicateFrame) {
         frame_global_chunk_index_offset(second_frame_offset(kTestChunkPlain)),
         0);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    auto first = reader.read_next_chunk_record();
-    ASSERT_TRUE(first.has_value());
+        auto first = reader.read_next_chunk_record();
+        ASSERT_TRUE(first.has_value());
 
-    EXPECT_THROW(
-        { (void)reader.read_next_chunk_record(); },
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            { (void)reader.read_next_chunk_record(); },
+            bseal::InvalidArgument);
+    }
 
     std::filesystem::remove_all(dir);
 }
@@ -520,19 +536,23 @@ TEST(TestShardReader, RejectsInvalidFinalChunkMarker) {
     // Single chunk but written without the final flag — shard reader should reject.
     auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
 
-    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
-                                                      kTestChunkPlain, 1, 1));
-    write_fake_frame(writer, 0, kTestChunkPlain, false /*no final flag*/,
-                     bseal::ConstByteSpan{c0.data(), c0.size()});
-    writer.finish();
+    {
+        bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                          kTestChunkPlain, 1, 1));
+        write_fake_frame(writer, 0, kTestChunkPlain, false /*no final flag*/,
+                         bseal::ConstByteSpan{c0.data(), c0.size()});
+        writer.finish();
+    }
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        { (void)reader.read_next_chunk_record(); },
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            { (void)reader.read_next_chunk_record(); },
+            bseal::InvalidArgument);
+    }
 
     std::filesystem::remove_all(dir);
 }
@@ -543,13 +563,15 @@ TEST(TestShardReader, RejectsUnexpectedFinalChunkMarker) {
     auto c0 = fake_ciphertext_and_tag(0x10, kTestChunkPlain);
     auto c1 = fake_ciphertext_and_tag(0x40, kTestChunkPlain);
 
-    bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
-                                                      kTestChunkPlain, 1, 2));
-    write_fake_frame(writer, 0, kTestChunkPlain, false,
-                     bseal::ConstByteSpan{c0.data(), c0.size()});
-    write_fake_frame(writer, 1, kTestChunkPlain, true,
-                     bseal::ConstByteSpan{c1.data(), c1.size()});
-    writer.finish();
+    {
+        bseal::io::ShardWriter writer(make_writer_options(dir, 4 * 1024 * 1024,
+                                                          kTestChunkPlain, 1, 2));
+        write_fake_frame(writer, 0, kTestChunkPlain, false,
+                         bseal::ConstByteSpan{c0.data(), c0.size()});
+        write_fake_frame(writer, 1, kTestChunkPlain, true,
+                         bseal::ConstByteSpan{c1.data(), c1.size()});
+        writer.finish();
+    }
 
     const auto file = only_bin_file(dir);
     write_u16_le_at(
@@ -557,13 +579,15 @@ TEST(TestShardReader, RejectsUnexpectedFinalChunkMarker) {
         frame_flags_offset(first_frame_offset()),
         bseal::io::kChunkFrameFlagFinalChunk);
 
-    auto shards = bseal::io::ShardReader::discover(dir);
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
+    {
+        auto shards = bseal::io::ShardReader::discover(dir);
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{});
 
-    EXPECT_THROW(
-        { (void)reader.read_next_chunk_record(); },
-        bseal::InvalidArgument);
+        EXPECT_THROW(
+            { (void)reader.read_next_chunk_record(); },
+            bseal::InvalidArgument);
+    }
 
     std::filesystem::remove_all(dir);
 }
@@ -587,15 +611,17 @@ TEST(TestShardReader, AcceptsExplicitValidationMatchingShardMetadata) {
     validation.chunk_plain_size = shards[0].global_header.chunk_plain_size;
     validation.public_header_hash = shards[0].public_header_hash;
 
-    bseal::io::ShardReader reader(
-        std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation);
+    {
+        bseal::io::ShardReader reader(
+            std::move(shards), bseal::io::UnsafeSkipHeaderAuthenticationForTests{}, validation);
 
-    auto r0 = reader.read_next_chunk_record();
-    ASSERT_TRUE(r0.has_value());
-    EXPECT_EQ(r0->chunk_index, 0u);
-    EXPECT_EQ(r0->plaintext_size, static_cast<std::uint64_t>(kTestChunkPlain));
-    EXPECT_EQ(r0->ciphertext, c0);
-    EXPECT_FALSE(reader.read_next_chunk_record().has_value());
+        auto r0 = reader.read_next_chunk_record();
+        ASSERT_TRUE(r0.has_value());
+        EXPECT_EQ(r0->chunk_index, 0u);
+        EXPECT_EQ(r0->plaintext_size, static_cast<std::uint64_t>(kTestChunkPlain));
+        EXPECT_EQ(r0->ciphertext, c0);
+        EXPECT_FALSE(reader.read_next_chunk_record().has_value());
+    }
 
     std::filesystem::remove_all(dir);
 }

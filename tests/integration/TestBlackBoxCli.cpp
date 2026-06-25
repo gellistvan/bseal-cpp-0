@@ -306,7 +306,20 @@ ProcessResult run_bseal(const fs::path& scratch_dir,
     write_file(stdin_file, stdin_text);
 
     const auto command = make_command_line(args, stdin_file, stdout_file, stderr_file);
+#ifdef _WIN32
+    // cmd.exe /C applies quote-stripping when the command starts with '"',
+    // corrupting the executable path and redirections.  Write the command to a
+    // temporary batch file and run that instead: the batch-file path doesn't
+    // start with '"' so cmd.exe takes it literally with no stripping.
+    const auto bat = scratch_dir / "_run.bat";
+    {
+        std::ofstream bf(bat, std::ios::binary);
+        bf << command << "\r\n";
+    }
+    const int raw_rc = std::system(bat.string().c_str());
+#else
     const int raw_rc = std::system(command.c_str());
+#endif
 
     ProcessResult result;
     result.exit_code = normalize_system_result(raw_rc);

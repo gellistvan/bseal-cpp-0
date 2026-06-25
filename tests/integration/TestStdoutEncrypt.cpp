@@ -138,7 +138,17 @@ ProcessResult run_bseal(
     cmd += " > " + shell_quote(stdout_f);
     cmd += " 2> " + shell_quote(stderr_f);
 
+#ifdef _WIN32
+    // Batch file sidesteps cmd.exe /C quote-stripping (see TestBlackBoxCli.cpp).
+    const auto bat = scratch / "_run.bat";
+    {
+        std::ofstream bf(bat, std::ios::binary);
+        bf << cmd << "\r\n";
+    }
+    const int raw = std::system(bat.string().c_str());
+#else
     const int raw = std::system(cmd.c_str());
+#endif
     ProcessResult r;
     r.exit_code = normalize_rc(raw);
     if (fs::exists(stdout_f)) r.stdout_bytes = read_file(stdout_f);

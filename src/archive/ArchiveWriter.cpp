@@ -15,11 +15,19 @@ namespace bseal::archive {
 namespace {
 
 std::int64_t file_time_to_unix_ns(std::filesystem::file_time_type tp) {
+#ifdef _WIN32
+    // On MSVC, file_time_type::duration ticks are 100-ns intervals since 1601-01-01.
+    // Subtract the 1601→1970 offset in 100-ns ticks (fits comfortably in int64),
+    // THEN multiply by 100 to convert to nanoseconds. Doing it the other way
+    // (ns first) would overflow int64 for any modern timestamp.
+    constexpr int64_t kWin32UnixDelta100ns = 116444736000000000LL;
+    const int64_t win100ns = tp.time_since_epoch().count();
+    return (win100ns - kWin32UnixDelta100ns) * 100LL;
+#else
     using namespace std::chrono;
-    // clock_cast<system_clock> is absent in some libc++ builds.
-    // On POSIX, file_time_type::clock uses the Unix epoch on both libstdc++ and
-    // libc++, so time_since_epoch() already gives ns since Unix epoch directly.
+    // On POSIX, file_time_type::clock uses Unix epoch on libstdc++ and libc++.
     return duration_cast<nanoseconds>(tp.time_since_epoch()).count();
+#endif
 }
 
 std::uint32_t permissions_to_bits(std::filesystem::perms perms) {

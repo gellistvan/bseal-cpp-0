@@ -14,6 +14,7 @@
 
 #include "crypto/AesGcmBackend.hpp"
 #include "crypto/XChaCha20Poly1305Backend.hpp"
+#include "platform/CpuFeatures.hpp"
 
 #include "common/Types.hpp"
 
@@ -142,11 +143,13 @@ TEST(XChaCha20Poly1305BackendConcurrency, ConcurrentEncryptDecryptHighContention
 // ---------------------------------------------------------------------------
 
 TEST(AesGcmBackendConcurrency, ConcurrentEncryptDecryptIsSafe) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     bseal::crypto::AesGcmBackend backend;
     run_concurrent_stress(backend, /*n_threads=*/8, /*chunks_per_thread=*/64);
 }
 
 TEST(AesGcmBackendConcurrency, ConcurrentEncryptDecryptHighContention) {
+    if (!bseal::platform::has_hardware_aes()) GTEST_SKIP() << "No hardware AES";
     bseal::crypto::AesGcmBackend backend;
     run_concurrent_stress(backend, /*n_threads=*/32, /*chunks_per_thread=*/16);
 }

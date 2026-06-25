@@ -98,7 +98,13 @@ def compute_tree_sha256_via_shell(root: Path) -> str:
     # Compute per-file sha256sum lines: "<hash>  <path>"
     combined = hashlib.sha256()
     for f in all_files:
-        file_hash = hashlib.sha256((root / f[2:]).read_bytes()).hexdigest()
+        content = (root / f[2:]).read_bytes()
+        # Normalize CRLF → LF for text files so Windows git.core.autocrlf
+        # checkout doesn't break the hash. Binary files (containing NUL) are
+        # hashed as-is.
+        if b"\x00" not in content:
+            content = content.replace(b"\r\n", b"\n")
+        file_hash = hashlib.sha256(content).hexdigest()
         combined.update(f"{file_hash}  {f}\n".encode())
     return combined.hexdigest()
 

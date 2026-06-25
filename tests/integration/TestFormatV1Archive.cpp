@@ -125,7 +125,17 @@ BsealResult run_bseal(const fs::path& scratch,
     cmd += " 2> " + shell_quote(err_f);
 
     BsealResult res;
+#ifdef _WIN32
+    // Batch file sidesteps cmd.exe /C quote-stripping (see TestBlackBoxCli.cpp).
+    const auto bat = scratch / "_run.bat";
+    {
+        std::ofstream bf(bat, std::ios::binary);
+        bf << cmd << "\r\n";
+    }
+    res.rc = normalize_rc(std::system(bat.string().c_str()));
+#else
     res.rc = normalize_rc(std::system(cmd.c_str()));
+#endif
     if (fs::exists(err_f)) res.err = read_file(err_f);
     return res;
 }
