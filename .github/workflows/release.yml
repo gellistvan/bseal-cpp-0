@@ -33,6 +33,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake build-essential pkg-config \
             libsodium-dev libssl-dev \
+            qt6-base-dev \
             dpkg-dev
 
       - name: Configure (Release)
@@ -40,7 +41,8 @@ jobs:
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBSEAL_ENABLE_INSTALL=ON \
-            -DBSEAL_BUILD_TESTS=ON
+            -DBSEAL_BUILD_TESTS=ON \
+            -DBSEAL_ENABLE_QT_GUI=ON
 
       - name: Build
         run: cmake --build build -j$(nproc)
@@ -62,10 +64,11 @@ jobs:
   # --------------------------------------------------------------------------
   # Windows build: windows-latest (Server 2022), Release config, .zip via CPack.
   #
-  # Dependencies via vcpkg, bootstrapped from a pinned commit (see "Pin vcpkg" step).
-  # Both the tool commit and vcpkg.json builtin-baseline must be kept in sync.
-  # Triplet x64-windows-static: statically links CRT and all deps, producing a
-  # standalone bseal.exe with no runtime dependencies.
+  # Dependencies via vcpkg, bootstrapped from a pinned tag (see "Pin vcpkg" step).
+  # Triplet x64-windows-static-md: static libs, dynamic CRT (/MD). Required for
+  # Qt compatibility — Qt is built with /MD and cannot mix with /MT.
+  # Qt itself is installed via jurplel/install-qt-action (pre-built binaries).
+  # windeployqt bundles Qt DLLs into the install tree during cmake install.
   #
   # libsodium is found via vcpkg's unofficial-sodium CMake config (not
   # pkg-config), so no pkg-config installation is required on Windows.
@@ -89,14 +92,26 @@ jobs:
           C:\vcpkg-pinned\bootstrap-vcpkg.bat -disableMetrics
           echo "VCPKG_ROOT=C:\vcpkg-pinned" >> $env:GITHUB_ENV
 
-      - name: Configure (Release, static)
+      # Qt is not available via vcpkg in a reasonable CI timeframe (full source
+      # build). Install pre-built shared Qt6 binaries instead.
+      # Triplet x64-windows-static-md is used (static libs, dynamic CRT /MD) so
+      # libsodium and OpenSSL remain linkable alongside Qt, which also uses /MD.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.7.*'
+          arch: 'win64_msvc2019_64'
+          cache: true
+
+      - name: Configure (Release, static-md + Qt GUI)
         run: |
           cmake -S . -B build `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DBSEAL_ENABLE_INSTALL=ON `
-            -DBSEAL_BUILD_TESTS=ON
+            -DBSEAL_BUILD_TESTS=ON `
+            -DBSEAL_ENABLE_QT_GUI=ON
 
       - name: Build
         run: cmake --build build --config Release -j

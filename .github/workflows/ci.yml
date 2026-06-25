@@ -30,14 +30,16 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
             cmake build-essential pkg-config \
-            libsodium-dev libssl-dev
+            libsodium-dev libssl-dev \
+            qt6-base-dev
 
       - name: Configure (Release)
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBSEAL_BUILD_TESTS=ON \
-            -DBSEAL_ENABLE_TEST_SEAMS=ON
+            -DBSEAL_ENABLE_TEST_SEAMS=ON \
+            -DBSEAL_ENABLE_QT_GUI=ON
 
       - name: Build
         run: cmake --build build -j$(nproc)
@@ -51,7 +53,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DBSEAL_BUILD_TESTS=ON \
             -DBSEAL_ENABLE_SANITIZERS=ON \
-            -DBSEAL_ENABLE_TEST_SEAMS=ON
+            -DBSEAL_ENABLE_TEST_SEAMS=ON \
+            -DBSEAL_ENABLE_QT_GUI=ON
 
       - name: Build (sanitizers)
         run: cmake --build build-sani -j$(nproc)
@@ -60,7 +63,7 @@ jobs:
         run: ctest --test-dir build-sani --output-on-failure -j$(nproc)
 
   # --------------------------------------------------------------------------
-  # Windows: windows-latest, Release config via vcpkg static triplet.
+  # Windows: windows-latest, Release config via vcpkg static-md triplet + Qt GUI.
   # Mirrors the release.yml Windows job without the package/upload steps.
   # --------------------------------------------------------------------------
   build-windows:
@@ -85,14 +88,22 @@ jobs:
           C:\vcpkg-pinned\bootstrap-vcpkg.bat -disableMetrics
           echo "VCPKG_ROOT=C:\vcpkg-pinned" >> $env:GITHUB_ENV
 
-      - name: Configure (Release, static)
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.7.*'
+          arch: 'win64_msvc2019_64'
+          cache: true
+
+      - name: Configure (Release, static-md + Qt GUI)
         run: |
           cmake -S . -B build `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DBSEAL_BUILD_TESTS=ON `
-            -DBSEAL_ENABLE_TEST_SEAMS=ON
+            -DBSEAL_ENABLE_TEST_SEAMS=ON `
+            -DBSEAL_ENABLE_QT_GUI=ON
 
       - name: Build
         run: cmake --build build --config Release -j
