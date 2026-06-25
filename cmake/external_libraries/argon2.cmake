@@ -13,6 +13,17 @@
 
 set(ARGON2_SUBMODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/submodules/argon2")
 
+# On Windows, vcpkg's libsodium bundles most argon2 symbols. Building our own
+# argon2_static would produce duplicate symbols at link time. We only need the
+# headers for compilation; libsodium satisfies the symbols at link time.
+if (WIN32)
+    add_library(argon2_static INTERFACE)
+    add_library(argon2::argon2 ALIAS argon2_static)
+    target_include_directories(argon2_static INTERFACE
+        $<BUILD_INTERFACE:${ARGON2_SUBMODULE_DIR}/include>
+    )
+    return()
+endif()
 
 if (NOT EXISTS "${ARGON2_SUBMODULE_DIR}/include/argon2.h")
     message(FATAL_ERROR
@@ -28,8 +39,7 @@ enable_language(C)
 # opt.c.  opt.c uses 64-bit arithmetic and AVX2/SSE2 intrinsics on x86-64;
 # on all other architectures or when the compiler does not support it the
 # ref.c fallback is used instead.
-# opt.c uses GCC/Clang intrinsic headers; MSVC needs ref.c instead.
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" AND NOT MSVC)
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
     set(_ARGON2_CORE_IMPL "${ARGON2_SUBMODULE_DIR}/src/opt.c")
 else()
     set(_ARGON2_CORE_IMPL "${ARGON2_SUBMODULE_DIR}/src/ref.c")
