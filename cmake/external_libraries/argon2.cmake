@@ -13,19 +13,6 @@
 
 set(ARGON2_SUBMODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/submodules/argon2")
 
-# On Windows this project uses vcpkg's libsodium, which already bundles argon2
-# internally.  Building our own argon2_static would produce duplicate symbols at
-# link time, so we expose an interface-only target (no compiled sources) and let
-# libsodium satisfy the argon2 symbols transitively.  The submodule headers are
-# still required for compilation, so we expose them via INTERFACE include dirs.
-if (WIN32)
-    add_library(argon2_static INTERFACE)
-    add_library(argon2::argon2 ALIAS argon2_static)
-    target_include_directories(argon2_static INTERFACE
-        $<BUILD_INTERFACE:${ARGON2_SUBMODULE_DIR}/include>
-    )
-    return()
-endif()
 
 if (NOT EXISTS "${ARGON2_SUBMODULE_DIR}/include/argon2.h")
     message(FATAL_ERROR
@@ -41,7 +28,8 @@ enable_language(C)
 # opt.c.  opt.c uses 64-bit arithmetic and AVX2/SSE2 intrinsics on x86-64;
 # on all other architectures or when the compiler does not support it the
 # ref.c fallback is used instead.
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+# opt.c uses GCC/Clang intrinsic headers; MSVC needs ref.c instead.
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" AND NOT MSVC)
     set(_ARGON2_CORE_IMPL "${ARGON2_SUBMODULE_DIR}/src/opt.c")
 else()
     set(_ARGON2_CORE_IMPL "${ARGON2_SUBMODULE_DIR}/src/ref.c")
@@ -69,6 +57,7 @@ target_compile_features(argon2_static PRIVATE c_std_99)
 # Silence warnings from upstream sources that we do not own.
 target_compile_options(argon2_static PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-w>
+    $<$<C_COMPILER_ID:MSVC>:/W0>
 )
 
 # The opt.c path uses pthreads for parallel lanes on POSIX systems.
