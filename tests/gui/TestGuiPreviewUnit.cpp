@@ -310,7 +310,9 @@ void test_preview_decrypt_safe_defaults_no_warnings() {
     bseal::gui::GuiDecryptOptions opts;
     opts.input  = "/i"; opts.output = "/o";
     // default: overwrite=false, hardened=Auto, durability=BestEffort
-    const auto result = bseal::gui::generate_preview(opts);
+    // Pin platform_supported=true: verifies no warnings when hardened backend is available.
+    // The unsupported-platform (Windows) case is covered by test_preview_auto_unsupported_shows_fallback_text.
+    const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/true);
     ASSERT_TRUE(result.warnings.empty());
 }
 
@@ -465,14 +467,17 @@ void test_preview_auto_supported_shows_hardened_backend() {
 }
 
 void test_preview_auto_unsupported_shows_fallback_text() {
-    // auto = silent fallback: the description text explains what will happen, but
-    // no warning is raised — the user chose auto, not off.
     bseal::gui::GuiDecryptOptions opts;
     opts.input = "/i"; opts.output = "/o";
     opts.hardened_extract = bseal::cli::HardenedExtractMode::Auto;
     const auto result = bseal::gui::generate_preview(opts, /*platform_supported=*/false);
     ASSERT_CONTAINS(result.text, "fall back to portable");
-    ASSERT_TRUE(result.warnings.empty());
+    ASSERT_FALSE(result.warnings.empty());
+    bool found = false;
+    for (const auto& w : result.warnings)
+        if (w.find("fall") != std::string::npos || w.find("portable") != std::string::npos)
+            found = true;
+    ASSERT_TRUE(found);
 }
 
 void test_preview_off_shows_portable_backend() {

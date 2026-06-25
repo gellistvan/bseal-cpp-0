@@ -345,9 +345,14 @@ void MainWindow::onRun() {
                             "Only proceed if you trust the archive source and understand the risk.\n\n"
                             "Proceed without hardened extraction?")))
                 return;
+        } else if (harden_outcome == gui::HardenedExtractOutcome::AutoFallbackNonHardened) {
+            if (!confirm(tr("Non-hardened extraction (platform limitation)?"),
+                         tr("This platform does not support hardened extraction. "
+                            "BSEAL will use the portable backend, which is not TOCTOU-safe "
+                            "against local directory-race attacks.\n\n"
+                            "Continue only if the archive and output location are trusted.")))
+                return;
         }
-        // AutoFallbackNonHardened: auto means "use best available, fall back silently."
-        // No confirmation needed — the user chose auto, not off.
     }
 
     // Enforce memory lock policy before touching the passphrase.
