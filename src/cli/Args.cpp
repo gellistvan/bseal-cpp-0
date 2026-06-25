@@ -281,11 +281,9 @@ Decrypt options:
   --overwrite
   --hardened-extract auto|on|off
                           extraction filesystem safety mode (default: auto)
-                            auto: use hardened backend when available (Linux/macOS only), else portable
-                            on:   require hardened backend; fails on Windows and other unsupported platforms
-                            off:  always use portable backend (not TOCTOU-hardened; suppresses Windows warning)
-                          NOTE: Windows has no hardened backend. auto and on both use the portable path,
-                          which is not protected against symlink races by a concurrent local attacker.
+                            auto: use hardened backend when available (Linux/macOS), else portable (silent fallback)
+                            on:   require hardened backend; emits a warning on Windows where it is unavailable
+                            off:  always use portable backend (emits a warning that TOCTOU hardening is disabled)
   --durability off|best-effort|on
                           output file flush mode after extraction (default: best-effort)
                             off:          no fsync; OS page-cache only

@@ -653,15 +653,16 @@ void core_decrypt(CoreDecryptParams params) {
             "Use the default (auto) or --hardened-extract=on for untrusted archives.\n");
     }
 #ifdef _WIN32
-    // Windows has no hardened backend (no openat/renameat). --hardened-extract=auto
-    // silently falls back to the portable path, which is not TOCTOU-safe. Warn so
-    // users are not misled into thinking they have race-free extraction.
-    if (params.hardened_extract != bseal::cli::HardenedExtractMode::Off && params.on_warning) {
+    // Windows has no hardened backend (no openat/renameat). auto silently uses
+    // the portable path (consistent with its "best-effort" semantics). Only warn
+    // when the user explicitly requested on, since auto is documented as a silent
+    // fallback and producing unexpected warnings breaks callers that check stderr.
+    if (params.hardened_extract == bseal::cli::HardenedExtractMode::On && params.on_warning) {
         params.on_warning(
             "WARNING: hardened extraction is not supported on Windows. "
             "Extraction uses the portable backend, which is not protected against "
             "symlink races by a concurrent local attacker. "
-            "Use --hardened-extract=off to suppress this warning.\n");
+            "Use --hardened-extract=auto or --hardened-extract=off to suppress this warning.\n");
     }
 #endif
 
