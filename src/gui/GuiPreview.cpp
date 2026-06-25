@@ -222,9 +222,8 @@ PreviewResult generate_preview(const GuiDecryptOptions& opts, bool platform_supp
     const auto harden_outcome = resolve_hardened_extract(opts.hardened_extract, platform_supported);
     if (harden_outcome == HardenedExtractOutcome::ExplicitNonHardened)
         result.warnings.push_back("Hardened extract off — not TOCTOU-safe. Unsafe for untrusted archives.");
-    if (harden_outcome == HardenedExtractOutcome::AutoFallbackNonHardened)
-        result.warnings.push_back(
-            "Hardened extract: auto falls back to portable backend on this platform — not TOCTOU-safe.");
+    // AutoFallbackNonHardened is intentionally silent: auto means "use best available,
+    // fall back without complaint." Only ExplicitNonHardened (user chose off) warrants a warning.
     if (opts.durability_mode == platform::DurabilityMode::Off)
         result.warnings.push_back("Durability off: output not fsynced — data may be lost on power failure.");
 

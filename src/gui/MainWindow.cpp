@@ -345,16 +345,9 @@ void MainWindow::onRun() {
                             "Only proceed if you trust the archive source and understand the risk.\n\n"
                             "Proceed without hardened extraction?")))
                 return;
-        } else if (harden_outcome == gui::HardenedExtractOutcome::AutoFallbackNonHardened) {
-            if (!confirm(tr("Non-hardened extraction fallback?"),
-                         tr("Hardened extraction is set to 'auto', but this platform does not "
-                            "support the POSIX hardened backend. Extraction will use the portable "
-                            "backend, which is not TOCTOU-hardened.\n\n"
-                            "This is unsafe for untrusted archives. Only proceed if you trust the "
-                            "archive source.\n\n"
-                            "Proceed with portable (non-hardened) extraction?")))
-                return;
         }
+        // AutoFallbackNonHardened: auto means "use best available, fall back silently."
+        // No confirmation needed — the user chose auto, not off.
     }
 
     // Enforce memory lock policy before touching the passphrase.

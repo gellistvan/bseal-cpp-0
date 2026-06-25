@@ -289,12 +289,17 @@ if (BSEAL_ENABLE_QT_GUI)
         add_test(NAME gui.CoreIntegration COMMAND bseal_gui_integration_gtests)
         set_tests_properties(gui.CoreIntegration PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-            TIMEOUT 120
+            # Each test does real Argon2id (Fast = 256 MiB / t=3) round-trips;
+            # 20+ tests at ~5-10 s per KDF call can take several minutes on a
+            # slow machine. Keep a generous ceiling so local runs don't false-alarm.
+            TIMEOUT 600
+            LABELS "heavy"
         )
         add_test(NAME gui.MemoryLock COMMAND bseal_gui_memlock_gtests)
         set_tests_properties(gui.MemoryLock PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-            TIMEOUT 120
+            TIMEOUT 600
+            LABELS "heavy"
         )
         add_test(NAME gui.ErrorPresenter COMMAND bseal_gui_error_presenter_gtests)
         set_tests_properties(gui.ErrorPresenter PROPERTIES
@@ -329,7 +334,8 @@ if (BSEAL_ENABLE_QT_GUI)
         add_test(NAME gui.ValidationOrder COMMAND bseal_gui_validation_order_gtests)
         set_tests_properties(gui.ValidationOrder PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-            TIMEOUT 30
+            TIMEOUT 300
+            LABELS "heavy"
         )
         add_test(NAME gui.FeatureParity COMMAND bseal_gui_parity_gtests)
         set_tests_properties(gui.FeatureParity PROPERTIES

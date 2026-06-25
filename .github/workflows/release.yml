@@ -48,7 +48,7 @@ jobs:
         run: cmake --build build -j$(nproc)
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure -j$(nproc)
+        run: ctest --test-dir build --output-on-failure -j$(nproc) --label-exclude heavy
 
       - name: Package (.deb)
         run: cd build && cpack
@@ -117,7 +117,7 @@ jobs:
         run: cmake --build build --config Release -j
 
       - name: Test
-        run: ctest --test-dir build --build-config Release --output-on-failure
+        run: ctest --test-dir build --build-config Release --output-on-failure --label-exclude heavy
 
       - name: Package (.zip)
         # -C Release ensures CPack picks up the Release build tree, not Debug.

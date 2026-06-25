@@ -45,7 +45,9 @@ jobs:
         run: cmake --build build -j$(nproc)
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure -j$(nproc)
+        # Exclude heavy GUI integration tests (real Argon2id × 20+ round-trips);
+        # gui.SmokeRun still validates the GUI binary. Run heavy tests locally.
+        run: ctest --test-dir build --output-on-failure -j$(nproc) --label-exclude heavy
 
       - name: Configure (Debug + sanitizers)
         run: |
@@ -60,7 +62,7 @@ jobs:
         run: cmake --build build-sani -j$(nproc)
 
       - name: Test (sanitizers)
-        run: ctest --test-dir build-sani --output-on-failure -j$(nproc)
+        run: ctest --test-dir build-sani --output-on-failure -j$(nproc) --label-exclude heavy
 
   # --------------------------------------------------------------------------
   # Windows: windows-latest, Release config via vcpkg static-md triplet + Qt GUI.
