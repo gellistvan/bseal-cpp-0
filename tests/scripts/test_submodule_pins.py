@@ -89,10 +89,11 @@ def compute_tree_sha256_via_shell(root: Path) -> str:
     (find -type f does not follow or include symlinks).
     """
     # Collect files the same way as `(cd <root> && find . -type f | sort)`,
-    # using ./-prefixed relative paths to match sha256sum output format.
-    # This makes the hash machine-independent (no absolute path in the digest).
+    # using ./-prefixed POSIX relative paths to match sha256sum output format.
+    # Use as_posix() so the hash is identical on Windows (backslash paths) and
+    # Linux/macOS — the Linux sha256sum pipeline always uses forward slashes.
     all_files = sorted(
-        "./" + str(p.relative_to(root)) for p in root.rglob("*")
+        "./" + p.relative_to(root).as_posix() for p in root.rglob("*")
         if p.is_file() and not p.is_symlink()
     )
     # Compute per-file sha256sum lines: "<hash>  <path>"
