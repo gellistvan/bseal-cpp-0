@@ -11,11 +11,17 @@ The CLI, application layer, archive record stream, AEAD chunk pipeline, KDF/key 
 
 ## Platform support
 
-**Linux is the only explicitly supported and tested platform.**
+**Linux is the primary supported platform.** Windows builds are tested in CI and distributed as experimental releases.
 
-Windows is recognized in the codebase — the source tree includes `_WIN32` code paths for passphrase prompting, file flushing, and the CSPRNG — but Windows has not been explicitly tested and is not officially supported. Users who build and run BSEAL on Windows do so at their own risk. In particular, the POSIX-hardened extraction backend (`--hardened-extract on`) is not available on Windows; the portable fallback is used instead (see `--hardened-extract` below for the implications).
+macOS and other POSIX systems will likely compile and run via the POSIX code paths, but are not explicitly tested or supported.
 
-macOS and other POSIX systems will likely compile and run via the POSIX code paths, but are also not explicitly tested or supported.
+### Windows — experimental
+
+Windows release binaries (CLI and Qt GUI) are built and tested automatically in CI. They are distributed alongside Linux releases and are suitable for evaluation, but carry the following limitations:
+
+* **Hardened extraction is unavailable.** The POSIX `openat`/`renameat`-based backend that protects against TOCTOU symlink races is Linux/macOS-only. On Windows, `--hardened-extract auto` (the default) falls back to the portable extraction backend. The GUI shows a one-time confirmation before proceeding so users are not silently given a non-TOCTOU-safe backend. Selecting `--hardened-extract on` fails closed with an error rather than silently downgrading.
+* **Dependencies are dynamically linked (Qt).** The CLI is statically linked. The GUI package bundles Qt DLLs via `windeployqt`, so no separate Qt installation is required.
+* **No cryptographic audit has been performed on the Windows code paths.**
 
 ## Current status
 

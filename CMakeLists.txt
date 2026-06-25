@@ -289,12 +289,17 @@ if (BSEAL_ENABLE_QT_GUI)
         add_test(NAME gui.CoreIntegration COMMAND bseal_gui_integration_gtests)
         set_tests_properties(gui.CoreIntegration PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-            TIMEOUT 120
+            # Each test does real Argon2id (Fast = 256 MiB / t=3) round-trips;
+            # 20+ tests at ~5-10 s per KDF call can take several minutes on a
+            # slow machine. Keep a generous ceiling so local runs don't false-alarm.
+            TIMEOUT 600
+            LABELS "heavy"
         )
         add_test(NAME gui.MemoryLock COMMAND bseal_gui_memlock_gtests)
         set_tests_properties(gui.MemoryLock PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-            TIMEOUT 120
+            TIMEOUT 600
+            LABELS "heavy"
         )
         add_test(NAME gui.ErrorPresenter COMMAND bseal_gui_error_presenter_gtests)
         set_tests_properties(gui.ErrorPresenter PROPERTIES
@@ -329,7 +334,8 @@ if (BSEAL_ENABLE_QT_GUI)
         add_test(NAME gui.ValidationOrder COMMAND bseal_gui_validation_order_gtests)
         set_tests_properties(gui.ValidationOrder PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-            TIMEOUT 30
+            TIMEOUT 300
+            LABELS "heavy"
         )
         add_test(NAME gui.FeatureParity COMMAND bseal_gui_parity_gtests)
         set_tests_properties(gui.FeatureParity PROPERTIES
@@ -339,7 +345,29 @@ if (BSEAL_ENABLE_QT_GUI)
     endif()
 
     if (BSEAL_ENABLE_INSTALL)
-        install(TARGETS bseal-gui RUNTIME DESTINATION bin)
+        install(TARGETS bseal-gui RUNTIME DESTINATION bin COMPONENT runtime)
+
+        if (WIN32)
+            # Bundle Qt DLLs next to bseal-gui.exe so the package is self-contained.
+            find_program(WINDEPLOYQT_EXECUTABLE windeployqt
+                HINTS "${Qt6_DIR}/../../../bin"
+                REQUIRED
+            )
+            install(CODE "
+                execute_process(
+                    COMMAND \"${WINDEPLOYQT_EXECUTABLE}\"
+                        --no-translations
+                        --no-compiler-runtime
+                        --no-system-d3d-compiler
+                        --no-opengl-sw
+                        \"\${CMAKE_INSTALL_PREFIX}/bin/bseal-gui.exe\"
+                    RESULT_VARIABLE _rc
+                )
+                if(NOT _rc EQUAL 0)
+                    message(FATAL_ERROR \"windeployqt failed with exit code \${_rc}\")
+                endif()
+            " COMPONENT runtime)
+        endif()
     endif()
 endif()
 
@@ -376,19 +404,28 @@ if (BSEAL_ENABLE_INSTALL)
     set(CPACK_PACKAGE_CONTACT           "istvan.gellai@gmail.com")
     set(CPACK_RESOURCE_FILE_LICENSE     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
     set(CPACK_STRIP_FILES               ON)
-    # Package only the CLI binary; exclude dev headers and static lib.
-    set(CPACK_COMPONENTS_ALL            runtime)
-    set(CPACK_COMPONENT_RUNTIME_REQUIRED ON)
+    # Package only the runtime component; exclude dev headers and static lib.
+    # CPACK_ARCHIVE_COMPONENT_INSTALL must be ON — without it the ZIP/DEB
+    # generators ignore CPACK_COMPONENTS_ALL and bundle every installed file.
+    set(CPACK_COMPONENTS_ALL              runtime)
+    set(CPACK_COMPONENT_RUNTIME_REQUIRED  ON)
+    set(CPACK_ARCHIVE_COMPONENT_INSTALL   ON)
 
     if (WIN32)
-        set(CPACK_GENERATOR  "ZIP")
+        set(CPACK_GENERATOR   "ZIP")
         set(CPACK_SYSTEM_NAME "win64")
+        # Component packaging would suffix the filename with "-runtime"; override
+        # it so the output stays bseal-<version>-win64.zip.
+        set(CPACK_ARCHIVE_RUNTIME_FILE_NAME
+            "${CPACK_PACKAGE_NAME}-${PROJECT_VERSION}-${CPACK_SYSTEM_NAME}")
     else()
         set(CPACK_GENERATOR  "DEB")
         set(CPACK_DEBIAN_PACKAGE_SECTION  "utils")
         set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
         # Auto-detect runtime .so deps from the linked binary (requires dpkg-dev).
         set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+        set(CPACK_DEB_COMPONENT_INSTALL    ON)
+        set(CPACK_DEBIAN_RUNTIME_PACKAGE_NAME "${CPACK_PACKAGE_NAME}")
     endif()
 
     include(CPack)

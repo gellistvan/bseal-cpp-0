@@ -6,6 +6,7 @@
 //
 // Requires QT_QPA_PLATFORM=offscreen (set by ctest).
 
+#include "archive/SafeOutputTree.hpp"
 #include "cli/Args.hpp"
 #include "crypto/Kdf.hpp"
 #include "gui/GuiOptions.hpp"
@@ -445,8 +446,13 @@ void test_hardened_off_confirmation_rejected_aborts() {
     ASSERT_TRUE(!w.isOperationRunning());
 }
 
-void test_default_decrypt_needs_no_confirmation() {
-    // Default settings (hardened=Auto, overwrite=off) must not trigger any confirmation.
+void test_default_decrypt_auto_confirmation_behavior() {
+    // On platforms that support hardened extraction (Linux/macOS): auto → HardenedActive,
+    // no confirmation dialog. On platforms that do not (Windows): auto →
+    // AutoFallbackNonHardened, a one-time confirmation is shown so the user is
+    // not silently given a non-TOCTOU-safe backend.
+    const bool platform_supported = bseal::archive::SafeOutputTree::is_platform_supported();
+
     bseal::gui::MainWindow w;
     w.show();
     set_decrypt_mode(w);
@@ -458,10 +464,12 @@ void test_default_decrypt_needs_no_confirmation() {
     w.findChild<bseal::gui::SecurePassphraseField*>("primaryPassphrase")
         ->setText("test-pass");
 
-    // Confirmation seam always returns false — if it's ever called, the test fails.
-    w.setConfirmationFnForTests([](const QString&, const QString&) {
-        throw std::runtime_error("confirm() called unexpectedly for safe default settings");
-        return false;
+    bool confirm_called = false;
+    w.setConfirmationFnForTests([&](const QString&, const QString&) {
+        confirm_called = true;
+        if (platform_supported)
+            throw std::runtime_error("confirm() called unexpectedly on a platform with hardened support");
+        return true; // accept: on unsupported platforms this is the expected path
     });
 
     bool op_ran = false;
@@ -482,6 +490,8 @@ void test_default_decrypt_needs_no_confirmation() {
 
     ASSERT_TRUE(done);
     ASSERT_TRUE(op_ran);
+    if (!platform_supported)
+        ASSERT_TRUE(confirm_called); // confirmation must have fired on unsupported platform
 }
 
 } // namespace
@@ -517,7 +527,7 @@ int main(int argc, char* argv[]) {
     run_test("OverwriteConfirmRejectedAborts",      test_overwrite_confirmation_rejected_aborts_operation);
     run_test("HardenedOffConfirmAcceptedStarts",    test_hardened_off_confirmation_accepted_starts_operation);
     run_test("HardenedOffConfirmRejectedAborts",    test_hardened_off_confirmation_rejected_aborts);
-    run_test("DefaultDecryptNeedsNoConfirmation",   test_default_decrypt_needs_no_confirmation);
+    run_test("DefaultDecryptAutoConfirmationBehavior", test_default_decrypt_auto_confirmation_behavior);
 
     std::cout << '\n' << g_passed << " passed, " << g_failed << " failed.\n";
     return g_failed == 0 ? 0 : 1;

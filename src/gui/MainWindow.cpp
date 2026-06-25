@@ -346,13 +346,11 @@ void MainWindow::onRun() {
                             "Proceed without hardened extraction?")))
                 return;
         } else if (harden_outcome == gui::HardenedExtractOutcome::AutoFallbackNonHardened) {
-            if (!confirm(tr("Non-hardened extraction fallback?"),
-                         tr("Hardened extraction is set to 'auto', but this platform does not "
-                            "support the POSIX hardened backend. Extraction will use the portable "
-                            "backend, which is not TOCTOU-hardened.\n\n"
-                            "This is unsafe for untrusted archives. Only proceed if you trust the "
-                            "archive source.\n\n"
-                            "Proceed with portable (non-hardened) extraction?")))
+            if (!confirm(tr("Non-hardened extraction (platform limitation)?"),
+                         tr("This platform does not support hardened extraction. "
+                            "BSEAL will use the portable backend, which is not TOCTOU-safe "
+                            "against local directory-race attacks.\n\n"
+                            "Continue only if the archive and output location are trusted.")))
                 return;
         }
     }
