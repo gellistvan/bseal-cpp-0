@@ -250,8 +250,13 @@ ArchiveOpenContext make_encrypt_context(const CoreEncryptParams& params) {
     context.suite           = params.suite;
     context.kdf_params      = bseal::crypto::preset_params(params.kdf_preset);
     bseal::crypto::validate_kdf_params(context.kdf_params);
-    context.kdf_salt        = try_env_hex_array<32>("BSEAL_TEST_KDF_SALT").value_or(random_array<32>());
-    context.archive_id      = try_env_hex_array<32>("BSEAL_TEST_ARCHIVE_ID").value_or(random_array<32>());
+#if defined(BSEAL_ENABLE_TEST_SEAMS)
+    context.kdf_salt   = try_env_hex_array<32>("BSEAL_TEST_KDF_SALT").value_or(random_array<32>());
+    context.archive_id = try_env_hex_array<32>("BSEAL_TEST_ARCHIVE_ID").value_or(random_array<32>());
+#else
+    context.kdf_salt   = random_array<32>();
+    context.archive_id = random_array<32>();
+#endif
     context.chunk_plain_size = params.chunk_size;
 
     bseal::io::GlobalPublicHeaderV1& gh = context.global_header;
@@ -647,6 +652,18 @@ void core_decrypt(CoreDecryptParams params) {
             "The portable backend is not protected against symlink races. "
             "Use the default (auto) or --hardened-extract=on for untrusted archives.\n");
     }
+#ifdef _WIN32
+    // Windows has no hardened backend (no openat/renameat). --hardened-extract=auto
+    // silently falls back to the portable path, which is not TOCTOU-safe. Warn so
+    // users are not misled into thinking they have race-free extraction.
+    if (params.hardened_extract != bseal::cli::HardenedExtractMode::Off && params.on_warning) {
+        params.on_warning(
+            "WARNING: hardened extraction is not supported on Windows. "
+            "Extraction uses the portable backend, which is not protected against "
+            "symlink races by a concurrent local attacker. "
+            "Use --hardened-extract=off to suppress this warning.\n");
+    }
+#endif
 
     fire_progress(params.on_progress, ProgressPhase::Validating);
     validate_decrypt_params(params);

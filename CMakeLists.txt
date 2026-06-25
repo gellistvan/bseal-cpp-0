@@ -13,6 +13,10 @@ option(BSEAL_ENABLE_TSAN "Enable ThreadSanitizer (incompatible with BSEAL_ENABLE
 option(BSEAL_ENABLE_COVERAGE "Enable line/function coverage instrumentation (gcov/gcovr)" OFF)
 option(BSEAL_ENABLE_INSTALL "Enable install rules" OFF)
 option(BSEAL_FUZZ_STATIC_LINK "Link libsodium and OpenSSL statically (required for OSS-Fuzz/ClusterFuzzLite)" OFF)
+# SECURITY: NEVER enable in release/production builds. Allows env vars to inject
+# deterministic kdf_salt and archive_id, bypassing random generation. Nonce and key
+# reuse is catastrophic for both XChaCha20-Poly1305 and AES-GCM.
+option(BSEAL_ENABLE_TEST_SEAMS "Enable env-var seams for deterministic key/nonce injection (test builds only)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -107,6 +111,11 @@ target_include_directories(bseal_core
 
 target_compile_features(bseal_core PUBLIC cxx_std_20)
 bseal_set_project_warnings(bseal_core)
+
+if (BSEAL_ENABLE_TEST_SEAMS)
+    target_compile_definitions(bseal_core PRIVATE BSEAL_ENABLE_TEST_SEAMS)
+endif()
+
 bseal_enable_sanitizers_if_requested(bseal_core)
 bseal_enable_tsan_if_requested(bseal_core)
 bseal_enable_coverage_if_requested(bseal_core)

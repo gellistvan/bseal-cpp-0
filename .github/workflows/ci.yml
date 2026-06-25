@@ -36,7 +36,8 @@ jobs:
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBSEAL_BUILD_TESTS=ON
+            -DBSEAL_BUILD_TESTS=ON \
+            -DBSEAL_ENABLE_TEST_SEAMS=ON
 
       - name: Build
         run: cmake --build build -j$(nproc)
@@ -49,7 +50,8 @@ jobs:
           cmake -S . -B build-sani \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBSEAL_BUILD_TESTS=ON \
-            -DBSEAL_ENABLE_SANITIZERS=ON
+            -DBSEAL_ENABLE_SANITIZERS=ON \
+            -DBSEAL_ENABLE_TEST_SEAMS=ON
 
       - name: Build (sanitizers)
         run: cmake --build build-sani -j$(nproc)
@@ -69,13 +71,28 @@ jobs:
         with:
           submodules: recursive
 
+      # Pin vcpkg to the same commit recorded in vcpkg.json builtin-baseline so
+      # package versions are reproducible regardless of runner image updates.
+      # To update: pick a new vcpkg commit, run its bootstrap-vcpkg.bat, verify
+      # libsodium+openssl resolve, then update both this SHA and builtin-baseline.
+      - name: Pin vcpkg
+        shell: pwsh
+        env:
+          VCPKG_COMMIT: a34c873a9717a888f58dc05268dea15592c2f822
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg-pinned
+          git -C C:\vcpkg-pinned checkout $env:VCPKG_COMMIT
+          C:\vcpkg-pinned\bootstrap-vcpkg.bat -disableMetrics
+          echo "VCPKG_ROOT=C:\vcpkg-pinned" >> $env:GITHUB_ENV
+
       - name: Configure (Release, static)
         run: |
           cmake -S . -B build `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-            -DBSEAL_BUILD_TESTS=ON
+            -DBSEAL_BUILD_TESTS=ON `
+            -DBSEAL_ENABLE_TEST_SEAMS=ON
 
       - name: Build
         run: cmake --build build --config Release -j
