@@ -1,0 +1,3 @@
+# Fixture files are test reference data and must not have line endings converted.
+# Marking them -text (binary) prevents git autocrlf from corrupting them on Windows.
+tests/fixtures/** -text

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - master
+      - develop
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+
+  # --------------------------------------------------------------------------
+  # Linux: ubuntu-latest, Release + sanitizer builds.
+  # --------------------------------------------------------------------------
+  build-linux:
+    name: Build and test (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential pkg-config \
+            libsodium-dev libssl-dev
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBSEAL_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j$(nproc)
+
+      - name: Configure (Debug + sanitizers)
+        run: |
+          cmake -S . -B build-sani \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBSEAL_BUILD_TESTS=ON \
+            -DBSEAL_ENABLE_SANITIZERS=ON
+
+      - name: Build (sanitizers)
+        run: cmake --build build-sani -j$(nproc)
+
+      - name: Test (sanitizers)
+        run: ctest --test-dir build-sani --output-on-failure -j$(nproc)
+
+  # --------------------------------------------------------------------------
+  # Windows: windows-latest, Release config via vcpkg static triplet.
+  # Mirrors the release.yml Windows job without the package/upload steps.
+  # --------------------------------------------------------------------------
+  build-windows:
+    name: Build and test (Windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Configure (Release, static)
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DBSEAL_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure

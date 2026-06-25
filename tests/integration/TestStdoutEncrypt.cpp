@@ -140,9 +140,13 @@ ProcessResult run_bseal(
 
 #ifdef _WIN32
     // Batch file sidesteps cmd.exe /C quote-stripping (see TestBlackBoxCli.cpp).
+    // SET lines at the top inject env vars that the POSIX path prepends to the shell command.
     const auto bat = scratch / "_run.bat";
     {
         std::ofstream bf(bat, std::ios::binary);
+        for (const auto& [k, v] : env_vars) {
+            bf << "SET " << k << "=" << v << "\r\n";
+        }
         bf << cmd << "\r\n";
     }
     const int raw = std::system(bat.string().c_str());
