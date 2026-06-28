@@ -24,6 +24,10 @@ bool is_power_of_two(std::uint32_t v) {
     return v != 0 && (v & (v - 1)) == 0;
 }
 
+bool is_power_of_two(std::uint64_t v) {
+    return v != 0 && (v & (v - 1)) == 0;
+}
+
 
 class Reader {
 public:

@@ -1024,6 +1024,20 @@ TEST(TestShardReader, ParsePolicyPower2AcceptsValidPowerOfTwo) {
     EXPECT_NO_THROW(parse_header(h));
 }
 
+TEST(TestShardReader, ParsePolicyPower2AcceptsPowerOfTwoAbove32Bits) {
+    // padded_plaintext_size = 2^32 (4 GiB): a valid power of two that overflows uint32_t.
+    // Previously truncated to 0 by a uint32_t overload, causing a false rejection.
+    auto h = make_parseable_none_header();
+    h.padding_policy_id    = 2;
+    h.padding_policy_value = 0;
+    // 65536 chunks * 65536 bytes/chunk = 2^32 bytes
+    const std::uint64_t n_chunks = 65536;
+    h.global_chunk_count        = n_chunks;
+    h.padded_plaintext_size     = n_chunks * static_cast<std::uint64_t>(kTestChunkPlain);
+    h.final_plaintext_chunk_len = kTestChunkPlain;
+    EXPECT_NO_THROW(parse_header(h));
+}
+
 TEST(TestShardReader, ParsePolicyPower2RejectsNonPowerOfTwo) {
     auto h = make_parseable_none_header();
     h.padding_policy_id    = 2;
