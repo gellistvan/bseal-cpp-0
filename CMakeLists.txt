@@ -152,7 +152,8 @@ if (BSEAL_ENABLE_QT_GUI)
         src/gui/SecurePassphraseField.cpp
     )
     # Qt 6.4 does not auto-enable AUTOMOC on qt_add_executable; set per-target.
-    set_target_properties(bseal-gui PROPERTIES AUTOMOC ON)
+    # WIN32_EXECUTABLE hides the console window on Windows.
+    set_target_properties(bseal-gui PROPERTIES AUTOMOC ON WIN32_EXECUTABLE ON)
 
     target_link_libraries(bseal-gui PRIVATE
         bseal::core
